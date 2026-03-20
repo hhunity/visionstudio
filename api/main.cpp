@@ -240,12 +240,17 @@ int main(int argc, char** argv) {
                         compare.diff_amplify = 1.0f;
                     if (compare.diff_mode)
                         ImGui::SliderFloat("Amplify##d", &compare.diff_amplify, 1.0f, 20.0f);
-                    ImGui::Separator();
-                    ImGui::SliderInt("Grid Spacing##c", &compare.grid_spacing, 10, 500);
+                    if (compare.show_grid) {
+                        ImGui::Separator();
+                        ImGui::SliderInt("Grid Spacing##c", &compare.grid_spacing, 1, 500);
+                    }
                 } else {
                     ImGui::MenuItem("Show Grid",    nullptr, &single_viewer.show_grid);
                     ImGui::MenuItem("Show Minimap", nullptr, &single_viewer.show_minimap);
-                    ImGui::SliderInt("Grid Spacing##s", &single_viewer.grid_spacing, 10, 500);
+                    if (single_viewer.show_grid) {
+                        ImGui::Separator();
+                        ImGui::SliderInt("Grid Spacing##s", &single_viewer.grid_spacing, 1, 500);
+                    }
                 }
                 ImGui::EndMenu();
             }
