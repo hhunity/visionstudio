@@ -68,6 +68,7 @@ struct app_state {
     image_data*     right_image     = nullptr;
     bool*           compare_mode    = nullptr;
     bool*           pending_compare = nullptr;
+    bool*           single_compare  = nullptr; // true: load same image to both panels
     std::string*    status_msg      = nullptr;
     async_loader*   left_loader     = nullptr;
     async_loader*   right_loader    = nullptr;
@@ -79,11 +80,13 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
     if (count == 1) {
         app->left_loader->start(paths[0]);
         *app->pending_compare = *app->compare_mode;
+        *app->single_compare  = *app->compare_mode; // same image on both panels
         *app->status_msg      = "Loading...";
     } else if (count >= 2) {
         app->left_loader->start(paths[0]);
         app->right_loader->start(paths[1]);
         *app->pending_compare = true;
+        *app->single_compare  = false;
         *app->status_msg      = "Loading...";
     }
 }
@@ -134,6 +137,7 @@ int main(int argc, char** argv) {
     char right_path_buf[512] = "";
     bool compare_mode        = false;
     bool pending_compare     = false;
+    bool single_compare      = false;
     std::string status_msg;
 
     async_loader left_loader;
@@ -142,7 +146,7 @@ int main(int argc, char** argv) {
     // Wire up drop callback state.
     app_state drop_state{&single_viewer, &compare,
                          &left_image, &right_image,
-                         &compare_mode, &pending_compare,
+                         &compare_mode, &pending_compare, &single_compare,
                          &status_msg,
                          &left_loader, &right_loader};
     glfwSetWindowUserPointer(window, &drop_state);
@@ -183,12 +187,23 @@ int main(int argc, char** argv) {
             if (left_loader.poll(tmp)) {
                 left_image = std::move(tmp);
                 if (pending_compare) {
-                    compare.load_left(left_image);
-                    compare.left_label = left_loader.path;
                     if (!right_loader.active) {
+                        if (single_compare) {
+                            // Split one image into left/right panels
+                            compare.load_split(left_image);
+                            compare.left_label  = left_loader.path;
+                            compare.right_label = left_loader.path;
+                            single_compare = false;
+                        } else {
+                            compare.load_left(left_image);
+                            compare.left_label = left_loader.path;
+                        }
                         compare_mode    = true;
                         pending_compare = false;
                         status_msg      = "Loaded: " + left_loader.path;
+                    } else {
+                        compare.load_left(left_image);
+                        compare.left_label = left_loader.path;
                     }
                 } else {
                     single_viewer.load_image(left_image);
@@ -235,6 +250,13 @@ int main(int argc, char** argv) {
                     ImGui::MenuItem("Show Grid",    nullptr, &compare.show_grid);
                     ImGui::MenuItem("Show Minimap", nullptr, &compare.show_minimap);
                     ImGui::MenuItem("Sync Views",   nullptr, &compare.sync_views);
+                    if (compare.is_split()) {
+                        ImGui::Separator();
+                        int split_x = compare.split_x;
+                        ImGui::SetNextItemWidth(200.0f);
+                        if (ImGui::SliderInt("Split##sp", &split_x, 1, compare.split_src_width() - 1))
+                            compare.split_x = split_x;
+                    }
                     ImGui::Separator();
                     if (ImGui::MenuItem("Diff Mode", nullptr, &compare.diff_mode))
                         compare.diff_amplify = 1.0f;
@@ -287,10 +309,17 @@ int main(int argc, char** argv) {
             ImGui::SetNextItemWidth(400.0f);
             ImGui::InputText("##rp",  right_path_buf, sizeof(right_path_buf));
             if (ImGui::Button("Load")) {
-                if (left_path_buf[0])  left_loader.start(left_path_buf);
-                if (right_path_buf[0]) right_loader.start(right_path_buf);
-                pending_compare = true;
-                status_msg      = "Loading...";
+                if (left_path_buf[0]) {
+                    left_loader.start(left_path_buf);
+                    if (right_path_buf[0]) {
+                        right_loader.start(right_path_buf);
+                        single_compare = false;
+                    } else {
+                        single_compare = true; // only left entered: split single image
+                    }
+                    pending_compare = true;
+                    status_msg      = "Loading...";
+                }
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
