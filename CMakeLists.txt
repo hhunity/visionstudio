@@ -15,6 +15,7 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(TIFF REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(glad CONFIG REQUIRED)
+find_package(Threads REQUIRED)
 
 # ----- vs_io: TIFF IO library -----
 add_library(vs_io STATIC
@@ -23,7 +24,7 @@ add_library(vs_io STATIC
 target_include_directories(vs_io PUBLIC
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>
 )
-target_link_libraries(vs_io PUBLIC TIFF::TIFF)
+target_link_libraries(vs_io PUBLIC TIFF::TIFF Threads::Threads)
 
 # ----- vs_gui: GUI library -----
 add_library(vs_gui STATIC

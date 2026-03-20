@@ -9,52 +9,82 @@
 #include "io/tiff_io.h"
 #include "util/image_data.h"
 
+#include <atomic>
+#include <chrono>
 #include <cstdio>
+#include <future>
 #include <string>
 
 static void glfw_error_cb(int error, const char* desc) {
     fprintf(stderr, "GLFW Error %d: %s\n", error, desc);
 }
 
-// State shared between the main loop and the GLFW drop callback.
+// ---------------------------------------------------------------------------
+// Async loader: reads a TIFF on a background thread, reports per-row progress.
+// OpenGL calls (load_image) must be made on the main thread after poll() returns true.
+// ---------------------------------------------------------------------------
+
+struct async_loader {
+    std::future<image_data> future;
+    std::atomic<float>      progress{0.0f};
+    bool                    active = false;
+    std::string             path;
+
+    async_loader()                               = default;
+    async_loader(const async_loader&)            = delete;
+    async_loader& operator=(const async_loader&) = delete;
+
+    void start(std::string p) {
+        path = p;
+        progress.store(0.0f);
+        active = true;
+        auto* prog = &progress;
+        future = std::async(std::launch::async, [p = std::move(p), prog]() {
+            image_data img;
+            tiff_io::read(p, img, prog);
+            return img;
+        });
+    }
+
+    // Returns true when the result is ready; moves it into `out`.
+    bool poll(image_data& out) {
+        if (!active) return false;
+        if (future.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+            return false;
+        out    = future.get();
+        active = false;
+        return true;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// App state shared with the GLFW drop callback
+// ---------------------------------------------------------------------------
+
 struct app_state {
-    image_viewer*   single_viewer = nullptr;
-    compare_viewer* compare       = nullptr;
-    image_data*     left_image    = nullptr;
-    image_data*     right_image   = nullptr;
-    bool*           compare_mode  = nullptr;
-    std::string*    status_msg    = nullptr;
+    image_viewer*   single_viewer   = nullptr;
+    compare_viewer* compare         = nullptr;
+    image_data*     left_image      = nullptr;
+    image_data*     right_image     = nullptr;
+    bool*           compare_mode    = nullptr;
+    bool*           pending_compare = nullptr;
+    std::string*    status_msg      = nullptr;
+    async_loader*   left_loader     = nullptr;
+    async_loader*   right_loader    = nullptr;
 };
 
 static void drop_callback(GLFWwindow* window, int count, const char** paths) {
     auto* app = static_cast<app_state*>(glfwGetWindowUserPointer(window));
 
     if (count == 1) {
-        image_data img;
-        if (tiff_io::read(paths[0], img)) {
-            *app->left_image = std::move(img);
-            if (*app->compare_mode) {
-                // In compare mode, split the image left/right half.
-                app->compare->load_split(*app->left_image);
-                app->compare->left_label  = std::string(paths[0]) + "  [L]";
-                app->compare->right_label = std::string(paths[0]) + "  [R]";
-                *app->status_msg = std::string("Split compare: ") + paths[0];
-            } else {
-                app->single_viewer->load_image(*app->left_image);
-                *app->status_msg = std::string("Loaded: ") + paths[0];
-            }
-        } else {
-            *app->status_msg = std::string("Failed to load: ") + paths[0];
-        }
+        app->left_loader->start(paths[0]);
+        *app->pending_compare = *app->compare_mode;
+        *app->status_msg      = "Loading...";
     } else if (count >= 2) {
-        // Two or more files dropped — switch to compare mode automatically.
-        bool ok_l = tiff_io::read(paths[0], *app->left_image);
-        bool ok_r = tiff_io::read(paths[1], *app->right_image);
-        if (ok_l) { app->compare->load_left(*app->left_image);  app->compare->left_label  = paths[0]; }
-        if (ok_r) { app->compare->load_right(*app->right_image); app->compare->right_label = paths[1]; }
-        *app->compare_mode = true;
-        *app->status_msg   = (ok_l && ok_r) ? "Compare: both images loaded"
-                                             : "Compare: one or more images failed to load";
+        app->left_loader->start(paths[0]);
+        app->right_loader->start(paths[1]);
+        *app->pending_compare = true;
+        *app->status_msg      = "Loading...";
     }
 }
 
@@ -103,32 +133,32 @@ int main(int argc, char** argv) {
     char left_path_buf[512]  = "";
     char right_path_buf[512] = "";
     bool compare_mode        = false;
+    bool pending_compare     = false;
     std::string status_msg;
+
+    async_loader left_loader;
+    async_loader right_loader;
 
     // Wire up drop callback state.
     app_state drop_state{&single_viewer, &compare,
                          &left_image, &right_image,
-                         &compare_mode, &status_msg};
+                         &compare_mode, &pending_compare,
+                         &status_msg,
+                         &left_loader, &right_loader};
     glfwSetWindowUserPointer(window, &drop_state);
 
-    // Load images from command-line arguments.
+    // Load images from command-line arguments (async).
     // 1 arg  → single viewer
     // 2 args → compare mode
     if (argc >= 3) {
-        const bool ok_l = tiff_io::read(argv[1], left_image);
-        const bool ok_r = tiff_io::read(argv[2], right_image);
-        if (ok_l) { compare.load_left(left_image);   compare.left_label  = argv[1]; }
-        if (ok_r) { compare.load_right(right_image); compare.right_label = argv[2]; }
-        compare_mode = true;
-        status_msg   = (ok_l && ok_r) ? "Compare: both images loaded"
-                                      : "Compare: one or more images failed to load";
+        left_loader.start(argv[1]);
+        right_loader.start(argv[2]);
+        pending_compare = true;
+        status_msg      = "Loading...";
     } else if (argc == 2) {
-        if (tiff_io::read(argv[1], left_image)) {
-            single_viewer.load_image(left_image);
-            status_msg = std::string("Loaded: ") + argv[1];
-        } else {
-            status_msg = std::string("Failed to load: ") + argv[1];
-        }
+        left_loader.start(argv[1]);
+        pending_compare = false;
+        status_msg      = "Loading...";
     }
 
     // -------------------------------------------------------------------------
@@ -147,6 +177,35 @@ int main(int argc, char** argv) {
         glfwGetFramebufferSize(window, &fb_w, &fb_h);
         glfwGetWindowSize(window, &win_w, &win_h);
 
+        // ----- Poll async loaders (OpenGL calls must be on main thread) -----
+        {
+            image_data tmp;
+            if (left_loader.poll(tmp)) {
+                left_image = std::move(tmp);
+                if (pending_compare) {
+                    compare.load_left(left_image);
+                    compare.left_label = left_loader.path;
+                    if (!right_loader.active) {
+                        compare_mode    = true;
+                        pending_compare = false;
+                        status_msg      = "Loaded: " + left_loader.path;
+                    }
+                } else {
+                    single_viewer.load_image(left_image);
+                    compare_mode = false;
+                    status_msg   = "Loaded: " + left_loader.path;
+                }
+            }
+            if (right_loader.poll(tmp)) {
+                right_image = std::move(tmp);
+                compare.load_right(right_image);
+                compare.right_label = right_loader.path;
+                compare_mode        = true;
+                pending_compare     = false;
+                status_msg          = "Loaded";
+            }
+        }
+
         // Full-screen host window
         ImGui::SetNextWindowPos({0.0f, 0.0f});
         ImGui::SetNextWindowSize({static_cast<float>(win_w), static_cast<float>(win_h)});
@@ -157,8 +216,6 @@ int main(int argc, char** argv) {
             ImGuiWindowFlags_NoBringToFrontOnFocus);
 
         // ----- Menu bar -----
-        // Use flags to defer OpenPopup calls outside of the menu scope,
-        // because OpenPopup inside BeginMenu/EndMenu uses a different ID stack.
         bool open_single  = false;
         bool open_compare = false;
 
@@ -178,14 +235,9 @@ int main(int argc, char** argv) {
                     ImGui::MenuItem("Show Grid",    nullptr, &compare.show_grid);
                     ImGui::MenuItem("Show Minimap", nullptr, &compare.show_minimap);
                     ImGui::MenuItem("Sync Views",   nullptr, &compare.sync_views);
-                    if (compare.is_split()) {
-                        ImGui::Separator();
-                        ImGui::SliderInt("Split X (px)##sp", &compare.split_x,
-                                         1, compare.split_src_width() - 1);
-                    }
                     ImGui::Separator();
                     if (ImGui::MenuItem("Diff Mode", nullptr, &compare.diff_mode))
-                        compare.diff_amplify = 1.0f; // reset amplify on toggle
+                        compare.diff_amplify = 1.0f;
                     if (compare.diff_mode)
                         ImGui::SliderFloat("Amplify##d", &compare.diff_amplify, 1.0f, 20.0f);
                     ImGui::Separator();
@@ -200,7 +252,6 @@ int main(int argc, char** argv) {
             ImGui::EndMenuBar();
         }
 
-        // Open popups here, outside the menu scope, so the ID stack is consistent.
         if (open_single)  ImGui::OpenPopup("##open_single");
         if (open_compare) ImGui::OpenPopup("##open_compare");
 
@@ -211,16 +262,9 @@ int main(int argc, char** argv) {
             ImGui::SetNextItemWidth(400.0f);
             ImGui::InputText("##lp", left_path_buf, sizeof(left_path_buf));
             if (ImGui::Button("Load")) {
-                image_data img;
-                if (tiff_io::read(left_path_buf, img)) {
-                    left_image = std::move(img);
-                    single_viewer.load_image(left_image);
-                    compare_mode      = false;
-                    compare.left_label = left_path_buf;
-                    status_msg        = std::string("Loaded: ") + left_path_buf;
-                } else {
-                    status_msg = std::string("Failed to load: ") + left_path_buf;
-                }
+                left_loader.start(left_path_buf);
+                pending_compare = false;
+                status_msg      = "Loading...";
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
@@ -234,34 +278,14 @@ int main(int argc, char** argv) {
             ImGui::Text("Left TIFF:");
             ImGui::SetNextItemWidth(400.0f);
             ImGui::InputText("##lp2", left_path_buf, sizeof(left_path_buf));
-            ImGui::Text("Right TIFF: (leave empty to use same file as left)");
+            ImGui::Text("Right TIFF:");
             ImGui::SetNextItemWidth(400.0f);
             ImGui::InputText("##rp",  right_path_buf, sizeof(right_path_buf));
             if (ImGui::Button("Load")) {
-                bool ok_l = false, ok_r = false;
-                image_data limg;
-                if ((ok_l = tiff_io::read(left_path_buf, limg))) {
-                    left_image = std::move(limg);
-                    if (right_path_buf[0] == '\0') {
-                        // No right path — split the image left/right half.
-                        compare.load_split(left_image);
-                        compare.left_label  = std::string(left_path_buf) + "  [L]";
-                        compare.right_label = std::string(left_path_buf) + "  [R]";
-                        ok_r = true;
-                    } else {
-                        compare.load_left(left_image);
-                        compare.left_label = left_path_buf;
-                        image_data rimg;
-                        if ((ok_r = tiff_io::read(right_path_buf, rimg))) {
-                            right_image = std::move(rimg);
-                            compare.load_right(right_image);
-                            compare.right_label = right_path_buf;
-                        }
-                    }
-                }
-                compare_mode = true;
-                status_msg   = (ok_l && ok_r) ? "Both panels loaded"
-                                               : "One or more images failed to load";
+                if (left_path_buf[0])  left_loader.start(left_path_buf);
+                if (right_path_buf[0]) right_loader.start(right_path_buf);
+                pending_compare = true;
+                status_msg      = "Loading...";
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
@@ -282,10 +306,33 @@ int main(int argc, char** argv) {
         // ----- Status bar -----
         ImGui::Separator();
         ImGui::TextUnformatted(status_msg.empty()
-            ? "Ready  |  Drop TIFF to open  |  Drop 2 TIFFs to compare  |  Compare Mode + Drop 1 TIFF: split L/R halves  |  Scroll: zoom  |  Ctrl+Scroll: pan H  |  Shift+Scroll: pan V  |  Drag: pan  |  Double-click: fit"
+            ? "Ready  |  Drop TIFF to open  |  Drop 2 TIFFs to compare  |  Scroll: zoom  |  Ctrl+Scroll: pan H  |  Shift+Scroll: pan V  |  Drag: pan  |  Double-click: fit"
             : status_msg.c_str());
 
         ImGui::End();
+
+        // ----- Loading progress overlay (rendered after main window to appear on top) -----
+        if (left_loader.active || right_loader.active) {
+            ImGui::SetNextWindowPos(
+                {static_cast<float>(win_w) * 0.5f, static_cast<float>(win_h) * 0.5f},
+                ImGuiCond_Always, {0.5f, 0.5f});
+            ImGui::SetNextWindowBgAlpha(0.85f);
+            ImGui::SetNextWindowSize({320.0f, 0.0f});
+            ImGui::Begin("##loading_overlay", nullptr,
+                ImGuiWindowFlags_NoDecoration    | ImGuiWindowFlags_NoMove        |
+                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoNav);
+            if (left_loader.active) {
+                ImGui::TextUnformatted("Loading...");
+                ImGui::ProgressBar(left_loader.progress.load(), {-1.0f, 0.0f});
+            }
+            if (right_loader.active) {
+                if (left_loader.active) ImGui::Spacing();
+                ImGui::TextUnformatted("Loading (right)...");
+                ImGui::ProgressBar(right_loader.progress.load(), {-1.0f, 0.0f});
+            }
+            ImGui::End();
+        }
 
         // Render
         ImGui::Render();
