@@ -28,6 +28,19 @@ C++ImGuiライブラリで、巨大画像の高速画像ビューワーを提供
 - `api` -main.cppの置き場。アプリケーションの入り口 
 
 
+## アプリケーションモード設計
+
+起動時に `--mode` で動作モードを固定する。実行中のモード切り替えは行わない。
+コードの複雑化（フラグの絡み合い）を避けるため、この方針を維持すること。
+
+| モード | 引数例 | 概要 |
+|---|---|---|
+| single | `--mode single image.tiff` | 1画像ビューア |
+| compare | `--mode compare -l left.tiff -r right.tiff` | 2画像比較（Diffも可） |
+| split | `--mode split image.tiff` | 1画像を左右分割比較（Diffも可） |
+
+将来モードを追加する場合は `app_mode` enum に追加し、drop_callback・poll・View メニューの switch/if をそれぞれ拡張する。
+
 ## コーディング規約
 - 英語で書く。コード内での日本語は使用禁止
 - 変数名・関数名は英語（スネークケース）
