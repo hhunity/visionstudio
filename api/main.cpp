@@ -180,7 +180,8 @@ int main(int argc, char** argv) {
                     ImGui::MenuItem("Sync Views",   nullptr, &compare.sync_views);
                     if (compare.is_split()) {
                         ImGui::Separator();
-                        ImGui::SliderFloat("Split Position##sp", &compare.split_ratio, 0.01f, 0.99f);
+                        ImGui::SliderInt("Split X (px)##sp", &compare.split_x,
+                                         1, compare.split_src_width() - 1);
                     }
                     ImGui::Separator();
                     if (ImGui::MenuItem("Diff Mode", nullptr, &compare.diff_mode))

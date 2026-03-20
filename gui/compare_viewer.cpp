@@ -29,19 +29,19 @@ bool compare_viewer::load_single(const image_data& img) {
 
 bool compare_viewer::load_split(const image_data& img) {
     if (img.empty()) return false;
-    split_src_           = img;
-    is_split_            = true;
-    split_ratio_applied_ = -1.0f; // force apply_split() on next render
-    diff_applied_        = false;
+    split_src_      = img;
+    is_split_       = true;
+    split_x         = img.width / 2;  // default: midpoint
+    split_x_applied_ = -1;            // force apply_split() on next render
+    diff_applied_   = false;
     return true;
 }
 
 void compare_viewer::apply_split() {
     if (split_src_.empty()) return;
 
-    const int split_x = static_cast<int>(split_src_.width * split_ratio);
-    const int left_w  = std::max(1, split_x);
-    const int right_w = std::max(1, split_src_.width - left_w);
+    const int left_w  = std::max(1, std::min(split_x, split_src_.width - 1));
+    const int right_w = split_src_.width - left_w;
     const int h       = split_src_.height;
 
     image_data left_half, right_half;
@@ -61,9 +61,9 @@ void compare_viewer::apply_split() {
                   right_half.pixels.begin() + static_cast<ptrdiff_t>(y) * right_w * 4);
     }
 
-    right_orig_          = right_half;
-    diff_applied_        = false;
-    split_ratio_applied_ = split_ratio;
+    right_orig_      = right_half;
+    diff_applied_    = false;
+    split_x_applied_ = split_x;
     left_viewer_.load_image(left_half);
     right_viewer_.load_image(right_half);
 }
@@ -131,8 +131,8 @@ void compare_viewer::render(float width, float height) {
     if (width  < 2.0f)  width  = 2.0f;
     if (height < 1.0f)  height = 1.0f;
 
-    // Re-slice if split ratio changed.
-    if (is_split_ && split_ratio != split_ratio_applied_) {
+    // Re-slice if split position changed.
+    if (is_split_ && split_x != split_x_applied_) {
         apply_split();
     }
 
