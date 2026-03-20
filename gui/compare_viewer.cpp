@@ -24,6 +24,36 @@ bool compare_viewer::load_single(const image_data& img) {
     return ok_l && ok_r;
 }
 
+bool compare_viewer::load_split(const image_data& img) {
+    if (img.empty()) return false;
+
+    const int left_w  = img.width / 2;
+    const int right_w = img.width - left_w;
+    const int h       = img.height;
+
+    image_data left_half, right_half;
+    left_half.width   = left_w;
+    left_half.height  = h;
+    left_half.pixels.resize(static_cast<size_t>(left_w) * h * 4);
+    right_half.width  = right_w;
+    right_half.height = h;
+    right_half.pixels.resize(static_cast<size_t>(right_w) * h * 4);
+
+    for (int y = 0; y < h; ++y) {
+        const auto row_src = img.pixels.cbegin() + static_cast<ptrdiff_t>(y) * img.width * 4;
+        std::copy(row_src,              row_src + left_w  * 4,
+                  left_half.pixels.begin()  + static_cast<ptrdiff_t>(y) * left_w  * 4);
+        std::copy(row_src + left_w * 4, row_src + img.width * 4,
+                  right_half.pixels.begin() + static_cast<ptrdiff_t>(y) * right_w * 4);
+    }
+
+    right_orig_   = right_half;
+    diff_applied_ = false;
+    const bool ok_l = left_viewer_.load_image(left_half);
+    const bool ok_r = right_viewer_.load_image(right_half);
+    return ok_l && ok_r;
+}
+
 // ---------------------------------------------------------------------------
 // Diff helpers
 // ---------------------------------------------------------------------------

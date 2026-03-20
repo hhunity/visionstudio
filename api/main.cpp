@@ -34,11 +34,11 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
         if (tiff_io::read(paths[0], img)) {
             *app->left_image = std::move(img);
             if (*app->compare_mode) {
-                // In compare mode, load the same image on both sides.
-                app->compare->load_single(*app->left_image);
-                app->compare->left_label  = paths[0];
-                app->compare->right_label = paths[0];
-                *app->status_msg = std::string("Compare (same): ") + paths[0];
+                // In compare mode, split the image left/right half.
+                app->compare->load_split(*app->left_image);
+                app->compare->left_label  = std::string(paths[0]) + "  [L]";
+                app->compare->right_label = std::string(paths[0]) + "  [R]";
+                *app->status_msg = std::string("Split compare: ") + paths[0];
             } else {
                 app->single_viewer->load_image(*app->left_image);
                 *app->status_msg = std::string("Loaded: ") + paths[0];
@@ -238,10 +238,10 @@ int main(int argc, char** argv) {
                 if ((ok_l = tiff_io::read(left_path_buf, limg))) {
                     left_image = std::move(limg);
                     if (right_path_buf[0] == '\0') {
-                        // No right path — display same image on both sides.
-                        compare.load_single(left_image);
-                        compare.left_label  = left_path_buf;
-                        compare.right_label = left_path_buf;
+                        // No right path — split the image left/right half.
+                        compare.load_split(left_image);
+                        compare.left_label  = std::string(left_path_buf) + "  [L]";
+                        compare.right_label = std::string(left_path_buf) + "  [R]";
                         ok_r = true;
                     } else {
                         compare.load_left(left_image);
@@ -277,7 +277,7 @@ int main(int argc, char** argv) {
         // ----- Status bar -----
         ImGui::Separator();
         ImGui::TextUnformatted(status_msg.empty()
-            ? "Ready  |  Drop TIFF to open  |  Drop 2 TIFFs to compare  |  Compare Mode + Drop 1 TIFF: same image on both sides  |  Scroll: zoom  |  Ctrl+Scroll: pan H  |  Shift+Scroll: pan V  |  Drag: pan  |  Double-click: fit"
+            ? "Ready  |  Drop TIFF to open  |  Drop 2 TIFFs to compare  |  Compare Mode + Drop 1 TIFF: split L/R halves  |  Scroll: zoom  |  Ctrl+Scroll: pan H  |  Shift+Scroll: pan V  |  Drag: pan  |  Double-click: fit"
             : status_msg.c_str());
 
         ImGui::End();
