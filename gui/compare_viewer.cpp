@@ -85,14 +85,16 @@ void compare_viewer::compute_diff() {
 
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
-            const size_t idx = (static_cast<size_t>(y) * w + x) * 4;
+            const size_t dst = (static_cast<size_t>(y) * w       + x) * 4;
+            const size_t li  = (static_cast<size_t>(y) * L.width + x) * 4;
+            const size_t ri  = (static_cast<size_t>(y) * R.width + x) * 4;
             for (int c = 0; c < 3; ++c) { // R, G, B
-                const int diff = static_cast<int>(L.pixels[idx + c])
-                               - static_cast<int>(R.pixels[idx + c]);
+                const int diff = static_cast<int>(L.pixels[li + c])
+                               - static_cast<int>(R.pixels[ri + c]);
                 const int amplified = static_cast<int>(std::abs(diff) * diff_amplify);
-                diff_data_.pixels[idx + c] = static_cast<uint8_t>(std::min(255, amplified));
+                diff_data_.pixels[dst + c] = static_cast<uint8_t>(std::min(255, amplified));
             }
-            diff_data_.pixels[idx + 3] = 255; // A always opaque
+            diff_data_.pixels[dst + 3] = 255; // A always opaque
         }
     }
 }
