@@ -1,0 +1,13 @@
+{
+  "name": "visionstudio",
+  "version": "0.1.0",
+  "dependencies": [
+    {
+      "name": "imgui",
+      "features": ["glfw-binding", "opengl3-binding"]
+    },
+    "glfw3",
+    "tiff",
+    "glad"
+  ]
+}

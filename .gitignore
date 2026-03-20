@@ -1,0 +1,22 @@
+# Test images — keep large files out of the repo
+*.tif
+*.tiff
+
+# vcpkg (cloned separately)
+/external/vcpkg/
+
+# Build & output
+/build/
+/out/
+
+# CMake generated
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+
+# macOS
+.DS_Store
+
+# VSCode
+.vscode/
