@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cmath>
 #include <imgui.h>
+#include <thread>
+#include <vector>
 
 compare_viewer::compare_viewer() = default;
 
@@ -83,20 +85,41 @@ void compare_viewer::compute_diff() {
     diff_data_.height = h;
     diff_data_.pixels.resize(static_cast<size_t>(w) * h * 4);
 
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            const size_t dst = (static_cast<size_t>(y) * w       + x) * 4;
-            const size_t li  = (static_cast<size_t>(y) * L.width + x) * 4;
-            const size_t ri  = (static_cast<size_t>(y) * R.width + x) * 4;
-            for (int c = 0; c < 3; ++c) { // R, G, B
-                const int diff = static_cast<int>(L.pixels[li + c])
-                               - static_cast<int>(R.pixels[ri + c]);
-                const int amplified = static_cast<int>(std::abs(diff) * diff_amplify);
-                diff_data_.pixels[dst + c] = static_cast<uint8_t>(std::min(255, amplified));
+    // Divide rows among threads; each thread writes to a disjoint output region.
+    const int hw       = static_cast<int>(std::thread::hardware_concurrency());
+    const int nthreads = std::max(1, std::min(hw, h));
+    const float amplify = diff_amplify; // capture by value for thread safety
+
+    auto compute_rows = [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const size_t dst = (static_cast<size_t>(y) * w       + x) * 4;
+                const size_t li  = (static_cast<size_t>(y) * L.width + x) * 4;
+                const size_t ri  = (static_cast<size_t>(y) * R.width + x) * 4;
+                for (int c = 0; c < 3; ++c) {
+                    const int diff      = static_cast<int>(L.pixels[li + c])
+                                        - static_cast<int>(R.pixels[ri + c]);
+                    const int amplified = static_cast<int>(std::abs(diff) * amplify);
+                    diff_data_.pixels[dst + c] = static_cast<uint8_t>(std::min(255, amplified));
+                }
+                diff_data_.pixels[dst + 3] = 255;
             }
-            diff_data_.pixels[dst + 3] = 255; // A always opaque
         }
+    };
+
+    if (nthreads == 1) {
+        compute_rows(0, h);
+        return;
     }
+
+    std::vector<std::thread> threads;
+    threads.reserve(nthreads);
+    for (int t = 0; t < nthreads; ++t) {
+        const int y0 = t       * h / nthreads;
+        const int y1 = (t + 1) * h / nthreads;
+        threads.emplace_back(compute_rows, y0, y1);
+    }
+    for (auto& th : threads) th.join();
 }
 
 void compare_viewer::update_right_viewer() {

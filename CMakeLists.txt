@@ -40,6 +40,7 @@ target_link_libraries(vs_gui PUBLIC
     OpenGL::GL
     glad::glad
     vs_io
+    Threads::Threads
 )
 
 if(APPLE)
