@@ -178,6 +178,10 @@ int main(int argc, char** argv) {
                     ImGui::MenuItem("Show Grid",    nullptr, &compare.show_grid);
                     ImGui::MenuItem("Show Minimap", nullptr, &compare.show_minimap);
                     ImGui::MenuItem("Sync Views",   nullptr, &compare.sync_views);
+                    if (compare.is_split()) {
+                        ImGui::Separator();
+                        ImGui::SliderFloat("Split Position##sp", &compare.split_ratio, 0.01f, 0.99f);
+                    }
                     ImGui::Separator();
                     if (ImGui::MenuItem("Diff Mode", nullptr, &compare.diff_mode))
                         compare.diff_amplify = 1.0f; // reset amplify on toggle

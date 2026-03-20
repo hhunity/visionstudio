@@ -6,18 +6,21 @@
 compare_viewer::compare_viewer() = default;
 
 bool compare_viewer::load_left(const image_data& img) {
-    diff_applied_ = false; // force recompute on next render
+    is_split_     = false;
+    diff_applied_ = false;
     return left_viewer_.load_image(img);
 }
 
 bool compare_viewer::load_right(const image_data& img) {
-    right_orig_   = img;   // keep original for diff toggle
+    is_split_     = false;
+    right_orig_   = img;
     diff_applied_ = false;
     return right_viewer_.load_image(img);
 }
 
 bool compare_viewer::load_single(const image_data& img) {
-    right_orig_   = img;   // keep copy as original right for diff toggle
+    is_split_     = false;
+    right_orig_   = img;
     diff_applied_ = false;
     const bool ok_l = left_viewer_.load_image(img);
     const bool ok_r = right_viewer_.load_image(img);
@@ -26,10 +29,20 @@ bool compare_viewer::load_single(const image_data& img) {
 
 bool compare_viewer::load_split(const image_data& img) {
     if (img.empty()) return false;
+    split_src_           = img;
+    is_split_            = true;
+    split_ratio_applied_ = -1.0f; // force apply_split() on next render
+    diff_applied_        = false;
+    return true;
+}
 
-    const int left_w  = img.width / 2;
-    const int right_w = img.width - left_w;
-    const int h       = img.height;
+void compare_viewer::apply_split() {
+    if (split_src_.empty()) return;
+
+    const int split_x = static_cast<int>(split_src_.width * split_ratio);
+    const int left_w  = std::max(1, split_x);
+    const int right_w = std::max(1, split_src_.width - left_w);
+    const int h       = split_src_.height;
 
     image_data left_half, right_half;
     left_half.width   = left_w;
@@ -40,18 +53,19 @@ bool compare_viewer::load_split(const image_data& img) {
     right_half.pixels.resize(static_cast<size_t>(right_w) * h * 4);
 
     for (int y = 0; y < h; ++y) {
-        const auto row_src = img.pixels.cbegin() + static_cast<ptrdiff_t>(y) * img.width * 4;
+        const auto row_src = split_src_.pixels.cbegin()
+                           + static_cast<ptrdiff_t>(y) * split_src_.width * 4;
         std::copy(row_src,              row_src + left_w  * 4,
                   left_half.pixels.begin()  + static_cast<ptrdiff_t>(y) * left_w  * 4);
-        std::copy(row_src + left_w * 4, row_src + img.width * 4,
+        std::copy(row_src + left_w * 4, row_src + (left_w + right_w) * 4,
                   right_half.pixels.begin() + static_cast<ptrdiff_t>(y) * right_w * 4);
     }
 
-    right_orig_   = right_half;
-    diff_applied_ = false;
-    const bool ok_l = left_viewer_.load_image(left_half);
-    const bool ok_r = right_viewer_.load_image(right_half);
-    return ok_l && ok_r;
+    right_orig_          = right_half;
+    diff_applied_        = false;
+    split_ratio_applied_ = split_ratio;
+    left_viewer_.load_image(left_half);
+    right_viewer_.load_image(right_half);
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +130,11 @@ void compare_viewer::render(float width, float height) {
     if (height <= 0.0f) height = ImGui::GetContentRegionAvail().y;
     if (width  < 2.0f)  width  = 2.0f;
     if (height < 1.0f)  height = 1.0f;
+
+    // Re-slice if split ratio changed.
+    if (is_split_ && split_ratio != split_ratio_applied_) {
+        apply_split();
+    }
 
     // Reload right viewer if diff_mode or amplify changed.
     if (diff_mode != diff_applied_ ||

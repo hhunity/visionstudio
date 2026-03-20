@@ -11,7 +11,9 @@ public:
     bool load_left(const image_data& img);
     bool load_right(const image_data& img);
     bool load_single(const image_data& img);  // load same image to both left and right
-    bool load_split(const image_data& img);   // split image at midpoint: left half / right half
+    bool load_split(const image_data& img);   // split image: left portion / right portion
+
+    bool is_split() const { return is_split_; }
 
     // Render two panels side by side.
     // width/height of 0 means "fill available space".
@@ -24,12 +26,14 @@ public:
     bool        sync_views       = true;
     bool        diff_mode        = false;  // right panel shows |left - right|
     float       diff_amplify     = 1.0f;   // multiply diff values to enhance subtle differences
+    float       split_ratio      = 0.5f;   // split position (0.01-0.99); only used in split mode
     std::string left_label;
     std::string right_label;
 
 private:
     void compute_diff();
     void update_right_viewer();  // reload right viewer with diff or original
+    void apply_split();          // slice split_src_ at split_ratio and reload both viewers
 
     image_viewer left_viewer_;
     image_viewer right_viewer_;
@@ -39,4 +43,8 @@ private:
     image_data diff_data_;        // computed diff image
     bool       diff_applied_    = false;
     float      amplify_applied_ = 1.0f;
+
+    image_data split_src_;              // original full image when in split mode
+    bool       is_split_           = false;
+    float      split_ratio_applied_ = -1.0f;  // last ratio used; -1 forces initial apply
 };
