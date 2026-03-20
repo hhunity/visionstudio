@@ -172,11 +172,19 @@ int main(int argc, char** argv) {
                 ImGui::Separator();
 
                 if (compare_mode) {
-                    ImGui::MenuItem("Show Grid",   nullptr, &compare.show_grid);
-                    ImGui::MenuItem("Sync Views",  nullptr, &compare.sync_views);
+                    ImGui::MenuItem("Show Grid",    nullptr, &compare.show_grid);
+                    ImGui::MenuItem("Show Minimap", nullptr, &compare.show_minimap);
+                    ImGui::MenuItem("Sync Views",   nullptr, &compare.sync_views);
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Diff Mode", nullptr, &compare.diff_mode))
+                        compare.diff_amplify = 1.0f; // reset amplify on toggle
+                    if (compare.diff_mode)
+                        ImGui::SliderFloat("Amplify##d", &compare.diff_amplify, 1.0f, 20.0f);
+                    ImGui::Separator();
                     ImGui::SliderInt("Grid Spacing##c", &compare.grid_spacing, 10, 500);
                 } else {
-                    ImGui::MenuItem("Show Grid", nullptr, &single_viewer.show_grid);
+                    ImGui::MenuItem("Show Grid",    nullptr, &single_viewer.show_grid);
+                    ImGui::MenuItem("Show Minimap", nullptr, &single_viewer.show_minimap);
                     ImGui::SliderInt("Grid Spacing##s", &single_viewer.grid_spacing, 10, 500);
                 }
                 ImGui::EndMenu();

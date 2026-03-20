@@ -18,12 +18,23 @@ public:
     bool        show_grid        = false;
     int         grid_spacing     = 100;
     bool        show_coordinates = true;
+    bool        show_minimap     = true;
     bool        sync_views       = true;
-    std::string left_label;   // displayed above the left panel (e.g. file path)
-    std::string right_label;  // displayed above the right panel
+    bool        diff_mode        = false;  // right panel shows |left - right|
+    float       diff_amplify     = 1.0f;   // multiply diff values to enhance subtle differences
+    std::string left_label;
+    std::string right_label;
 
 private:
+    void compute_diff();
+    void update_right_viewer();  // reload right viewer with diff or original
+
     image_viewer left_viewer_;
     image_viewer right_viewer_;
     view_state   shared_state_;
+
+    image_data right_orig_;       // original right image (needed to restore when diff is toggled off)
+    image_data diff_data_;        // computed diff image
+    bool       diff_applied_    = false;
+    float      amplify_applied_ = 1.0f;
 };

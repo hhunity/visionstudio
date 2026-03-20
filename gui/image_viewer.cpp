@@ -186,6 +186,9 @@ void image_viewer::draw_content(ImDrawList* dl, const ImVec2& canvas_pos,
 
     if (show_grid)
         draw_grid(dl, canvas_pos, canvas_size, state);
+
+    if (show_minimap)
+        draw_minimap(dl, canvas_pos, canvas_size, state);
 }
 
 void image_viewer::draw_grid(ImDrawList* dl, const ImVec2& origin,
@@ -254,4 +257,51 @@ image_viewer::mouse_query image_viewer::query_mouse_pixel(
 
 std::array<uint8_t, 4> image_viewer::pixel_at(int x, int y) const {
     return cpu_image_.pixel_at(x, y);
+}
+
+void image_viewer::draw_minimap(ImDrawList* dl, const ImVec2& canvas_pos,
+                                 const ImVec2& canvas_size,
+                                 const view_state& state) const {
+    constexpr float max_w  = 160.0f;
+    constexpr float max_h  = 120.0f;
+    constexpr float margin =   8.0f;
+
+    // Preserve image aspect ratio within the max bounds.
+    const float aspect = static_cast<float>(img_w_) / static_cast<float>(img_h_);
+    float mw, mh;
+    if (aspect >= max_w / max_h) { mw = max_w; mh = max_w / aspect; }
+    else                          { mh = max_h; mw = max_h * aspect; }
+
+    // Top-right corner of canvas.
+    const float mx = canvas_pos.x + canvas_size.x - mw - margin;
+    const float my = canvas_pos.y + margin;
+
+    // Semi-transparent background.
+    dl->AddRectFilled({mx - 1.0f, my - 1.0f}, {mx + mw + 1.0f, my + mh + 1.0f},
+                      IM_COL32(0, 0, 0, 160));
+
+    // Thumbnail — same texture, full UV range.
+    auto tex_id = static_cast<ImTextureID>(texture_id_);
+    dl->AddImage(tex_id, {mx, my}, {mx + mw, my + mh});
+
+    // Visible region in image space.
+    const float vis_x0 = -state.pan_x / state.zoom;
+    const float vis_y0 = -state.pan_y / state.zoom;
+    const float vis_x1 = (-state.pan_x + canvas_size.x) / state.zoom;
+    const float vis_y1 = (-state.pan_y + canvas_size.y) / state.zoom;
+
+    // Map to minimap space and clamp to minimap bounds.
+    const float sx = mw / static_cast<float>(img_w_);
+    const float sy = mh / static_cast<float>(img_h_);
+    const float rx0 = mx + std::max(0.0f, std::min(mw, vis_x0 * sx));
+    const float ry0 = my + std::max(0.0f, std::min(mh, vis_y0 * sy));
+    const float rx1 = mx + std::max(0.0f, std::min(mw, vis_x1 * sx));
+    const float ry1 = my + std::max(0.0f, std::min(mh, vis_y1 * sy));
+
+    // Red viewport rectangle.
+    dl->AddRect({rx0, ry0}, {rx1, ry1}, IM_COL32(255, 50, 50, 230), 0.0f, 0, 1.5f);
+
+    // Minimap border.
+    dl->AddRect({mx - 1.0f, my - 1.0f}, {mx + mw + 1.0f, my + mh + 1.0f},
+                IM_COL32(120, 120, 120, 200));
 }

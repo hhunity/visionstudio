@@ -54,10 +54,14 @@ public:
     // Access the internally owned view_state (used by compare_viewer when sync is off).
     const view_state& get_view_state() const { return owned_state_; }
 
+    // Read-only access to the CPU image data (used by compare_viewer for diff).
+    const image_data& get_image_data() const { return cpu_image_; }
+
     // Display options
     bool show_grid        = false;
     int  grid_spacing     = 100;   // spacing in image-space pixels
     bool show_coordinates = true;
+    bool show_minimap     = true;
 
 private:
     void create_texture(const image_data& img);
@@ -71,6 +75,8 @@ private:
                    const ImVec2& size, const view_state& state) const;
     void draw_coordinate_tooltip(const ImVec2& canvas_pos,
                                  const view_state& state) const;
+    void draw_minimap(ImDrawList* dl, const ImVec2& canvas_pos,
+                      const ImVec2& canvas_size, const view_state& state) const;
 
     uint32_t   texture_id_ = 0;
     int        img_w_      = 0;
