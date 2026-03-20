@@ -10,6 +10,7 @@ public:
 
     bool load_left(const image_data& img);
     bool load_right(const image_data& img);
+    bool load_single(const image_data& img);  // load same image to both left and right
 
     // Render two panels side by side.
     // width/height of 0 means "fill available space".

@@ -16,6 +16,14 @@ bool compare_viewer::load_right(const image_data& img) {
     return right_viewer_.load_image(img);
 }
 
+bool compare_viewer::load_single(const image_data& img) {
+    right_orig_   = img;   // keep copy as original right for diff toggle
+    diff_applied_ = false;
+    const bool ok_l = left_viewer_.load_image(img);
+    const bool ok_r = right_viewer_.load_image(img);
+    return ok_l && ok_r;
+}
+
 // ---------------------------------------------------------------------------
 // Diff helpers
 // ---------------------------------------------------------------------------

@@ -34,12 +34,15 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
         if (tiff_io::read(paths[0], img)) {
             *app->left_image = std::move(img);
             if (*app->compare_mode) {
-                app->compare->load_left(*app->left_image);
-                app->compare->left_label = paths[0];
+                // In compare mode, load the same image on both sides.
+                app->compare->load_single(*app->left_image);
+                app->compare->left_label  = paths[0];
+                app->compare->right_label = paths[0];
+                *app->status_msg = std::string("Compare (same): ") + paths[0];
             } else {
                 app->single_viewer->load_image(*app->left_image);
+                *app->status_msg = std::string("Loaded: ") + paths[0];
             }
-            *app->status_msg = std::string("Loaded: ") + paths[0];
         } else {
             *app->status_msg = std::string("Failed to load: ") + paths[0];
         }
@@ -226,24 +229,33 @@ int main(int argc, char** argv) {
             ImGui::Text("Left TIFF:");
             ImGui::SetNextItemWidth(400.0f);
             ImGui::InputText("##lp2", left_path_buf, sizeof(left_path_buf));
-            ImGui::Text("Right TIFF:");
+            ImGui::Text("Right TIFF: (leave empty to use same file as left)");
             ImGui::SetNextItemWidth(400.0f);
             ImGui::InputText("##rp",  right_path_buf, sizeof(right_path_buf));
             if (ImGui::Button("Load")) {
                 bool ok_l = false, ok_r = false;
-                image_data limg, rimg;
-                if ((ok_l = tiff_io::read(left_path_buf,  limg))) {
+                image_data limg;
+                if ((ok_l = tiff_io::read(left_path_buf, limg))) {
                     left_image = std::move(limg);
-                    compare.load_left(left_image);
-                    compare.left_label = left_path_buf;
-                }
-                if ((ok_r = tiff_io::read(right_path_buf, rimg))) {
-                    right_image = std::move(rimg);
-                    compare.load_right(right_image);
-                    compare.right_label = right_path_buf;
+                    if (right_path_buf[0] == '\0') {
+                        // No right path — display same image on both sides.
+                        compare.load_single(left_image);
+                        compare.left_label  = left_path_buf;
+                        compare.right_label = left_path_buf;
+                        ok_r = true;
+                    } else {
+                        compare.load_left(left_image);
+                        compare.left_label = left_path_buf;
+                        image_data rimg;
+                        if ((ok_r = tiff_io::read(right_path_buf, rimg))) {
+                            right_image = std::move(rimg);
+                            compare.load_right(right_image);
+                            compare.right_label = right_path_buf;
+                        }
+                    }
                 }
                 compare_mode = true;
-                status_msg   = (ok_l && ok_r) ? "Both images loaded"
+                status_msg   = (ok_l && ok_r) ? "Both panels loaded"
                                                : "One or more images failed to load";
                 ImGui::CloseCurrentPopup();
             }
@@ -265,7 +277,7 @@ int main(int argc, char** argv) {
         // ----- Status bar -----
         ImGui::Separator();
         ImGui::TextUnformatted(status_msg.empty()
-            ? "Ready  |  Drop TIFF to open  |  Drop 2 TIFFs to compare  |  Scroll: zoom  |  Ctrl+Scroll: pan H  |  Shift+Scroll: pan V  |  Drag: pan  |  Double-click: fit"
+            ? "Ready  |  Drop TIFF to open  |  Drop 2 TIFFs to compare  |  Compare Mode + Drop 1 TIFF: same image on both sides  |  Scroll: zoom  |  Ctrl+Scroll: pan H  |  Shift+Scroll: pan V  |  Drag: pan  |  Double-click: fit"
             : status_msg.c_str());
 
         ImGui::End();
