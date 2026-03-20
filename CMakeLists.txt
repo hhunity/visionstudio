@@ -16,6 +16,7 @@ find_package(TIFF REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(glad CONFIG REQUIRED)
 find_package(Threads REQUIRED)
+find_package(CLI11 CONFIG REQUIRED)
 
 # ----- vs_io: TIFF IO library -----
 add_library(vs_io STATIC
@@ -51,4 +52,4 @@ endif()
 add_executable(visionstudio
     api/main.cpp
 )
-target_link_libraries(visionstudio PRIVATE vs_gui vs_io)
+target_link_libraries(visionstudio PRIVATE vs_gui vs_io CLI11::CLI11)

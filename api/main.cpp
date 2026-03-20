@@ -9,6 +9,7 @@
 #include "io/tiff_io.h"
 #include "util/image_data.h"
 
+#include <CLI/CLI.hpp>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -92,6 +93,26 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
 }
 
 int main(int argc, char** argv) {
+    // -------------------------------------------------------------------------
+    // Argument parsing (CLI11)
+    // -------------------------------------------------------------------------
+    CLI::App cli{"VisionStudio - TIFF image viewer"};
+    cli.set_version_flag("--version", "0.1.0");
+
+    std::string arg_left, arg_right;
+    bool arg_split   = false;
+    bool arg_diff    = false;
+    float arg_amplify = 1.0f;
+
+    cli.add_option("left",       arg_left,    "Image to open (single viewer or --split)");
+    cli.add_option("-r,--right", arg_right,   "Right image for comparison");
+    cli.add_flag("--split",      arg_split,   "Split single image into left/right panels");
+    cli.add_flag("--diff",       arg_diff,    "Enable diff mode on startup");
+    cli.add_option("--amplify",  arg_amplify, "Diff amplification factor (default: 1.0)")
+       ->check(CLI::Range(1.0f, 20.0f));
+
+    CLI11_PARSE(cli, argc, argv);
+
     glfwSetErrorCallback(glfw_error_cb);
     if (!glfwInit()) return 1;
 
@@ -151,17 +172,27 @@ int main(int argc, char** argv) {
                          &left_loader, &right_loader};
     glfwSetWindowUserPointer(window, &drop_state);
 
-    // Load images from command-line arguments (async).
-    // 1 arg  → single viewer
-    // 2 args → compare mode
-    if (argc >= 3) {
-        left_loader.start(argv[1]);
-        right_loader.start(argv[2]);
+    // Apply parsed arguments.
+    if (!arg_left.empty() && !arg_right.empty()) {
+        // Compare two images
+        left_loader.start(arg_left);
+        right_loader.start(arg_right);
+        pending_compare      = true;
+        single_compare       = false;
+        compare.diff_mode    = arg_diff;
+        compare.diff_amplify = arg_amplify;
+        status_msg           = "Loading...";
+    } else if (!arg_left.empty() && arg_split) {
+        // Split single image into left/right panels
+        left_loader.start(arg_left);
         pending_compare = true;
+        single_compare  = true;
         status_msg      = "Loading...";
-    } else if (argc == 2) {
-        left_loader.start(argv[1]);
+    } else if (!arg_left.empty()) {
+        // Single viewer
+        left_loader.start(arg_left);
         pending_compare = false;
+        single_compare  = false;
         status_msg      = "Loading...";
     }
 
