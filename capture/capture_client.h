@@ -9,6 +9,14 @@
 
 enum class sse_state { disconnected, connecting, connected, error };
 
+enum class server_event_type { connected, disconnected, error, capture_done };
+
+struct server_event {
+    server_event_type type;
+    std::string       path;    // capture_done only
+    std::string       message; // error only
+};
+
 class capture_client {
 public:
     explicit capture_client(capture_config cfg);
@@ -31,27 +39,27 @@ public:
     void stop_sse();
 
     // Call from the main thread every frame.
-    // Returns the next completed image path if one is queued, or nullopt.
-    std::optional<std::string> poll_result();
+    // Returns the next server event if one is queued, or nullopt.
+    std::optional<server_event> poll_server_event();
 
     sse_state   get_sse_state()  const { return sse_state_.load(); }
     std::string get_last_error() const;
 
 private:
     void sse_thread_func();
-    void parse_sse_line(const std::string& line);
-    void push_result(std::string path);
+    void dispatch_event(const std::string& event_type, const std::string& data);
+    void push_event(server_event ev);
     void set_error(std::string msg);
 
-    capture_config           cfg_;
+    capture_config            cfg_;
 
-    std::thread              sse_thread_;
-    std::atomic<bool>        stop_flag_{false};
-    std::atomic<sse_state>   sse_state_{sse_state::disconnected};
+    std::thread               sse_thread_;
+    std::atomic<bool>         stop_flag_{false};
+    std::atomic<sse_state>    sse_state_{sse_state::disconnected};
 
-    mutable std::mutex       queue_mtx_;
-    std::vector<std::string> result_queue_;
+    mutable std::mutex        event_mtx_;
+    std::vector<server_event> event_queue_;
 
-    mutable std::mutex       error_mtx_;
-    std::string              last_error_;
+    mutable std::mutex        error_mtx_;
+    std::string               last_error_;
 };
