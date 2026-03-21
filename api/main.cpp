@@ -496,7 +496,8 @@ int main(int argc, char** argv) {
 
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem("Open...")) open_file = true;
+                if (mode != app_mode::capture)
+                    if (ImGui::MenuItem("Open...")) open_file = true;
                 ImGui::Separator();
                 if (ImGui::MenuItem("Quit")) glfwSetWindowShouldClose(window, GLFW_TRUE);
                 ImGui::EndMenu();
