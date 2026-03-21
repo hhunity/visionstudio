@@ -420,6 +420,10 @@ int main(int argc, char** argv) {
             continue;
         }
 
+        // In capture mode, the internal viewer is determined by capture_mode.
+        const bool use_single = (mode == app_mode::single)
+                             || (mode == app_mode::capture && capture_mode == 0);
+
         // ----- Poll async loaders -----
         {
             image_data tmp;
@@ -437,6 +441,18 @@ int main(int argc, char** argv) {
                     compare.load_split(left_image);
                     compare.left_label  = left_loader.path;
                     compare.right_label = left_loader.path;
+                    break;
+                case app_mode::capture:
+                    if (capture_mode == 0) {
+                        single_viewer.load_image(left_image);
+                    } else if (capture_mode == 1) {
+                        compare.load_split(left_image);
+                        compare.left_label  = left_loader.path;
+                        compare.right_label = left_loader.path;
+                    } else {
+                        compare.load_left(left_image);
+                        compare.left_label = left_loader.path;
+                    }
                     break;
                 default:
                     break;
@@ -469,7 +485,18 @@ int main(int argc, char** argv) {
                     status_msg = "Server error: " + ev->message;
                     break;
                 case server_event_type::capture_done:
-                    left_loader.start(ev->path);
+                    if (capture_mode == 0) {
+                        left_loader.start(ev->path);
+                    } else if (capture_mode == 1) {
+                        // Split: load same image into compare as split source
+                        left_loader.start(ev->path);
+                    } else {
+                        // Compare: alternate left/right each capture
+                        if (left_image.empty())
+                            left_loader.start(ev->path);
+                        else
+                            right_loader.start(ev->path);
+                    }
                     status_msg = "Capture complete: " + ev->path;
                     break;
                 }
@@ -503,7 +530,7 @@ int main(int argc, char** argv) {
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("View")) {
-                if (mode == app_mode::single || mode == app_mode::capture) {
+                if (use_single) {
                     ImGui::MenuItem("Show Grid",     nullptr, &single_viewer.show_grid);
                     ImGui::MenuItem("Show Minimap",  nullptr, &single_viewer.show_minimap);
                     ImGui::MenuItem("Show Overlays",  nullptr, &single_viewer.show_overlays);
@@ -791,7 +818,7 @@ int main(int argc, char** argv) {
                 const bool cap_settings_open = ImGui::CollapsingHeader("Capture Settings");
                 ImGui::PopStyleColor(3);
                 if (cap_settings_open) {
-                    constexpr const char* kCaptureModes[] = {"Capture", "Mode1", "Mode2"};
+                    constexpr const char* kCaptureModes[] = {"Capture (Single)", "Mode1 (Split)", "Mode2 (Compare)"};
                     ImGui::TextDisabled("Capture Mode");
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
                     ImGui::Combo("##cap_mode", &capture_mode, kCaptureModes, 3);
@@ -857,7 +884,7 @@ int main(int argc, char** argv) {
 
         const ImVec2 viewer_origin = ImGui::GetCursorScreenPos();
 
-        if (mode == app_mode::single || mode == app_mode::capture) {
+        if (use_single) {
             single_viewer.render("single_canvas", viewer_w, viewer_h);
         } else {
             compare.render(viewer_w, viewer_h);
@@ -938,7 +965,7 @@ int main(int argc, char** argv) {
             ImGui::SetCursorScreenPos({viewer_origin.x + viewer_w + spacing_x, viewer_origin.y});
             ImGui::BeginChild("##pixel_panel", {panel_w, viewer_h}, ImGuiChildFlags_Borders);
 
-            if (mode == app_mode::single || mode == app_mode::capture) {
+            if (use_single) {
                 const auto& hi = single_viewer.get_hover_info();
                 if (!hi.valid) {
                     ImGui::TextDisabled("--");
@@ -978,7 +1005,7 @@ int main(int argc, char** argv) {
             const float graph_h = ImGui::GetContentRegionAvail().y;
             const float graph_w = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
 
-            if (mode == app_mode::single || mode == app_mode::capture) {
+            if (use_single) {
                 const auto& hi    = single_viewer.get_hover_info();
                 const image_data* img = &single_viewer.get_image_data();
                 const int cx = hi.valid ? hi.img_x : -1;
