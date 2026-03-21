@@ -34,9 +34,13 @@ capture_config capture_config::load(const std::string& json_path) {
     if (c.contains("sse_path")        && c["sse_path"].is_string())        cfg.sse_path        = c["sse_path"];
     if (c.contains("port")            && c["port"].is_number_integer())    cfg.port            = c["port"];
     if (c.contains("timeout_ms")      && c["timeout_ms"].is_number_integer()) cfg.timeout_ms   = c["timeout_ms"];
-    if (c.contains("config_files") && c["config_files"].is_array()) {
-        for (const auto& f : c["config_files"])
-            if (f.is_string()) cfg.config_files.push_back(f.get<std::string>());
+    if (c.contains("connect_config_files") && c["connect_config_files"].is_array()) {
+        for (const auto& f : c["connect_config_files"])
+            if (f.is_string()) cfg.connect_config_files.push_back(f.get<std::string>());
+    }
+    if (c.contains("capture_config_files") && c["capture_config_files"].is_array()) {
+        for (const auto& f : c["capture_config_files"])
+            if (f.is_string()) cfg.capture_config_files.push_back(f.get<std::string>());
     }
     return cfg;
 }
@@ -56,7 +60,8 @@ void capture_config::save(const std::string& json_path,
         {"disconnect_path", cfg.disconnect_path},
         {"sse_path",        cfg.sse_path},
         {"timeout_ms",      cfg.timeout_ms},
-        {"config_files",    cfg.config_files},
+        {"connect_config_files", cfg.connect_config_files},
+        {"capture_config_files", cfg.capture_config_files},
     };
 
     if (!imgui_ini.empty())

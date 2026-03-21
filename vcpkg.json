@@ -12,6 +12,7 @@
     "cli11",
     "nlohmann-json",
     "implot",
-    "cpp-httplib"
+    "cpp-httplib",
+    "nativefiledialog-extended"
   ]
 }

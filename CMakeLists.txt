@@ -20,6 +20,7 @@ find_package(CLI11 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(implot CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
+find_package(nfd CONFIG REQUIRED)
 
 # ----- vs_io: TIFF IO + JSONL IO library -----
 add_library(vs_io STATIC
@@ -70,4 +71,4 @@ target_link_libraries(vs_capture PUBLIC
 add_executable(visionstudio
     api/main.cpp
 )
-target_link_libraries(visionstudio PRIVATE vs_gui vs_io vs_capture CLI11::CLI11 implot::implot)
+target_link_libraries(visionstudio PRIVATE vs_gui vs_io vs_capture CLI11::CLI11 implot::implot nfd::nfd)
