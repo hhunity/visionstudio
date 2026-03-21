@@ -18,6 +18,7 @@ find_package(glad CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(implot CONFIG REQUIRED)
 
 # ----- vs_io: TIFF IO + JSONL IO library -----
 add_library(vs_io STATIC
@@ -54,4 +55,4 @@ endif()
 add_executable(visionstudio
     api/main.cpp
 )
-target_link_libraries(visionstudio PRIVATE vs_gui vs_io CLI11::CLI11)
+target_link_libraries(visionstudio PRIVATE vs_gui vs_io CLI11::CLI11 implot::implot)

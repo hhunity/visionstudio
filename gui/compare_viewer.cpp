@@ -230,11 +230,13 @@ void compare_viewer::render(float width, float height) {
     left_viewer_.show_minimap      = show_minimap;
     left_viewer_.show_coordinates  = false;
     left_viewer_.show_overlays     = show_overlays;
+    left_viewer_.show_crosshair    = show_crosshair;
     right_viewer_.show_grid        = show_grid;
     right_viewer_.grid_spacing     = grid_spacing;
     right_viewer_.show_minimap     = show_minimap;
     right_viewer_.show_coordinates = false;
     right_viewer_.show_overlays    = show_overlays;
+    right_viewer_.show_crosshair   = show_crosshair;
 
     view_state* left_state  = sync_views ? &shared_state_ : nullptr;
     view_state* right_state = sync_views ? &shared_state_ : nullptr;

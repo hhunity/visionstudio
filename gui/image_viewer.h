@@ -77,6 +77,7 @@ public:
     bool show_coordinates = false;
     bool show_minimap     = true;
     bool show_overlays    = true;
+    bool show_crosshair   = false;
 
 private:
     void create_texture(const image_data& img);
@@ -94,6 +95,9 @@ private:
                       const ImVec2& canvas_size, const view_state& state) const;
     void draw_overlays(ImDrawList* dl, const ImVec2& canvas_pos,
                        const view_state& state) const;
+    static void draw_dashed_line(ImDrawList* dl, ImVec2 a, ImVec2 b,
+                                 ImU32 color, float thickness,
+                                 float dash = 5.0f, float gap = 4.0f);
 
     uint32_t   texture_id_ = 0;
     int        img_w_      = 0;

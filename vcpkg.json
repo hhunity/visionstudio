@@ -10,6 +10,7 @@
     "tiff",
     "glad",
     "cli11",
-    "nlohmann-json"
+    "nlohmann-json",
+    "implot"
   ]
 }

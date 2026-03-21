@@ -6,6 +6,7 @@
 
 #include "gui/compare_viewer.h"
 #include "gui/image_viewer.h"
+#include <implot.h>
 #include "io/jsonl_io.h"
 #include "io/tiff_io.h"
 #include "util/image_data.h"
@@ -210,6 +211,7 @@ int main(int argc, char** argv) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    ImPlot::CreateContext();
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(window, true);
@@ -225,7 +227,8 @@ int main(int argc, char** argv) {
     char left_path_buf[512]  = "";
     char right_path_buf[512] = "";
     std::string status_msg;
-    bool        show_pixel_panel = true;
+    bool        show_pixel_panel   = true;
+    bool        show_profile_panel = false;
 
     async_loader           left_loader;
     async_loader           right_loader;
@@ -368,8 +371,9 @@ int main(int argc, char** argv) {
                 if (mode == app_mode::single) {
                     ImGui::MenuItem("Show Grid",     nullptr, &single_viewer.show_grid);
                     ImGui::MenuItem("Show Minimap",  nullptr, &single_viewer.show_minimap);
-                    ImGui::MenuItem("Show Overlays", nullptr, &single_viewer.show_overlays);
-                    ImGui::MenuItem("Show Tooltip",  nullptr, &single_viewer.show_coordinates);
+                    ImGui::MenuItem("Show Overlays",  nullptr, &single_viewer.show_overlays);
+                    ImGui::MenuItem("Show Tooltip",   nullptr, &single_viewer.show_coordinates);
+                    ImGui::MenuItem("Show Crosshair", nullptr, &single_viewer.show_crosshair);
                     if (single_viewer.show_grid) {
                         ImGui::Separator();
                         ImGui::SliderInt("Grid Spacing##s", &single_viewer.grid_spacing, 1, 500);
@@ -377,9 +381,10 @@ int main(int argc, char** argv) {
                 } else {
                     ImGui::MenuItem("Show Grid",     nullptr, &compare.show_grid);
                     ImGui::MenuItem("Show Minimap",  nullptr, &compare.show_minimap);
-                    ImGui::MenuItem("Show Overlays", nullptr, &compare.show_overlays);
-                    ImGui::MenuItem("Show Tooltip",  nullptr, &compare.show_coordinates);
-                    ImGui::MenuItem("Sync Views",    nullptr, &compare.sync_views);
+                    ImGui::MenuItem("Show Overlays",  nullptr, &compare.show_overlays);
+                    ImGui::MenuItem("Show Tooltip",   nullptr, &compare.show_coordinates);
+                    ImGui::MenuItem("Show Crosshair", nullptr, &compare.show_crosshair);
+                    ImGui::MenuItem("Sync Views",     nullptr, &compare.sync_views);
                     if (mode == app_mode::split && compare.is_split()) {
                         ImGui::Separator();
                         ImGui::SetNextItemWidth(200.0f);
@@ -397,7 +402,8 @@ int main(int argc, char** argv) {
                     }
                 }
                 ImGui::Separator();
-                ImGui::MenuItem("Pixel Panel", nullptr, &show_pixel_panel);
+                ImGui::MenuItem("Pixel Panel",   nullptr, &show_pixel_panel);
+                ImGui::MenuItem("Profile Panel", nullptr, &show_profile_panel);
                 ImGui::EndMenu();
             }
             ImGui::EndMenuBar();
@@ -436,8 +442,9 @@ int main(int argc, char** argv) {
         }
 
         // ----- Viewer area -----
-        const float status_h  = ImGui::GetFrameHeightWithSpacing();
-        const float viewer_h  = ImGui::GetContentRegionAvail().y - status_h;
+        const float status_h        = ImGui::GetFrameHeightWithSpacing();
+        const float profile_panel_h = show_profile_panel ? 180.0f : 0.0f;
+        const float viewer_h        = ImGui::GetContentRegionAvail().y - status_h - profile_panel_h;
         constexpr float panel_w = 240.0f;
         const float spacing_x = ImGui::GetStyle().ItemSpacing.x;
         const float viewer_w  = show_pixel_panel
@@ -452,82 +459,80 @@ int main(int argc, char** argv) {
             compare.render(viewer_w, viewer_h);
         }
 
+        // ----- Shared helpers for profile panels -----
+        auto draw_rgba = [](const char* id, const std::array<uint8_t, 4>& rgba) {
+            const ImVec4 cv{rgba[0]/255.f, rgba[1]/255.f, rgba[2]/255.f, rgba[3]/255.f};
+            ImGui::ColorButton(id, cv,
+                ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, {16, 16});
+            ImGui::SameLine();
+            ImGui::Text("R:%3d  G:%3d  B:%3d  A:%3d",
+                        rgba[0], rgba[1], rgba[2], rgba[3]);
+        };
+
+        struct series_entry { const image_data* img; ImU32 color; int cursor; };
+
+        // draw_profile: renders a luminance profile using ImPlot.
+        //   plot_id : unique ImPlot ID string (use "##..." to hide title)
+        //   is_x    : true = horizontal scan at row `fixed`, false = vertical at col `fixed`
+        //   compact : true = suppress axis labels / Y tick labels (for small pixel panel)
+        auto draw_profile = [&](const char* plot_id, bool is_x, int fixed,
+                                std::initializer_list<series_entry> series,
+                                float gw, float gh, bool compact) {
+            // Determine total number of pixels along the profile axis.
+            int total = 0;
+            for (const auto& s : series) {
+                if (s.img && !s.img->empty()) {
+                    total = is_x ? s.img->width : s.img->height;
+                    break;
+                }
+            }
+
+            const ImPlotFlags plot_flags =
+                ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect | ImPlotFlags_NoMouseText;
+            // Always hide tick labels to maximise plot area; grid lines are kept.
+            constexpr ImPlotAxisFlags kAxFlags =
+                ImPlotAxisFlags_NoLabel | ImPlotAxisFlags_NoTickLabels;
+
+            if (ImPlot::BeginPlot(plot_id, {gw, gh}, plot_flags)) {
+                ImPlot::SetupAxes(nullptr, nullptr, kAxFlags, kAxFlags);
+                ImPlot::SetupAxisLimits(ImAxis_X1, 0, total > 1 ? total - 1 : 1,
+                                        ImGuiCond_Always);
+                ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 255, ImGuiCond_Always);
+
+                int sidx = 0;
+                for (const auto& s : series) {
+                    if (!s.img || s.img->empty() || fixed < 0 || total <= 0) { ++sidx; continue; }
+                    // Build float luminance array using this series' own size.
+                    const int n = is_x ? s.img->width : s.img->height;
+                    std::vector<float> ys(n);
+                    for (int i = 0; i < n; ++i) {
+                        const auto px = is_x ? s.img->pixel_at(i, fixed)
+                                             : s.img->pixel_at(fixed, i);
+                        ys[i] = 0.299f * px[0] + 0.587f * px[1] + 0.114f * px[2];
+                    }
+                    // Each series needs a unique label so ImPlot treats them separately.
+                    char lbl[16]; snprintf(lbl, sizeof(lbl), "##lum%d", sidx);
+                    ImPlot::SetNextLineStyle(ImGui::ColorConvertU32ToFloat4(s.color), 1.5f);
+                    ImPlot::PlotLine(lbl, ys.data(), n);
+
+                    // Cursor: vertical red line at hover position.
+                    if (s.cursor >= 0 && s.cursor < n) {
+                        const double cx[2] = {(double)s.cursor, (double)s.cursor};
+                        const double cy[2] = {0.0, 255.0};
+                        char clbl[16]; snprintf(clbl, sizeof(clbl), "##cur%d", sidx);
+                        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.31f, 0.31f, 0.9f), 1.5f);
+                        ImPlot::PlotLine(clbl, cx, cy, 2);
+                    }
+                    ++sidx;
+                }
+                ImPlot::EndPlot();
+            }
+        };
+
         // ----- Pixel panel -----
         if (show_pixel_panel) {
             ImGui::SetCursorScreenPos({viewer_origin.x + viewer_w + spacing_x, viewer_origin.y});
             ImGui::BeginChild("##pixel_panel", {panel_w, viewer_h}, ImGuiChildFlags_Borders);
-
-            auto color_vec = [](const std::array<uint8_t, 4>& c) {
-                return ImVec4(c[0] / 255.f, c[1] / 255.f, c[2] / 255.f, c[3] / 255.f);
-            };
-            auto draw_rgba = [&](const char* id, const std::array<uint8_t, 4>& rgba) {
-                ImGui::ColorButton(id, color_vec(rgba),
-                    ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, {16, 16});
-                ImGui::SameLine();
-                ImGui::Text("R:%3d  G:%3d  B:%3d  A:%3d",
-                            rgba[0], rgba[1], rgba[2], rgba[3]);
-            };
-
-            // Profile graph: draws one or two luminance series with a cursor marker.
-            // series: list of (image_data*, color) pairs
-            struct series_entry { const image_data* img; ImU32 color; int cursor; };
-            auto draw_profile = [&](const char* label, bool is_x, int fixed,
-                                    std::initializer_list<series_entry> series) {
-                constexpr float gh = 52.0f;
-                const float gw = panel_w - 8.0f;
-                ImGui::TextDisabled("%s", label);
-                const ImVec2 p = ImGui::GetCursorScreenPos();
-                ImGui::Dummy({gw, gh});
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                dl->AddRectFilled(p, {p.x + gw, p.y + gh}, IM_COL32(28, 28, 28, 255));
-                dl->AddRect(p, {p.x + gw, p.y + gh}, IM_COL32(80, 80, 80, 255));
-
-                for (const auto& s : series) {
-                    if (!s.img || s.img->empty() || fixed < 0) continue;
-                    const int total = is_x ? s.img->width : s.img->height;
-                    if (total <= 0) continue;
-                    const int n = std::min(total, static_cast<int>(gw));
-                    std::vector<ImVec2> pts;
-                    pts.reserve(n);
-                    for (int i = 0; i < n; ++i) {
-                        const int coord = i * (total - 1) / std::max(n - 1, 1);
-                        const auto rgba = is_x ? s.img->pixel_at(coord, fixed)
-                                               : s.img->pixel_at(fixed, coord);
-                        const float lum = (0.299f * rgba[0] + 0.587f * rgba[1]
-                                           + 0.114f * rgba[2]) / 255.0f;
-                        pts.push_back({p.x + i * gw / std::max(n - 1, 1),
-                                       p.y + gh * (1.0f - lum)});
-                    }
-                    if (pts.size() >= 2)
-                        dl->AddPolyline(pts.data(), static_cast<int>(pts.size()),
-                                        s.color, ImDrawFlags_None, 1.0f);
-
-                    if (s.cursor >= 0 && s.cursor < total) {
-                        const float t  = static_cast<float>(s.cursor) / (total - 1);
-                        const float cx = p.x + t * gw;
-                        dl->AddLine({cx, p.y}, {cx, p.y + gh},
-                                    IM_COL32(255, 80, 80, 220), 1.5f);
-                    }
-                }
-
-                // Luminance values at cursor position
-                bool first = true;
-                for (const auto& s : series) {
-                    if (!s.img || s.img->empty() || fixed < 0 || s.cursor < 0) continue;
-                    const int total = is_x ? s.img->width : s.img->height;
-                    if (s.cursor >= total) continue;
-                    const auto rgba = is_x ? s.img->pixel_at(s.cursor, fixed)
-                                           : s.img->pixel_at(fixed, s.cursor);
-                    const float lum = 0.299f * rgba[0] + 0.587f * rgba[1] + 0.114f * rgba[2];
-                    const ImVec4 tc = {
-                        ((s.color >>  0) & 0xff) / 255.f,
-                        ((s.color >>  8) & 0xff) / 255.f,
-                        ((s.color >> 16) & 0xff) / 255.f, 1.f};
-                    if (!first) ImGui::SameLine();
-                    ImGui::TextColored(tc, "%.1f", static_cast<double>(lum));
-                    first = false;
-                }
-            };
 
             if (mode == app_mode::single) {
                 const auto& hi = single_viewer.get_hover_info();
@@ -538,10 +543,6 @@ int main(int argc, char** argv) {
                     ImGui::Text("zoom : %.2fx", static_cast<double>(hi.zoom));
                     ImGui::Separator();
                     draw_rgba("##swatch", hi.rgba);
-                    ImGui::Separator();
-                    const image_data* img = &single_viewer.get_image_data();
-                    draw_profile("X Profile", true,  hi.img_y, {{img, IM_COL32(80, 200, 255, 220), hi.img_x}});
-                    draw_profile("Y Profile", false, hi.img_x, {{img, IM_COL32(80, 200, 255, 220), hi.img_y}});
                 }
             } else {
                 const auto& hi = compare.get_hover_info();
@@ -556,23 +557,56 @@ int main(int argc, char** argv) {
                     ImGui::Spacing();
                     ImGui::TextDisabled(compare.diff_mode ? "Diff" : "Right");
                     draw_rgba("##rswatch", hi.right_rgba);
-                    ImGui::Separator();
-                    const image_data* li = &compare.get_left_image_data();
-                    const image_data* ri = &compare.get_right_image_data();
-                    draw_profile("X Profile", true,  hi.img_y,
-                        {{li, IM_COL32(80, 200, 255, 220), hi.img_x},
-                         {ri, IM_COL32(255, 160,  60, 220), hi.img_x}});
-                    draw_profile("Y Profile", false, hi.img_x,
-                        {{li, IM_COL32(80, 200, 255, 220), hi.img_y},
-                         {ri, IM_COL32(255, 160,  60, 220), hi.img_y}});
                 }
             }
 
             ImGui::EndChild();
         }
 
-        // Reset cursor to below the viewer area so the status bar sits correctly.
-        ImGui::SetCursorScreenPos({viewer_origin.x, viewer_origin.y + viewer_h});
+        // ----- Bottom profile panel -----
+        if (show_profile_panel) {
+            ImGui::SetCursorScreenPos({viewer_origin.x, viewer_origin.y + viewer_h});
+            const float avail_w = ImGui::GetContentRegionAvail().x;
+            ImGui::BeginChild("##profile_bottom", {avail_w, profile_panel_h}, ImGuiChildFlags_Borders);
+            const float graph_h = ImGui::GetContentRegionAvail().y;
+            const float graph_w = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+
+            if (mode == app_mode::single) {
+                const auto& hi    = single_viewer.get_hover_info();
+                const image_data* img = &single_viewer.get_image_data();
+                const int cx = hi.valid ? hi.img_x : -1;
+                const int cy = hi.valid ? hi.img_y : -1;
+                ImGui::BeginGroup();
+                draw_profile("X Profile##xprof_btm", true,  cy, {{img, IM_COL32(80, 200, 255, 220), cx}}, graph_w, graph_h, false);
+                ImGui::EndGroup();
+                ImGui::SameLine();
+                ImGui::BeginGroup();
+                draw_profile("Y Profile##yprof_btm", false, cx, {{img, IM_COL32(80, 200, 255, 220), cy}}, graph_w, graph_h, false);
+                ImGui::EndGroup();
+            } else {
+                const auto& hi    = compare.get_hover_info();
+                const image_data* li = &compare.get_left_image_data();
+                const image_data* ri = &compare.get_right_image_data();
+                const int cx = hi.valid ? hi.img_x : -1;
+                const int cy = hi.valid ? hi.img_y : -1;
+                ImGui::BeginGroup();
+                draw_profile("X Profile##xprof_btm", true,  cy,
+                    {{li, IM_COL32(80, 200, 255, 220), cx},
+                     {ri, IM_COL32(255, 160,  60, 220), cx}}, graph_w, graph_h, false);
+                ImGui::EndGroup();
+                ImGui::SameLine();
+                ImGui::BeginGroup();
+                draw_profile("Y Profile##yprof_btm", false, cx,
+                    {{li, IM_COL32(80, 200, 255, 220), cy},
+                     {ri, IM_COL32(255, 160,  60, 220), cy}}, graph_w, graph_h, false);
+                ImGui::EndGroup();
+            }
+
+            ImGui::EndChild();
+        }
+
+        // Reset cursor to below all panels so the status bar sits correctly.
+        ImGui::SetCursorScreenPos({viewer_origin.x, viewer_origin.y + viewer_h + profile_panel_h});
 
         // ----- Status bar -----
         ImGui::Separator();
@@ -617,6 +651,7 @@ int main(int argc, char** argv) {
     // Cleanup
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
+    ImPlot::DestroyContext();
     ImGui::DestroyContext();
     glfwDestroyWindow(window);
     glfwTerminate();

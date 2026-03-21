@@ -46,6 +46,7 @@ public:
     bool        show_coordinates = false;
     bool        show_minimap     = true;
     bool        show_overlays    = true;
+    bool        show_crosshair   = false;
     bool        sync_views       = true;
     bool        diff_mode        = false;  // right panel shows |left - right|
     float       diff_amplify     = 1.0f;   // multiply diff values to enhance subtle differences

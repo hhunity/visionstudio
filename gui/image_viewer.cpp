@@ -120,14 +120,7 @@ void image_viewer::render(const char* id, float width, float height,
     handle_input(canvas_pos, canvas_size, *state);
     (void)active; // input handling checks internally
 
-    // Draw
-    ImDrawList* dl      = ImGui::GetWindowDrawList();
-    const ImVec2 clip_max = {canvas_pos.x + canvas_size.x, canvas_pos.y + canvas_size.y};
-    dl->PushClipRect(canvas_pos, clip_max, true);
-    draw_content(dl, canvas_pos, canvas_size, *state);
-    dl->PopClipRect();
-
-    // Update hover info (used by pixel panel in main loop)
+    // Update hover info before drawing so crosshair can use it.
     if (hovered && texture_id_ != 0) {
         const ImVec2 mouse = ImGui::GetIO().MousePos;
         const float fx = (mouse.x - canvas_pos.x - state->pan_x) / state->zoom;
@@ -145,8 +138,40 @@ void image_viewer::render(const char* id, float width, float height,
         last_hover_.valid = false;
     }
 
-    if (show_coordinates && hovered && texture_id_ != 0)
+    // Draw
+    ImDrawList* dl      = ImGui::GetWindowDrawList();
+    const ImVec2 clip_max = {canvas_pos.x + canvas_size.x, canvas_pos.y + canvas_size.y};
+    dl->PushClipRect(canvas_pos, clip_max, true);
+    draw_content(dl, canvas_pos, canvas_size, *state);
+
+    // Crosshair
+    if (show_crosshair && last_hover_.valid) {
+        const float cx = canvas_pos.x + state->pan_x + (last_hover_.img_x + 0.5f) * state->zoom;
+        const float cy = canvas_pos.y + state->pan_y + (last_hover_.img_y + 0.5f) * state->zoom;
+        constexpr ImU32 ch_col = IM_COL32(255, 60, 60, 210);
+        draw_dashed_line(dl, {canvas_pos.x, cy}, {clip_max.x, cy}, ch_col, 1.0f);
+        draw_dashed_line(dl, {cx, canvas_pos.y}, {cx, clip_max.y}, ch_col, 1.0f);
+    }
+
+    dl->PopClipRect();
+
+    if (show_coordinates && last_hover_.valid)
         draw_coordinate_tooltip(canvas_pos, *state);
+}
+
+void image_viewer::draw_dashed_line(ImDrawList* dl, ImVec2 a, ImVec2 b,
+                                     ImU32 color, float thickness,
+                                     float dash, float gap) {
+    const float dx = b.x - a.x, dy = b.y - a.y;
+    const float len = std::sqrt(dx * dx + dy * dy);
+    if (len < 1.0f) return;
+    const float ux = dx / len, uy = dy / len;
+    for (float t = 0.0f; t < len; ) {
+        const float te = std::min(t + dash, len);
+        dl->AddLine({a.x + ux * t,  a.y + uy * t},
+                    {a.x + ux * te, a.y + uy * te}, color, thickness);
+        t = te + gap;
+    }
 }
 
 // ---------------------------------------------------------------------------
