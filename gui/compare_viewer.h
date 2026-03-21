@@ -39,7 +39,7 @@ public:
 
     bool        show_grid        = false;
     int         grid_spacing     = 100;
-    bool        show_coordinates = true;
+    bool        show_coordinates = false;
     bool        show_minimap     = true;
     bool        show_overlays    = true;
     bool        sync_views       = true;

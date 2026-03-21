@@ -241,10 +241,18 @@ void compare_viewer::render(float width, float height) {
 
     // Labels
     const ImU32 label_col = IM_COL32(180, 180, 180, 255);
-    const std::string ltxt = label_text(left_label, "Left");
-    const std::string rtxt = diff_mode
-        ? label_text(right_label, "Right") + "  [Diff]"
-        : label_text(right_label, "Right");
+
+    auto with_size = [](std::string label, const image_data& img) {
+        if (img.empty()) return label;
+        return label + "  " + std::to_string(img.width) + " x " + std::to_string(img.height);
+    };
+
+    const std::string ltxt = with_size(label_text(left_label, "Left"),
+                                       left_viewer_.get_image_data());
+    const std::string rtxt = with_size(
+        diff_mode ? label_text(right_label, "Right") + "  [Diff]"
+                  : label_text(right_label, "Right"),
+        right_viewer_.get_image_data());
 
     dl->PushClipRect(origin, {origin.x + half_w, origin.y + label_h}, true);
     dl->AddText({origin.x + 4.0f, origin.y + 2.0f}, label_col, ltxt.c_str());

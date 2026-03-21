@@ -74,7 +74,7 @@ public:
     // Display options
     bool show_grid        = false;
     int  grid_spacing     = 100;   // spacing in image-space pixels
-    bool show_coordinates = true;
+    bool show_coordinates = false;
     bool show_minimap     = true;
     bool show_overlays    = true;
 

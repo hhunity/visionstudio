@@ -225,7 +225,7 @@ int main(int argc, char** argv) {
     char left_path_buf[512]  = "";
     char right_path_buf[512] = "";
     std::string status_msg;
-    bool        show_pixel_panel = false;
+    bool        show_pixel_panel = true;
 
     async_loader           left_loader;
     async_loader           right_loader;
@@ -369,6 +369,7 @@ int main(int argc, char** argv) {
                     ImGui::MenuItem("Show Grid",     nullptr, &single_viewer.show_grid);
                     ImGui::MenuItem("Show Minimap",  nullptr, &single_viewer.show_minimap);
                     ImGui::MenuItem("Show Overlays", nullptr, &single_viewer.show_overlays);
+                    ImGui::MenuItem("Show Tooltip",  nullptr, &single_viewer.show_coordinates);
                     if (single_viewer.show_grid) {
                         ImGui::Separator();
                         ImGui::SliderInt("Grid Spacing##s", &single_viewer.grid_spacing, 1, 500);
@@ -377,6 +378,7 @@ int main(int argc, char** argv) {
                     ImGui::MenuItem("Show Grid",     nullptr, &compare.show_grid);
                     ImGui::MenuItem("Show Minimap",  nullptr, &compare.show_minimap);
                     ImGui::MenuItem("Show Overlays", nullptr, &compare.show_overlays);
+                    ImGui::MenuItem("Show Tooltip",  nullptr, &compare.show_coordinates);
                     ImGui::MenuItem("Sync Views",    nullptr, &compare.sync_views);
                     if (mode == app_mode::split && compare.is_split()) {
                         ImGui::Separator();
@@ -437,9 +439,12 @@ int main(int argc, char** argv) {
         const float status_h  = ImGui::GetFrameHeightWithSpacing();
         const float viewer_h  = ImGui::GetContentRegionAvail().y - status_h;
         constexpr float panel_w = 240.0f;
+        const float spacing_x = ImGui::GetStyle().ItemSpacing.x;
         const float viewer_w  = show_pixel_panel
-            ? ImGui::GetContentRegionAvail().x - panel_w - ImGui::GetStyle().ItemSpacing.x
+            ? ImGui::GetContentRegionAvail().x - panel_w - spacing_x
             : 0.0f;
+
+        const ImVec2 viewer_origin = ImGui::GetCursorScreenPos();
 
         if (mode == app_mode::single) {
             single_viewer.render("single_canvas", viewer_w, viewer_h);
@@ -449,7 +454,7 @@ int main(int argc, char** argv) {
 
         // ----- Pixel panel -----
         if (show_pixel_panel) {
-            ImGui::SameLine();
+            ImGui::SetCursorScreenPos({viewer_origin.x + viewer_w + spacing_x, viewer_origin.y});
             ImGui::BeginChild("##pixel_panel", {panel_w, viewer_h}, ImGuiChildFlags_Borders);
 
             auto color_vec = [](const std::array<uint8_t, 4>& c) {
@@ -491,6 +496,9 @@ int main(int argc, char** argv) {
 
             ImGui::EndChild();
         }
+
+        // Reset cursor to below the viewer area so the status bar sits correctly.
+        ImGui::SetCursorScreenPos({viewer_origin.x, viewer_origin.y + viewer_h});
 
         // ----- Status bar -----
         ImGui::Separator();
