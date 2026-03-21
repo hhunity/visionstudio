@@ -4,6 +4,8 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
+#include "capture/capture_client.h"
+#include "capture/capture_config.h"
 #include "gui/compare_viewer.h"
 #include "gui/image_viewer.h"
 #include <implot.h>
@@ -13,9 +15,11 @@
 #include "util/roi_data.h"
 
 #include <CLI/CLI.hpp>
+#include <nlohmann/json.hpp>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <fstream>
 #include <future>
 #include <string>
 
@@ -27,7 +31,7 @@ static void glfw_error_cb(int error, const char* desc) {
 // Mode
 // ---------------------------------------------------------------------------
 
-enum class app_mode { none, single, compare, split };
+enum class app_mode { none, single, compare, split, capture };
 
 // ---------------------------------------------------------------------------
 // Async loader
@@ -101,7 +105,8 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
 
     switch (*app->mode) {
     case app_mode::none:
-        break; // mode not selected yet, ignore drops
+    case app_mode::capture:
+        break; // ignore drops
     case app_mode::single:
         for (int i = 0; i < count; ++i) {
             if (has_ext(paths[i], ".jsonl")) {
@@ -163,8 +168,8 @@ int main(int argc, char** argv) {
     bool                     arg_diff    = false;
     float                    arg_amplify = 1.0f;
 
-    cli.add_option("--mode", mode_str, "Viewer mode: single | compare | split")
-       ->transform(CLI::IsMember({"single", "compare", "split"}, CLI::ignore_case));
+    cli.add_option("--mode", mode_str, "Viewer mode: single | compare | split | capture")
+       ->transform(CLI::IsMember({"single", "compare", "split", "capture"}, CLI::ignore_case));
     cli.add_option("images", arg_images, "Image file(s). One file: single/split. Two files: compare.")
        ->expected(0, 2);
     cli.add_flag("--diff",      arg_diff,    "Enable diff mode on startup");
@@ -181,6 +186,7 @@ int main(int argc, char** argv) {
     app_mode mode = mode_str.empty()          ? app_mode::none
                   : (mode_str == "compare")   ? app_mode::compare
                   : (mode_str == "split")     ? app_mode::split
+                  : (mode_str == "capture")   ? app_mode::capture
                                               : app_mode::single;
 
     // -------------------------------------------------------------------------
@@ -197,7 +203,23 @@ int main(int argc, char** argv) {
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
 
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "VisionStudio", nullptr, nullptr);
+    // Restore window size from visionstudio.json (defaults to 1280x720).
+    int saved_w = 1280, saved_h = 720;
+    {
+        std::ifstream jf("visionstudio.json");
+        if (jf.is_open()) {
+            try {
+                auto j = nlohmann::json::parse(jf);
+                if (j.contains("window")) {
+                    const auto& w = j["window"];
+                    if (w.contains("width")  && w["width"].is_number_integer())  saved_w = w["width"];
+                    if (w.contains("height") && w["height"].is_number_integer()) saved_h = w["height"];
+                }
+            } catch (...) {}
+        }
+    }
+
+    GLFWwindow* window = glfwCreateWindow(saved_w, saved_h, "VisionStudio", nullptr, nullptr);
     if (!window) { glfwTerminate(); return 1; }
 
     glfwMakeContextCurrent(window);
@@ -230,6 +252,9 @@ int main(int argc, char** argv) {
     bool        show_pixel_panel   = true;
     bool        show_profile_panel = false;
 
+    capture_config cap_cfg = capture_config::load("visionstudio.json");
+    capture_client cap_cli(cap_cfg);
+
     async_loader           left_loader;
     async_loader           right_loader;
     std::vector<roi_entry> overlays;
@@ -243,6 +268,10 @@ int main(int argc, char** argv) {
                          &left_loader, &right_loader,
                          &overlays, &left_overlays, &right_overlays};
     glfwSetWindowUserPointer(window, &drop_state);
+
+    // Start SSE listener if launching directly in capture mode.
+    if (mode == app_mode::capture)
+        cap_cli.start_sse();
 
     // Apply diff flags from args (compare / split mode)
     if (mode == app_mode::compare || mode == app_mode::split) {
@@ -305,6 +334,11 @@ int main(int argc, char** argv) {
             if (ImGui::Button("Compare", {120.0f, 40.0f})) mode = app_mode::compare;
             ImGui::SameLine();
             if (ImGui::Button("Split",   {120.0f, 40.0f})) mode = app_mode::split;
+            ImGui::SameLine();
+            if (ImGui::Button("Capture", {120.0f, 40.0f})) {
+                mode = app_mode::capture;
+                cap_cli.start_sse();
+            }
             ImGui::End();
 
             ImGui::Render();
@@ -348,6 +382,14 @@ int main(int argc, char** argv) {
             }
         }
 
+        // ----- Poll capture results (SSE) -----
+        if (mode == app_mode::capture) {
+            while (auto path = cap_cli.poll_result()) {
+                left_loader.start(*path);
+                status_msg = "Capture complete: " + *path;
+            }
+        }
+
         // Full-screen host window
         ImGui::SetNextWindowPos({0.0f, 0.0f});
         ImGui::SetNextWindowSize({static_cast<float>(win_w), static_cast<float>(win_h)});
@@ -368,7 +410,7 @@ int main(int argc, char** argv) {
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("View")) {
-                if (mode == app_mode::single) {
+                if (mode == app_mode::single || mode == app_mode::capture) {
                     ImGui::MenuItem("Show Grid",     nullptr, &single_viewer.show_grid);
                     ImGui::MenuItem("Show Minimap",  nullptr, &single_viewer.show_minimap);
                     ImGui::MenuItem("Show Overlays",  nullptr, &single_viewer.show_overlays);
@@ -441,6 +483,39 @@ int main(int argc, char** argv) {
             ImGui::EndPopup();
         }
 
+        // ----- Capture control bar (capture mode only) -----
+        if (mode == app_mode::capture) {
+            if (ImGui::Button("Start Capture")) {
+                if (!cap_cli.start_capture())
+                    status_msg = "Start failed: " + cap_cli.get_last_error();
+                else
+                    status_msg = "Capture started";
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Stop Capture")) {
+                if (!cap_cli.stop_capture())
+                    status_msg = "Stop failed: " + cap_cli.get_last_error();
+                else
+                    status_msg = "Capture stopped";
+            }
+            ImGui::SameLine();
+            ImGui::Text("|");
+            ImGui::SameLine();
+            const char* sse_label = "";
+            ImVec4      sse_col   = {1, 1, 1, 1};
+            switch (cap_cli.get_sse_state()) {
+            case sse_state::disconnected:
+                sse_label = "SSE: Disconnected"; sse_col = {0.6f, 0.6f, 0.6f, 1}; break;
+            case sse_state::connecting:
+                sse_label = "SSE: Connecting..."; sse_col = {1, 0.8f, 0, 1};      break;
+            case sse_state::connected:
+                sse_label = "SSE: Connected";    sse_col = {0.2f, 1, 0.4f, 1};   break;
+            case sse_state::error:
+                sse_label = "SSE: Error";        sse_col = {1, 0.3f, 0.3f, 1};   break;
+            }
+            ImGui::TextColored(sse_col, "%s", sse_label);
+        }
+
         // ----- Viewer area -----
         const float status_h        = ImGui::GetFrameHeightWithSpacing();
         const float profile_panel_h = show_profile_panel ? 180.0f : 0.0f;
@@ -453,7 +528,7 @@ int main(int argc, char** argv) {
 
         const ImVec2 viewer_origin = ImGui::GetCursorScreenPos();
 
-        if (mode == app_mode::single) {
+        if (mode == app_mode::single || mode == app_mode::capture) {
             single_viewer.render("single_canvas", viewer_w, viewer_h);
         } else {
             compare.render(viewer_w, viewer_h);
@@ -534,7 +609,7 @@ int main(int argc, char** argv) {
             ImGui::SetCursorScreenPos({viewer_origin.x + viewer_w + spacing_x, viewer_origin.y});
             ImGui::BeginChild("##pixel_panel", {panel_w, viewer_h}, ImGuiChildFlags_Borders);
 
-            if (mode == app_mode::single) {
+            if (mode == app_mode::single || mode == app_mode::capture) {
                 const auto& hi = single_viewer.get_hover_info();
                 if (!hi.valid) {
                     ImGui::TextDisabled("--");
@@ -571,7 +646,7 @@ int main(int argc, char** argv) {
             const float graph_h = ImGui::GetContentRegionAvail().y;
             const float graph_w = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
 
-            if (mode == app_mode::single) {
+            if (mode == app_mode::single || mode == app_mode::capture) {
                 const auto& hi    = single_viewer.get_hover_info();
                 const image_data* img = &single_viewer.get_image_data();
                 const int cx = hi.valid ? hi.img_x : -1;
@@ -646,6 +721,24 @@ int main(int argc, char** argv) {
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window);
+    }
+
+    // Save window size to visionstudio.json.
+    {
+        int cur_w, cur_h;
+        glfwGetWindowSize(window, &cur_w, &cur_h);
+
+        // Load existing JSON to preserve other keys.
+        nlohmann::json j = nlohmann::json::object();
+        {
+            std::ifstream jf("visionstudio.json");
+            if (jf.is_open()) {
+                try { j = nlohmann::json::parse(jf); } catch (...) {}
+            }
+        }
+        j["window"] = {{"width", cur_w}, {"height", cur_h}};
+        std::ofstream jf("visionstudio.json");
+        if (jf.is_open()) jf << j.dump(2) << '\n';
     }
 
     // Cleanup

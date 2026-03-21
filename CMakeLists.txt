@@ -19,6 +19,7 @@ find_package(Threads REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(implot CONFIG REQUIRED)
+find_package(httplib CONFIG REQUIRED)
 
 # ----- vs_io: TIFF IO + JSONL IO library -----
 add_library(vs_io STATIC
@@ -51,8 +52,22 @@ if(APPLE)
     target_compile_definitions(vs_gui PUBLIC GL_SILENCE_DEPRECATION)
 endif()
 
+# ----- vs_capture: HTTP capture client -----
+add_library(vs_capture STATIC
+    capture/capture_config.cpp
+    capture/capture_client.cpp
+)
+target_include_directories(vs_capture PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>
+)
+target_link_libraries(vs_capture PUBLIC
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    Threads::Threads
+)
+
 # ----- visionstudio: main application -----
 add_executable(visionstudio
     api/main.cpp
 )
-target_link_libraries(visionstudio PRIVATE vs_gui vs_io CLI11::CLI11 implot::implot)
+target_link_libraries(visionstudio PRIVATE vs_gui vs_io vs_capture CLI11::CLI11 implot::implot)

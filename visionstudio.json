@@ -1,0 +1,14 @@
+{
+  "capture": {
+    "host": "localhost",
+    "port": 8080,
+    "sse_path": "/events",
+    "start_path": "/start",
+    "stop_path": "/stop",
+    "timeout_ms": 5000
+  },
+  "window": {
+    "height": 891,
+    "width": 1470
+  }
+}

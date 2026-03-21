@@ -11,6 +11,7 @@
     "glad",
     "cli11",
     "nlohmann-json",
-    "implot"
+    "implot",
+    "cpp-httplib"
   ]
 }
