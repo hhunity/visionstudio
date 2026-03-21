@@ -113,7 +113,8 @@ void capture_client::start_sse() {
 void capture_client::stop_sse() {
     stop_flag_.store(true);
     if (sse_thread_.joinable()) sse_thread_.join();
-    sse_state_.store(sse_state::disconnected);
+    if (sse_state_.load() != sse_state::error)
+        sse_state_.store(sse_state::disconnected);
 }
 
 void capture_client::sse_thread_func() {
