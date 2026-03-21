@@ -17,6 +17,10 @@ public:
     capture_client(const capture_client&)            = delete;
     capture_client& operator=(const capture_client&) = delete;
 
+    // Send POST to connect / disconnect endpoint. Returns true on HTTP 2xx.
+    bool connect_server();
+    bool disconnect_server();
+
     // Send POST to start / stop endpoint. Returns true on HTTP 2xx.
     bool start_capture();
     bool stop_capture();

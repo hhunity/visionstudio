@@ -28,6 +28,42 @@ capture_client::~capture_client() {
 // Control
 // ---------------------------------------------------------------------------
 
+bool capture_client::connect_server() {
+    httplib::Client cli(cfg_.host, cfg_.port);
+    cli.set_connection_timeout(cfg_.timeout_ms / 1000,
+                               (cfg_.timeout_ms % 1000) * 1000);
+    cli.set_read_timeout(cfg_.timeout_ms / 1000,
+                         (cfg_.timeout_ms % 1000) * 1000);
+    auto res = cli.Post(cfg_.connect_path);
+    if (!res) {
+        set_error("connect_server: connection failed");
+        return false;
+    }
+    if (res->status < 200 || res->status >= 300) {
+        set_error("connect_server: HTTP " + std::to_string(res->status));
+        return false;
+    }
+    return true;
+}
+
+bool capture_client::disconnect_server() {
+    httplib::Client cli(cfg_.host, cfg_.port);
+    cli.set_connection_timeout(cfg_.timeout_ms / 1000,
+                               (cfg_.timeout_ms % 1000) * 1000);
+    cli.set_read_timeout(cfg_.timeout_ms / 1000,
+                         (cfg_.timeout_ms % 1000) * 1000);
+    auto res = cli.Post(cfg_.disconnect_path);
+    if (!res) {
+        set_error("disconnect_server: connection failed");
+        return false;
+    }
+    if (res->status < 200 || res->status >= 300) {
+        set_error("disconnect_server: HTTP " + std::to_string(res->status));
+        return false;
+    }
+    return true;
+}
+
 bool capture_client::start_capture() {
     httplib::Client cli(cfg_.host, cfg_.port);
     cli.set_connection_timeout(cfg_.timeout_ms / 1000,

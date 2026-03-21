@@ -1,5 +1,11 @@
 {
   "capture": {
+    "config_files": [
+      "camera_config_a.json",
+      "camera_config_b.json"
+    ],
+    "connect_path": "/connect",
+    "disconnect_path": "/disconnect",
     "host": "localhost",
     "port": 8080,
     "sse_path": "/events",

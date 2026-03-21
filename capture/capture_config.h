@@ -1,13 +1,17 @@
 #pragma once
 #include <string>
+#include <vector>
 
 struct capture_config {
-    std::string host       = "localhost";
-    int         port       = 8080;
-    std::string start_path = "/start";
-    std::string stop_path  = "/stop";
-    std::string sse_path   = "/events";
-    int         timeout_ms = 5000;
+    std::string              host            = "localhost";
+    int                      port            = 8080;
+    std::string              connect_path    = "/connect";
+    std::string              start_path      = "/start";
+    std::string              stop_path       = "/stop";
+    std::string              disconnect_path = "/disconnect";
+    std::string              sse_path        = "/events";
+    int                      timeout_ms      = 5000;
+    std::vector<std::string> config_files; // paths to camera JSON config files
 
     // Load capture settings from visionstudio.json.
     // Returns defaults if the file is not found or the "capture" key is missing.

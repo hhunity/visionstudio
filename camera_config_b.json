@@ -1,0 +1,15 @@
+{
+  "preset": "High Speed",
+  "scan_rate_hz": 20000,
+  "exposure_us": 40,
+  "gain": 2.5,
+  "line_count": 4096,
+  "trigger": {
+    "mode": "external",
+    "delay_us": 10
+  },
+  "output": {
+    "bit_depth": 8,
+    "format": "tiff"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "preset": "Standard",
+  "scan_rate_hz": 5000,
+  "exposure_us": 15444402,
+  "gain": 1.0,
+  "line_count": 409,
+  "trigger": {
+    "mode": "internal",
+    "delay_us": 0
+  },
+  "output": {
+    "bit_depth": 8,
+    "format": "tiff"
+  }
+}

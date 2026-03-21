@@ -26,12 +26,18 @@ capture_config capture_config::load(const std::string& json_path) {
     if (!root.contains("capture")) return cfg;
     const auto& c = root["capture"];
 
-    if (c.contains("host")       && c["host"].is_string())  cfg.host       = c["host"];
-    if (c.contains("start_path") && c["start_path"].is_string()) cfg.start_path = c["start_path"];
-    if (c.contains("stop_path")  && c["stop_path"].is_string())  cfg.stop_path  = c["stop_path"];
-    if (c.contains("sse_path")   && c["sse_path"].is_string())   cfg.sse_path   = c["sse_path"];
-    if (c.contains("port")       && c["port"].is_number_integer()) cfg.port       = c["port"];
-    if (c.contains("timeout_ms") && c["timeout_ms"].is_number_integer()) cfg.timeout_ms = c["timeout_ms"];
+    if (c.contains("host")            && c["host"].is_string())           cfg.host            = c["host"];
+    if (c.contains("connect_path")    && c["connect_path"].is_string())    cfg.connect_path    = c["connect_path"];
+    if (c.contains("start_path")      && c["start_path"].is_string())      cfg.start_path      = c["start_path"];
+    if (c.contains("stop_path")       && c["stop_path"].is_string())       cfg.stop_path       = c["stop_path"];
+    if (c.contains("disconnect_path") && c["disconnect_path"].is_string()) cfg.disconnect_path = c["disconnect_path"];
+    if (c.contains("sse_path")        && c["sse_path"].is_string())        cfg.sse_path        = c["sse_path"];
+    if (c.contains("port")            && c["port"].is_number_integer())    cfg.port            = c["port"];
+    if (c.contains("timeout_ms")      && c["timeout_ms"].is_number_integer()) cfg.timeout_ms   = c["timeout_ms"];
+    if (c.contains("config_files") && c["config_files"].is_array()) {
+        for (const auto& f : c["config_files"])
+            if (f.is_string()) cfg.config_files.push_back(f.get<std::string>());
+    }
     return cfg;
 }
 
@@ -42,12 +48,15 @@ void capture_config::save(const std::string& json_path,
     auto root = load_json(json_path);
 
     root["capture"] = {
-        {"host",       cfg.host},
-        {"port",       cfg.port},
-        {"start_path", cfg.start_path},
-        {"stop_path",  cfg.stop_path},
-        {"sse_path",   cfg.sse_path},
-        {"timeout_ms", cfg.timeout_ms},
+        {"host",            cfg.host},
+        {"port",            cfg.port},
+        {"connect_path",    cfg.connect_path},
+        {"start_path",      cfg.start_path},
+        {"stop_path",       cfg.stop_path},
+        {"disconnect_path", cfg.disconnect_path},
+        {"sse_path",        cfg.sse_path},
+        {"timeout_ms",      cfg.timeout_ms},
+        {"config_files",    cfg.config_files},
     };
 
     if (!imgui_ini.empty())

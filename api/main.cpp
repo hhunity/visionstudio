@@ -3,6 +3,7 @@
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
+#include <imgui_stdlib.h>
 
 #include "capture/capture_client.h"
 #include "capture/capture_config.h"
@@ -249,11 +250,48 @@ int main(int argc, char** argv) {
     char left_path_buf[512]  = "";
     char right_path_buf[512] = "";
     std::string status_msg;
-    bool        show_pixel_panel   = true;
-    bool        show_profile_panel = false;
+    bool        show_pixel_panel      = true;
+    bool        show_profile_panel    = false;
+    bool        show_camera_config    = false;
+    bool        server_connected      = false;
+
+    // Camera config editor state: one entry per file in cap_cfg.config_files.
+    struct config_tab {
+        std::string path;
+        std::string text;
+        std::string error;   // empty = valid JSON
+        bool        modified = false;
+
+        void load() {
+            std::ifstream f(path);
+            if (!f.is_open()) { error = "Cannot open file"; return; }
+            text = std::string(std::istreambuf_iterator<char>(f), {});
+            validate();
+            modified = false;
+        }
+        void save() {
+            std::ofstream f(path);
+            if (!f.is_open()) { error = "Cannot write file"; return; }
+            f << text;
+            modified = false;
+        }
+        void validate() {
+            try { (void)nlohmann::json::parse(text); error.clear(); }
+            catch (const std::exception& e) { error = e.what(); }
+        }
+    };
+    std::vector<config_tab> config_tabs;
 
     capture_config cap_cfg = capture_config::load("visionstudio.json");
     capture_client cap_cli(cap_cfg);
+
+    // Build config editor tabs from cap_cfg.config_files.
+    for (const auto& p : cap_cfg.config_files) {
+        config_tab t;
+        t.path = p;
+        t.load();
+        config_tabs.push_back(std::move(t));
+    }
 
     async_loader           left_loader;
     async_loader           right_loader;
@@ -483,8 +521,72 @@ int main(int argc, char** argv) {
             ImGui::EndPopup();
         }
 
+        // ----- Camera config editor modal -----
+        if (show_camera_config) ImGui::OpenPopup("Camera Config##modal");
+        ImGui::SetNextWindowSize({700, 540}, ImGuiCond_Always);
+        if (ImGui::BeginPopupModal("Camera Config##modal", &show_camera_config,
+                                    ImGuiWindowFlags_NoResize)) {
+            if (ImGui::BeginTabBar("##cfg_tabs")) {
+                for (auto& tab : config_tabs) {
+                    // Use filename as tab label
+                    const std::string label = [&]{
+                        auto pos = tab.path.find_last_of("/\\");
+                        return (pos == std::string::npos) ? tab.path : tab.path.substr(pos + 1);
+                    }();
+                    const std::string tab_label = label + (tab.modified ? " *" : "") + "##" + tab.path;
+                    if (ImGui::BeginTabItem(tab_label.c_str())) {
+                        // Path row
+                        ImGui::SetNextItemWidth(-120.0f);
+                        ImGui::InputText("##path", &tab.path);
+                        ImGui::SameLine();
+                        if (ImGui::Button("Reload")) tab.load();
+
+                        // Error indicator
+                        if (!tab.error.empty()) {
+                            ImGui::TextColored({1, 0.4f, 0.4f, 1}, "JSON error: %s", tab.error.c_str());
+                        } else {
+                            ImGui::TextColored({0.4f, 1, 0.4f, 1}, "Valid JSON");
+                        }
+
+                        // Text editor
+                        const float avail_h = ImGui::GetContentRegionAvail().y
+                                            - ImGui::GetFrameHeightWithSpacing() - 4;
+                        if (ImGui::InputTextMultiline("##ed", &tab.text,
+                                                      {-1, avail_h}))
+                            tab.validate();
+
+                        // Save button
+                        ImGui::BeginDisabled(!tab.error.empty());
+                        if (ImGui::Button("Save")) tab.save();
+                        ImGui::EndDisabled();
+
+                        ImGui::EndTabItem();
+                    }
+                }
+                ImGui::EndTabBar();
+            }
+            ImGui::EndPopup();
+        }
+
         // ----- Capture control bar (capture mode only) -----
         if (mode == app_mode::capture) {
+            ImGui::BeginDisabled(server_connected);
+            if (ImGui::Button("Connect")) {
+                if (!cap_cli.connect_server())
+                    status_msg = "Connect failed: " + cap_cli.get_last_error();
+                else { status_msg = "Server connected"; server_connected = true; }
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!server_connected);
+            if (ImGui::Button("Disconnect")) {
+                if (!cap_cli.disconnect_server())
+                    status_msg = "Disconnect failed: " + cap_cli.get_last_error();
+                else { status_msg = "Server disconnected"; server_connected = false; }
+            }
+            ImGui::SameLine();
+            ImGui::Text("|");
+            ImGui::SameLine();
             if (ImGui::Button("Start Capture")) {
                 if (!cap_cli.start_capture())
                     status_msg = "Start failed: " + cap_cli.get_last_error();
@@ -497,6 +599,11 @@ int main(int argc, char** argv) {
                     status_msg = "Stop failed: " + cap_cli.get_last_error();
                 else
                     status_msg = "Capture stopped";
+            }
+            ImGui::EndDisabled();
+            if (!config_tabs.empty()) {
+                ImGui::SameLine();
+                if (ImGui::Button("Camera Config...")) show_camera_config = true;
             }
             ImGui::SameLine();
             ImGui::Text("|");
