@@ -23,6 +23,16 @@ public:
     void set_split_overlays(std::vector<roi_entry> entries);
     void clear_overlays();
 
+    // Combined hover info for the pixel panel (same data as the tooltip).
+    struct combined_hover_info {
+        bool                   valid      = false;
+        int                    img_x      = 0, img_y = 0;
+        float                  zoom       = 1.0f;
+        std::array<uint8_t, 4> left_rgba  = {};
+        std::array<uint8_t, 4> right_rgba = {};
+    };
+    const combined_hover_info& get_hover_info() const { return combined_hover_; }
+
     // Render two panels side by side.
     // width/height of 0 means "fill available space".
     void render(float width, float height);
@@ -59,4 +69,5 @@ private:
     int                    split_x_applied_ = -1; // last pixel position applied; -1 forces initial apply
 
     std::vector<roi_entry> split_overlays_;       // source overlays for split mode
+    combined_hover_info    combined_hover_;        // updated every frame in render()
 };

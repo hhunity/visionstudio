@@ -266,9 +266,7 @@ void compare_viewer::render(float width, float height) {
 
     ImGui::SetCursorScreenPos({origin.x, origin.y + height});
 
-    // ----- Combined pixel tooltip -----
-    if (!show_coordinates) return;
-
+    // ----- Combined pixel info (tooltip + pixel panel) -----
     const ImVec2 canvas_size      = {half_w, canvas_h};
     const ImVec2 left_canvas_pos  = {origin.x,                    origin.y + label_h};
     const ImVec2 right_canvas_pos = {origin.x + half_w + spacing, origin.y + label_h};
@@ -283,10 +281,17 @@ void compare_viewer::render(float width, float height) {
     bool show = false;
     if      (lq.valid) { ref_x = lq.img_x; ref_y = lq.img_y; show = true; }
     else if (rq.valid) { ref_x = rq.img_x; ref_y = rq.img_y; show = true; }
-    if (!show) return;
 
-    const auto left_rgba  = lq.valid ? lq.rgba : left_viewer_.pixel_at(ref_x, ref_y);
-    const auto right_rgba = rq.valid ? rq.rgba : right_viewer_.pixel_at(ref_x, ref_y);
+    combined_hover_.valid = show;
+    if (show) {
+        combined_hover_.img_x      = ref_x;
+        combined_hover_.img_y      = ref_y;
+        combined_hover_.zoom       = lstateref.zoom;
+        combined_hover_.left_rgba  = lq.valid ? lq.rgba : left_viewer_.pixel_at(ref_x, ref_y);
+        combined_hover_.right_rgba = rq.valid ? rq.rgba : right_viewer_.pixel_at(ref_x, ref_y);
+    }
+
+    if (!show_coordinates || !show) return;
 
     auto color_vec = [](const std::array<uint8_t, 4>& c) {
         return ImVec4(c[0] / 255.f, c[1] / 255.f, c[2] / 255.f, c[3] / 255.f);
@@ -297,17 +302,19 @@ void compare_viewer::render(float width, float height) {
     ImGui::Text("zoom : %.2fx", static_cast<double>(lstateref.zoom));
     ImGui::Separator();
     ImGui::TextDisabled("Left");
-    ImGui::ColorButton("##lswatch", color_vec(left_rgba),
+    ImGui::ColorButton("##lswatch", color_vec(combined_hover_.left_rgba),
         ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, {16, 16});
     ImGui::SameLine();
     ImGui::Text("R:%3d  G:%3d  B:%3d  A:%3d",
-                left_rgba[0], left_rgba[1], left_rgba[2], left_rgba[3]);
+                combined_hover_.left_rgba[0], combined_hover_.left_rgba[1],
+                combined_hover_.left_rgba[2], combined_hover_.left_rgba[3]);
     ImGui::Spacing();
     ImGui::TextDisabled(diff_mode ? "Diff" : "Right");
-    ImGui::ColorButton("##rswatch", color_vec(right_rgba),
+    ImGui::ColorButton("##rswatch", color_vec(combined_hover_.right_rgba),
         ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, {16, 16});
     ImGui::SameLine();
     ImGui::Text("R:%3d  G:%3d  B:%3d  A:%3d",
-                right_rgba[0], right_rgba[1], right_rgba[2], right_rgba[3]);
+                combined_hover_.right_rgba[0], combined_hover_.right_rgba[1],
+                combined_hover_.right_rgba[2], combined_hover_.right_rgba[3]);
     ImGui::EndTooltip();
 }

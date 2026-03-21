@@ -225,6 +225,7 @@ int main(int argc, char** argv) {
     char left_path_buf[512]  = "";
     char right_path_buf[512] = "";
     std::string status_msg;
+    bool        show_pixel_panel = false;
 
     async_loader           left_loader;
     async_loader           right_loader;
@@ -393,6 +394,8 @@ int main(int argc, char** argv) {
                         ImGui::SliderInt("Grid Spacing##c", &compare.grid_spacing, 1, 500);
                     }
                 }
+                ImGui::Separator();
+                ImGui::MenuItem("Pixel Panel", nullptr, &show_pixel_panel);
                 ImGui::EndMenu();
             }
             ImGui::EndMenuBar();
@@ -431,13 +434,62 @@ int main(int argc, char** argv) {
         }
 
         // ----- Viewer area -----
-        const float status_h = ImGui::GetFrameHeightWithSpacing();
-        const float viewer_h = ImGui::GetContentRegionAvail().y - status_h;
+        const float status_h  = ImGui::GetFrameHeightWithSpacing();
+        const float viewer_h  = ImGui::GetContentRegionAvail().y - status_h;
+        constexpr float panel_w = 240.0f;
+        const float viewer_w  = show_pixel_panel
+            ? ImGui::GetContentRegionAvail().x - panel_w - ImGui::GetStyle().ItemSpacing.x
+            : 0.0f;
 
         if (mode == app_mode::single) {
-            single_viewer.render("single_canvas", 0.0f, viewer_h);
+            single_viewer.render("single_canvas", viewer_w, viewer_h);
         } else {
-            compare.render(0.0f, viewer_h);
+            compare.render(viewer_w, viewer_h);
+        }
+
+        // ----- Pixel panel -----
+        if (show_pixel_panel) {
+            ImGui::SameLine();
+            ImGui::BeginChild("##pixel_panel", {panel_w, viewer_h}, ImGuiChildFlags_Borders);
+
+            auto color_vec = [](const std::array<uint8_t, 4>& c) {
+                return ImVec4(c[0] / 255.f, c[1] / 255.f, c[2] / 255.f, c[3] / 255.f);
+            };
+            auto draw_rgba = [&](const char* id, const std::array<uint8_t, 4>& rgba) {
+                ImGui::ColorButton(id, color_vec(rgba),
+                    ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, {16, 16});
+                ImGui::SameLine();
+                ImGui::Text("R:%3d  G:%3d  B:%3d  A:%3d",
+                            rgba[0], rgba[1], rgba[2], rgba[3]);
+            };
+
+            if (mode == app_mode::single) {
+                const auto& hi = single_viewer.get_hover_info();
+                if (!hi.valid) {
+                    ImGui::TextDisabled("--");
+                } else {
+                    ImGui::Text("pos  : (%d, %d)", hi.img_x, hi.img_y);
+                    ImGui::Text("zoom : %.2fx", static_cast<double>(hi.zoom));
+                    ImGui::Separator();
+                    draw_rgba("##swatch", hi.rgba);
+                }
+            } else {
+                const auto& hi = compare.get_hover_info();
+                if (!hi.valid) {
+                    ImGui::TextDisabled("--");
+                } else {
+                    ImGui::Text("pos  : (%d, %d)", hi.img_x, hi.img_y);
+                    ImGui::Text("zoom : %.2fx", static_cast<double>(hi.zoom));
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Left");
+                    draw_rgba("##lswatch", hi.left_rgba);
+                    ImGui::Spacing();
+                    ImGui::TextDisabled(compare.diff_mode ? "Diff" : "Right");
+                    draw_rgba("##rswatch", hi.right_rgba);
+                }
+            }
+
+            ImGui::EndChild();
         }
 
         // ----- Status bar -----

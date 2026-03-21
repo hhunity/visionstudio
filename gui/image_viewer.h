@@ -37,6 +37,15 @@ public:
     // Fit the view so the image fills the given canvas dimensions.
     void fit_view(view_state& state, float canvas_w, float canvas_h) const;
 
+    // Pixel under the mouse — updated every frame in render().
+    struct hover_info {
+        bool                   valid = false;
+        int                    img_x = 0, img_y = 0;
+        std::array<uint8_t, 4> rgba  = {};
+        float                  zoom  = 1.0f;
+    };
+    const hover_info& get_hover_info() const { return last_hover_; }
+
     // Result of querying the pixel under the mouse cursor.
     struct mouse_query {
         bool                   valid = false;
@@ -95,4 +104,5 @@ private:
 
     std::vector<roi_entry> overlays_;
     float                  overlay_max_mag_ = 1.0f; // for color normalization
+    hover_info             last_hover_;
 };

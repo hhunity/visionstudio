@@ -127,6 +127,24 @@ void image_viewer::render(const char* id, float width, float height,
     draw_content(dl, canvas_pos, canvas_size, *state);
     dl->PopClipRect();
 
+    // Update hover info (used by pixel panel in main loop)
+    if (hovered && texture_id_ != 0) {
+        const ImVec2 mouse = ImGui::GetIO().MousePos;
+        const float fx = (mouse.x - canvas_pos.x - state->pan_x) / state->zoom;
+        const float fy = (mouse.y - canvas_pos.y - state->pan_y) / state->zoom;
+        if (fx >= 0.0f && fx < img_w_ && fy >= 0.0f && fy < img_h_) {
+            last_hover_.valid = true;
+            last_hover_.img_x = static_cast<int>(fx);
+            last_hover_.img_y = static_cast<int>(fy);
+            last_hover_.rgba  = cpu_image_.pixel_at(last_hover_.img_x, last_hover_.img_y);
+            last_hover_.zoom  = state->zoom;
+        } else {
+            last_hover_.valid = false;
+        }
+    } else {
+        last_hover_.valid = false;
+    }
+
     if (show_coordinates && hovered && texture_id_ != 0)
         draw_coordinate_tooltip(canvas_pos, *state);
 }
