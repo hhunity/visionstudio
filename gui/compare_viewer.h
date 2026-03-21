@@ -10,6 +10,18 @@ public:
 
     bool load_left(const image_data& img);
     bool load_right(const image_data& img);
+    bool load_single(const image_data& img);  // load same image to both left and right
+    bool load_split(const image_data& img);   // split image: left portion / right portion
+
+    bool is_split() const { return is_split_; }
+    int  split_src_width() const { return split_src_.width; }
+
+    // Overlays for compare mode (independent left/right).
+    void set_left_overlays(std::vector<roi_entry> entries);
+    void set_right_overlays(std::vector<roi_entry> entries);
+    // Overlay for split mode: stores source and re-splits whenever split_x changes.
+    void set_split_overlays(std::vector<roi_entry> entries);
+    void clear_overlays();
 
     // Render two panels side by side.
     // width/height of 0 means "fill available space".
@@ -19,15 +31,19 @@ public:
     int         grid_spacing     = 100;
     bool        show_coordinates = true;
     bool        show_minimap     = true;
+    bool        show_overlays    = true;
     bool        sync_views       = true;
     bool        diff_mode        = false;  // right panel shows |left - right|
     float       diff_amplify     = 1.0f;   // multiply diff values to enhance subtle differences
+    int         split_x          = 0;      // split position in pixels; only used in split mode
     std::string left_label;
     std::string right_label;
 
 private:
     void compute_diff();
-    void update_right_viewer();  // reload right viewer with diff or original
+    void update_right_viewer();    // reload right viewer with diff or original
+    void apply_split();            // slice split_src_ at split_x and reload both viewers
+    void apply_split_overlays();   // re-clip split_overlays_ at current split_x
 
     image_viewer left_viewer_;
     image_viewer right_viewer_;
@@ -37,4 +53,10 @@ private:
     image_data diff_data_;        // computed diff image
     bool       diff_applied_    = false;
     float      amplify_applied_ = 1.0f;
+
+    image_data             split_src_;           // original full image when in split mode
+    bool                   is_split_        = false;
+    int                    split_x_applied_ = -1; // last pixel position applied; -1 forces initial apply
+
+    std::vector<roi_entry> split_overlays_;       // source overlays for split mode
 };

@@ -2,18 +2,121 @@
 #include <algorithm>
 #include <cmath>
 #include <imgui.h>
+#include <thread>
+#include <vector>
 
 compare_viewer::compare_viewer() = default;
 
+void compare_viewer::set_left_overlays(std::vector<roi_entry> entries) {
+    left_viewer_.set_overlays(std::move(entries));
+}
+
+void compare_viewer::set_right_overlays(std::vector<roi_entry> entries) {
+    right_viewer_.set_overlays(std::move(entries));
+}
+
+void compare_viewer::set_split_overlays(std::vector<roi_entry> entries) {
+    split_overlays_ = std::move(entries);
+    apply_split_overlays();
+}
+
+void compare_viewer::clear_overlays() {
+    split_overlays_.clear();
+    left_viewer_.clear_overlays();
+    right_viewer_.clear_overlays();
+}
+
+void compare_viewer::apply_split_overlays() {
+    if (split_overlays_.empty() || split_src_.empty()) return;
+
+    const int left_w = std::max(1, std::min(split_x, split_src_.width - 1));
+
+    std::vector<roi_entry> left_ov, right_ov;
+    for (const auto& e : split_overlays_) {
+        const int x2 = e.x + e.w;
+
+        // Left panel: clip to [0, left_w)
+        if (e.x < left_w) {
+            roi_entry le = e;
+            le.w = std::min(x2, left_w) - e.x;
+            if (le.w > 0) left_ov.push_back(le);
+        }
+
+        // Right panel: clip to [left_w, src_width), shift x by -left_w
+        if (x2 > left_w) {
+            roi_entry re = e;
+            re.x = std::max(e.x, left_w) - left_w;
+            re.w = x2 - std::max(e.x, left_w);
+            if (re.w > 0) right_ov.push_back(re);
+        }
+    }
+
+    left_viewer_.set_overlays(std::move(left_ov));
+    right_viewer_.set_overlays(std::move(right_ov));
+}
+
 bool compare_viewer::load_left(const image_data& img) {
-    diff_applied_ = false; // force recompute on next render
+    is_split_     = false;
+    diff_applied_ = false;
     return left_viewer_.load_image(img);
 }
 
 bool compare_viewer::load_right(const image_data& img) {
-    right_orig_   = img;   // keep original for diff toggle
+    is_split_     = false;
+    right_orig_   = img;
     diff_applied_ = false;
     return right_viewer_.load_image(img);
+}
+
+bool compare_viewer::load_single(const image_data& img) {
+    is_split_     = false;
+    right_orig_   = img;
+    diff_applied_ = false;
+    const bool ok_l = left_viewer_.load_image(img);
+    const bool ok_r = right_viewer_.load_image(img);
+    return ok_l && ok_r;
+}
+
+bool compare_viewer::load_split(const image_data& img) {
+    if (img.empty()) return false;
+    split_src_      = img;
+    is_split_       = true;
+    split_x         = img.width / 2;  // default: midpoint
+    split_x_applied_ = -1;            // force apply_split() on next render
+    diff_applied_   = false;
+    return true;
+}
+
+void compare_viewer::apply_split() {
+    if (split_src_.empty()) return;
+
+    const int left_w  = std::max(1, std::min(split_x, split_src_.width - 1));
+    const int right_w = split_src_.width - left_w;
+    const int h       = split_src_.height;
+
+    image_data left_half, right_half;
+    left_half.width   = left_w;
+    left_half.height  = h;
+    left_half.pixels.resize(static_cast<size_t>(left_w) * h * 4);
+    right_half.width  = right_w;
+    right_half.height = h;
+    right_half.pixels.resize(static_cast<size_t>(right_w) * h * 4);
+
+    for (int y = 0; y < h; ++y) {
+        const auto row_src = split_src_.pixels.cbegin()
+                           + static_cast<ptrdiff_t>(y) * split_src_.width * 4;
+        std::copy(row_src,              row_src + left_w  * 4,
+                  left_half.pixels.begin()  + static_cast<ptrdiff_t>(y) * left_w  * 4);
+        std::copy(row_src + left_w * 4, row_src + (left_w + right_w) * 4,
+                  right_half.pixels.begin() + static_cast<ptrdiff_t>(y) * right_w * 4);
+    }
+
+    right_orig_      = right_half;
+    diff_applied_    = false;
+    split_x_applied_ = split_x;
+    left_viewer_.load_image(left_half);
+    right_viewer_.load_image(right_half);
+    apply_split_overlays();
 }
 
 // ---------------------------------------------------------------------------
@@ -31,18 +134,41 @@ void compare_viewer::compute_diff() {
     diff_data_.height = h;
     diff_data_.pixels.resize(static_cast<size_t>(w) * h * 4);
 
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            const size_t idx = (static_cast<size_t>(y) * w + x) * 4;
-            for (int c = 0; c < 3; ++c) { // R, G, B
-                const int diff = static_cast<int>(L.pixels[idx + c])
-                               - static_cast<int>(R.pixels[idx + c]);
-                const int amplified = static_cast<int>(std::abs(diff) * diff_amplify);
-                diff_data_.pixels[idx + c] = static_cast<uint8_t>(std::min(255, amplified));
+    // Divide rows among threads; each thread writes to a disjoint output region.
+    const int hw       = static_cast<int>(std::thread::hardware_concurrency());
+    const int nthreads = std::max(1, std::min(hw, h));
+    const float amplify = diff_amplify; // capture by value for thread safety
+
+    auto compute_rows = [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const size_t dst = (static_cast<size_t>(y) * w       + x) * 4;
+                const size_t li  = (static_cast<size_t>(y) * L.width + x) * 4;
+                const size_t ri  = (static_cast<size_t>(y) * R.width + x) * 4;
+                for (int c = 0; c < 3; ++c) {
+                    const int diff      = static_cast<int>(L.pixels[li + c])
+                                        - static_cast<int>(R.pixels[ri + c]);
+                    const int amplified = static_cast<int>(std::abs(diff) * amplify);
+                    diff_data_.pixels[dst + c] = static_cast<uint8_t>(std::min(255, amplified));
+                }
+                diff_data_.pixels[dst + 3] = 255;
             }
-            diff_data_.pixels[idx + 3] = 255; // A always opaque
         }
+    };
+
+    if (nthreads == 1) {
+        compute_rows(0, h);
+        return;
     }
+
+    std::vector<std::thread> threads;
+    threads.reserve(nthreads);
+    for (int t = 0; t < nthreads; ++t) {
+        const int y0 = t       * h / nthreads;
+        const int y1 = (t + 1) * h / nthreads;
+        threads.emplace_back(compute_rows, y0, y1);
+    }
+    for (auto& th : threads) th.join();
 }
 
 void compare_viewer::update_right_viewer() {
@@ -79,6 +205,11 @@ void compare_viewer::render(float width, float height) {
     if (width  < 2.0f)  width  = 2.0f;
     if (height < 1.0f)  height = 1.0f;
 
+    // Re-slice if split position changed.
+    if (is_split_ && split_x != split_x_applied_) {
+        apply_split();
+    }
+
     // Reload right viewer if diff_mode or amplify changed.
     if (diff_mode != diff_applied_ ||
         (diff_mode && diff_amplify != amplify_applied_)) {
@@ -95,10 +226,12 @@ void compare_viewer::render(float width, float height) {
     left_viewer_.grid_spacing      = grid_spacing;
     left_viewer_.show_minimap      = show_minimap;
     left_viewer_.show_coordinates  = false;
+    left_viewer_.show_overlays     = show_overlays;
     right_viewer_.show_grid        = show_grid;
     right_viewer_.grid_spacing     = grid_spacing;
     right_viewer_.show_minimap     = show_minimap;
     right_viewer_.show_coordinates = false;
+    right_viewer_.show_overlays    = show_overlays;
 
     view_state* left_state  = sync_views ? &shared_state_ : nullptr;
     view_state* right_state = sync_views ? &shared_state_ : nullptr;

@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <imgui.h>
 #include "util/image_data.h"
+#include "util/roi_data.h"
 
 // Shared zoom/pan state — can be owned by the viewer or provided externally
 // to synchronize multiple viewers.
@@ -57,11 +58,16 @@ public:
     // Read-only access to the CPU image data (used by compare_viewer for diff).
     const image_data& get_image_data() const { return cpu_image_; }
 
+    // Overlay: load ROI entries for heatmap display (single-mode).
+    void set_overlays(std::vector<roi_entry> entries);
+    void clear_overlays();
+
     // Display options
     bool show_grid        = false;
     int  grid_spacing     = 100;   // spacing in image-space pixels
     bool show_coordinates = true;
     bool show_minimap     = true;
+    bool show_overlays    = true;
 
 private:
     void create_texture(const image_data& img);
@@ -77,11 +83,16 @@ private:
                                  const view_state& state) const;
     void draw_minimap(ImDrawList* dl, const ImVec2& canvas_pos,
                       const ImVec2& canvas_size, const view_state& state) const;
+    void draw_overlays(ImDrawList* dl, const ImVec2& canvas_pos,
+                       const view_state& state) const;
 
     uint32_t   texture_id_ = 0;
     int        img_w_      = 0;
     int        img_h_      = 0;
     image_data cpu_image_;          // CPU copy kept for pixel inspection
-    view_state owned_state_;
-    bool       needs_fit_ = false;  // fit view on first render after load
+    view_state             owned_state_;
+    bool                   needs_fit_ = false;  // fit view on first render after load
+
+    std::vector<roi_entry> overlays_;
+    float                  overlay_max_mag_ = 1.0f; // for color normalization
 };

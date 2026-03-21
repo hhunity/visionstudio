@@ -15,15 +15,19 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(TIFF REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(glad CONFIG REQUIRED)
+find_package(Threads REQUIRED)
+find_package(CLI11 CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
-# ----- vs_io: TIFF IO library -----
+# ----- vs_io: TIFF IO + JSONL IO library -----
 add_library(vs_io STATIC
     io/tiff_io.cpp
+    io/jsonl_io.cpp
 )
 target_include_directories(vs_io PUBLIC
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>
 )
-target_link_libraries(vs_io PUBLIC TIFF::TIFF)
+target_link_libraries(vs_io PUBLIC TIFF::TIFF Threads::Threads nlohmann_json::nlohmann_json)
 
 # ----- vs_gui: GUI library -----
 add_library(vs_gui STATIC
@@ -39,6 +43,7 @@ target_link_libraries(vs_gui PUBLIC
     OpenGL::GL
     glad::glad
     vs_io
+    Threads::Threads
 )
 
 if(APPLE)
@@ -49,4 +54,4 @@ endif()
 add_executable(visionstudio
     api/main.cpp
 )
-target_link_libraries(visionstudio PRIVATE vs_gui vs_io)
+target_link_libraries(visionstudio PRIVATE vs_gui vs_io CLI11::CLI11)
