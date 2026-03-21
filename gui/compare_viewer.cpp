@@ -7,6 +7,9 @@
 
 compare_viewer::compare_viewer() = default;
 
+const image_data& compare_viewer::get_left_image_data()  const { return left_viewer_.get_image_data(); }
+const image_data& compare_viewer::get_right_image_data() const { return right_viewer_.get_image_data(); }
+
 void compare_viewer::set_left_overlays(std::vector<roi_entry> entries) {
     left_viewer_.set_overlays(std::move(entries));
 }

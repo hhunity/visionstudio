@@ -468,6 +468,67 @@ int main(int argc, char** argv) {
                             rgba[0], rgba[1], rgba[2], rgba[3]);
             };
 
+            // Profile graph: draws one or two luminance series with a cursor marker.
+            // series: list of (image_data*, color) pairs
+            struct series_entry { const image_data* img; ImU32 color; int cursor; };
+            auto draw_profile = [&](const char* label, bool is_x, int fixed,
+                                    std::initializer_list<series_entry> series) {
+                constexpr float gh = 52.0f;
+                const float gw = panel_w - 8.0f;
+                ImGui::TextDisabled("%s", label);
+                const ImVec2 p = ImGui::GetCursorScreenPos();
+                ImGui::Dummy({gw, gh});
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                dl->AddRectFilled(p, {p.x + gw, p.y + gh}, IM_COL32(28, 28, 28, 255));
+                dl->AddRect(p, {p.x + gw, p.y + gh}, IM_COL32(80, 80, 80, 255));
+
+                for (const auto& s : series) {
+                    if (!s.img || s.img->empty() || fixed < 0) continue;
+                    const int total = is_x ? s.img->width : s.img->height;
+                    if (total <= 0) continue;
+                    const int n = std::min(total, static_cast<int>(gw));
+                    std::vector<ImVec2> pts;
+                    pts.reserve(n);
+                    for (int i = 0; i < n; ++i) {
+                        const int coord = i * (total - 1) / std::max(n - 1, 1);
+                        const auto rgba = is_x ? s.img->pixel_at(coord, fixed)
+                                               : s.img->pixel_at(fixed, coord);
+                        const float lum = (0.299f * rgba[0] + 0.587f * rgba[1]
+                                           + 0.114f * rgba[2]) / 255.0f;
+                        pts.push_back({p.x + i * gw / std::max(n - 1, 1),
+                                       p.y + gh * (1.0f - lum)});
+                    }
+                    if (pts.size() >= 2)
+                        dl->AddPolyline(pts.data(), static_cast<int>(pts.size()),
+                                        s.color, ImDrawFlags_None, 1.0f);
+
+                    if (s.cursor >= 0 && s.cursor < total) {
+                        const float t  = static_cast<float>(s.cursor) / (total - 1);
+                        const float cx = p.x + t * gw;
+                        dl->AddLine({cx, p.y}, {cx, p.y + gh},
+                                    IM_COL32(255, 80, 80, 220), 1.5f);
+                    }
+                }
+
+                // Luminance values at cursor position
+                bool first = true;
+                for (const auto& s : series) {
+                    if (!s.img || s.img->empty() || fixed < 0 || s.cursor < 0) continue;
+                    const int total = is_x ? s.img->width : s.img->height;
+                    if (s.cursor >= total) continue;
+                    const auto rgba = is_x ? s.img->pixel_at(s.cursor, fixed)
+                                           : s.img->pixel_at(fixed, s.cursor);
+                    const float lum = 0.299f * rgba[0] + 0.587f * rgba[1] + 0.114f * rgba[2];
+                    const ImVec4 tc = {
+                        ((s.color >>  0) & 0xff) / 255.f,
+                        ((s.color >>  8) & 0xff) / 255.f,
+                        ((s.color >> 16) & 0xff) / 255.f, 1.f};
+                    if (!first) ImGui::SameLine();
+                    ImGui::TextColored(tc, "%.1f", static_cast<double>(lum));
+                    first = false;
+                }
+            };
+
             if (mode == app_mode::single) {
                 const auto& hi = single_viewer.get_hover_info();
                 if (!hi.valid) {
@@ -477,6 +538,10 @@ int main(int argc, char** argv) {
                     ImGui::Text("zoom : %.2fx", static_cast<double>(hi.zoom));
                     ImGui::Separator();
                     draw_rgba("##swatch", hi.rgba);
+                    ImGui::Separator();
+                    const image_data* img = &single_viewer.get_image_data();
+                    draw_profile("X Profile", true,  hi.img_y, {{img, IM_COL32(80, 200, 255, 220), hi.img_x}});
+                    draw_profile("Y Profile", false, hi.img_x, {{img, IM_COL32(80, 200, 255, 220), hi.img_y}});
                 }
             } else {
                 const auto& hi = compare.get_hover_info();
@@ -491,6 +556,15 @@ int main(int argc, char** argv) {
                     ImGui::Spacing();
                     ImGui::TextDisabled(compare.diff_mode ? "Diff" : "Right");
                     draw_rgba("##rswatch", hi.right_rgba);
+                    ImGui::Separator();
+                    const image_data* li = &compare.get_left_image_data();
+                    const image_data* ri = &compare.get_right_image_data();
+                    draw_profile("X Profile", true,  hi.img_y,
+                        {{li, IM_COL32(80, 200, 255, 220), hi.img_x},
+                         {ri, IM_COL32(255, 160,  60, 220), hi.img_x}});
+                    draw_profile("Y Profile", false, hi.img_x,
+                        {{li, IM_COL32(80, 200, 255, 220), hi.img_y},
+                         {ri, IM_COL32(255, 160,  60, 220), hi.img_y}});
                 }
             }
 

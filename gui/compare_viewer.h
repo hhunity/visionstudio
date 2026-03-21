@@ -23,6 +23,10 @@ public:
     void set_split_overlays(std::vector<roi_entry> entries);
     void clear_overlays();
 
+    // Image data access for profile graphs.
+    const image_data& get_left_image_data()  const;
+    const image_data& get_right_image_data() const;
+
     // Combined hover info for the pixel panel (same data as the tooltip).
     struct combined_hover_info {
         bool                   valid      = false;
