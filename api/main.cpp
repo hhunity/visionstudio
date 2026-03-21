@@ -24,7 +24,7 @@ static void glfw_error_cb(int error, const char* desc) {
 // Mode
 // ---------------------------------------------------------------------------
 
-enum class app_mode { single, compare, split };
+enum class app_mode { none, single, compare, split };
 
 // ---------------------------------------------------------------------------
 // Async loader
@@ -67,7 +67,7 @@ struct async_loader {
 // ---------------------------------------------------------------------------
 
 struct app_state {
-    app_mode        mode          = app_mode::single;
+    app_mode*       mode          = nullptr;
     image_viewer*   single_viewer = nullptr;
     compare_viewer* compare       = nullptr;
     image_data*     left_image    = nullptr;
@@ -80,7 +80,9 @@ struct app_state {
 static void drop_callback(GLFWwindow* window, int count, const char** paths) {
     auto* app = static_cast<app_state*>(glfwGetWindowUserPointer(window));
 
-    switch (app->mode) {
+    switch (*app->mode) {
+    case app_mode::none:
+        break; // mode not selected yet, ignore drops
     case app_mode::single:
         app->left_loader->start(paths[0]);
         break;
@@ -102,7 +104,7 @@ int main(int argc, char** argv) {
     CLI::App cli{"VisionStudio - TIFF image viewer"};
     cli.set_version_flag("--version", "0.1.0");
 
-    std::string mode_str = "single";
+    std::string mode_str;
     std::string arg_left, arg_right;
     bool        arg_diff    = false;
     float       arg_amplify = 1.0f;
@@ -111,15 +113,17 @@ int main(int argc, char** argv) {
        ->transform(CLI::IsMember({"single", "compare", "split"}, CLI::ignore_case));
     cli.add_option("left",       arg_left,    "Left image (or single image)");
     cli.add_option("-r,--right", arg_right,   "Right image (compare mode)");
-    cli.add_flag("--diff",       arg_diff,    "Enable diff mode on startup (compare mode)");
+    cli.add_flag("--diff",       arg_diff,    "Enable diff mode on startup");
     cli.add_option("--amplify",  arg_amplify, "Diff amplification factor (default: 1.0)")
        ->check(CLI::Range(1.0f, 20.0f));
 
     CLI11_PARSE(cli, argc, argv);
 
-    const app_mode mode = (mode_str == "compare") ? app_mode::compare
-                        : (mode_str == "split")   ? app_mode::split
-                                                  : app_mode::single;
+    // --mode omitted → show mode selection UI at startup
+    app_mode mode = mode_str.empty()          ? app_mode::none
+                  : (mode_str == "compare")   ? app_mode::compare
+                  : (mode_str == "split")     ? app_mode::split
+                                              : app_mode::single;
 
     // -------------------------------------------------------------------------
     // GLFW + OpenGL + ImGui init
@@ -168,7 +172,7 @@ int main(int argc, char** argv) {
     async_loader left_loader;
     async_loader right_loader;
 
-    app_state drop_state{mode,
+    app_state drop_state{&mode,
                          &single_viewer, &compare,
                          &left_image, &right_image,
                          &status_msg,
@@ -205,6 +209,34 @@ int main(int argc, char** argv) {
         glfwGetFramebufferSize(window, &fb_w, &fb_h);
         glfwGetWindowSize(window, &win_w, &win_h);
 
+        // ----- Mode selection screen -----
+        if (mode == app_mode::none) {
+            ImGui::SetNextWindowPos(
+                {static_cast<float>(win_w) * 0.5f, static_cast<float>(win_h) * 0.5f},
+                ImGuiCond_Always, {0.5f, 0.5f});
+            ImGui::SetNextWindowBgAlpha(0.92f);
+            ImGui::Begin("##mode_select", nullptr,
+                ImGuiWindowFlags_NoDecoration    | ImGuiWindowFlags_NoMove        |
+                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoNav);
+            ImGui::TextUnformatted("Select Viewer Mode");
+            ImGui::Spacing();
+            if (ImGui::Button("Single",  {120.0f, 40.0f})) mode = app_mode::single;
+            ImGui::SameLine();
+            if (ImGui::Button("Compare", {120.0f, 40.0f})) mode = app_mode::compare;
+            ImGui::SameLine();
+            if (ImGui::Button("Split",   {120.0f, 40.0f})) mode = app_mode::split;
+            ImGui::End();
+
+            ImGui::Render();
+            glViewport(0, 0, fb_w, fb_h);
+            glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            glfwSwapBuffers(window);
+            continue;
+        }
+
         // ----- Poll async loaders -----
         {
             image_data tmp;
@@ -222,6 +254,8 @@ int main(int argc, char** argv) {
                     compare.load_split(left_image);
                     compare.left_label  = left_loader.path;
                     compare.right_label = left_loader.path;
+                    break;
+                default:
                     break;
                 }
                 if (!right_loader.active)
