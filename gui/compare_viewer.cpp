@@ -7,6 +7,54 @@
 
 compare_viewer::compare_viewer() = default;
 
+void compare_viewer::set_left_overlays(std::vector<roi_entry> entries) {
+    left_viewer_.set_overlays(std::move(entries));
+}
+
+void compare_viewer::set_right_overlays(std::vector<roi_entry> entries) {
+    right_viewer_.set_overlays(std::move(entries));
+}
+
+void compare_viewer::set_split_overlays(std::vector<roi_entry> entries) {
+    split_overlays_ = std::move(entries);
+    apply_split_overlays();
+}
+
+void compare_viewer::clear_overlays() {
+    split_overlays_.clear();
+    left_viewer_.clear_overlays();
+    right_viewer_.clear_overlays();
+}
+
+void compare_viewer::apply_split_overlays() {
+    if (split_overlays_.empty() || split_src_.empty()) return;
+
+    const int left_w = std::max(1, std::min(split_x, split_src_.width - 1));
+
+    std::vector<roi_entry> left_ov, right_ov;
+    for (const auto& e : split_overlays_) {
+        const int x2 = e.x + e.w;
+
+        // Left panel: clip to [0, left_w)
+        if (e.x < left_w) {
+            roi_entry le = e;
+            le.w = std::min(x2, left_w) - e.x;
+            if (le.w > 0) left_ov.push_back(le);
+        }
+
+        // Right panel: clip to [left_w, src_width), shift x by -left_w
+        if (x2 > left_w) {
+            roi_entry re = e;
+            re.x = std::max(e.x, left_w) - left_w;
+            re.w = x2 - std::max(e.x, left_w);
+            if (re.w > 0) right_ov.push_back(re);
+        }
+    }
+
+    left_viewer_.set_overlays(std::move(left_ov));
+    right_viewer_.set_overlays(std::move(right_ov));
+}
+
 bool compare_viewer::load_left(const image_data& img) {
     is_split_     = false;
     diff_applied_ = false;
@@ -68,6 +116,7 @@ void compare_viewer::apply_split() {
     split_x_applied_ = split_x;
     left_viewer_.load_image(left_half);
     right_viewer_.load_image(right_half);
+    apply_split_overlays();
 }
 
 // ---------------------------------------------------------------------------
@@ -177,10 +226,12 @@ void compare_viewer::render(float width, float height) {
     left_viewer_.grid_spacing      = grid_spacing;
     left_viewer_.show_minimap      = show_minimap;
     left_viewer_.show_coordinates  = false;
+    left_viewer_.show_overlays     = show_overlays;
     right_viewer_.show_grid        = show_grid;
     right_viewer_.grid_spacing     = grid_spacing;
     right_viewer_.show_minimap     = show_minimap;
     right_viewer_.show_coordinates = false;
+    right_viewer_.show_overlays    = show_overlays;
 
     view_state* left_state  = sync_views ? &shared_state_ : nullptr;
     view_state* right_state = sync_views ? &shared_state_ : nullptr;

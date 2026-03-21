@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 // ---------------------------------------------------------------------------
 // Lifecycle
@@ -207,6 +208,9 @@ void image_viewer::draw_content(ImDrawList* dl, const ImVec2& canvas_pos,
     if (show_grid)
         draw_grid(dl, canvas_pos, canvas_size, state);
 
+    if (show_overlays && !overlays_.empty())
+        draw_overlays(dl, canvas_pos, state);
+
     if (show_minimap)
         draw_minimap(dl, canvas_pos, canvas_size, state);
 }
@@ -324,4 +328,122 @@ void image_viewer::draw_minimap(ImDrawList* dl, const ImVec2& canvas_pos,
     // Minimap border.
     dl->AddRect({mx - 1.0f, my - 1.0f}, {mx + mw + 1.0f, my + mh + 1.0f},
                 IM_COL32(120, 120, 120, 200));
+}
+
+// ---------------------------------------------------------------------------
+// Overlay helpers
+// ---------------------------------------------------------------------------
+
+void image_viewer::set_overlays(std::vector<roi_entry> entries) {
+    overlays_ = std::move(entries);
+    float max_mag = 0.0f;
+    for (const auto& e : overlays_) {
+        const float mag = std::sqrt(e.dx * e.dx + e.dy * e.dy);
+        if (mag > max_mag) max_mag = mag;
+    }
+    overlay_max_mag_ = max_mag > 0.0f ? max_mag : 1.0f;
+}
+
+void image_viewer::clear_overlays() {
+    overlays_.clear();
+    overlay_max_mag_ = 1.0f;
+}
+
+// Map t∈[0,1] to a blue→cyan→green→yellow→red color.
+static ImU32 heatmap_color(float t, uint8_t alpha) {
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    float r, g, b;
+    if      (t < 0.25f) { float s = t / 0.25f;         r = 0.f; g = s;       b = 1.f;     }
+    else if (t < 0.50f) { float s = (t-0.25f)/0.25f;   r = 0.f; g = 1.f;     b = 1.f - s; }
+    else if (t < 0.75f) { float s = (t-0.50f)/0.25f;   r = s;   g = 1.f;     b = 0.f;     }
+    else                { float s = (t-0.75f)/0.25f;   r = 1.f; g = 1.f - s; b = 0.f;     }
+    return IM_COL32(static_cast<uint8_t>(r * 255),
+                    static_cast<uint8_t>(g * 255),
+                    static_cast<uint8_t>(b * 255),
+                    alpha);
+}
+
+// Draw a line with a small arrowhead at `to`.
+static void draw_arrow(ImDrawList* dl, ImVec2 from, ImVec2 to, ImU32 color, float thickness = 2.0f) {
+    dl->AddLine(from, to, color, thickness);
+    const float dx = to.x - from.x, dy = to.y - from.y;
+    const float len = std::sqrt(dx * dx + dy * dy);
+    if (len < 2.0f) return;
+    const float ux = dx / len, uy = dy / len;
+    const float nx = -uy, ny = ux;
+    const float hs = std::min(len * 0.4f, 12.0f); // head size
+    const ImVec2 p1 = {to.x - ux * hs + nx * hs * 0.4f, to.y - uy * hs + ny * hs * 0.4f};
+    const ImVec2 p2 = {to.x - ux * hs - nx * hs * 0.4f, to.y - uy * hs - ny * hs * 0.4f};
+    dl->AddTriangleFilled(to, p1, p2, color);
+}
+
+void image_viewer::draw_overlays(ImDrawList* dl, const ImVec2& canvas_pos,
+                                  const view_state& state) const {
+    // Image → screen coordinate transform
+    auto to_screen = [&](float ix, float iy) -> ImVec2 {
+        return {canvas_pos.x + state.pan_x + ix * state.zoom,
+                canvas_pos.y + state.pan_y + iy * state.zoom};
+    };
+
+    for (const auto& e : overlays_) {
+        const float mag = std::sqrt(e.dx * e.dx + e.dy * e.dy);
+        const float t   = mag / overlay_max_mag_;
+
+        const ImU32 fill_col   = heatmap_color(t, 70);   // semi-transparent fill
+        const ImU32 border_col = heatmap_color(t, 210);  // opaque border
+        constexpr ImU32 arrow_col = IM_COL32(255, 255, 255, 230);
+        constexpr ImU32 arc_col   = IM_COL32(100, 220, 255, 230);
+
+        // ROI rectangle
+        const ImVec2 tl = to_screen(static_cast<float>(e.x),         static_cast<float>(e.y));
+        const ImVec2 br = to_screen(static_cast<float>(e.x + e.w),   static_cast<float>(e.y + e.h));
+        dl->AddRectFilled(tl, br, fill_col);
+        dl->AddRect(tl, br, border_col, 0.0f, 0, 1.5f);
+
+        // Center of ROI in image space
+        const float cx = e.x + e.w * 0.5f;
+        const float cy = e.y + e.h * 0.5f;
+        const ImVec2 center_s = to_screen(cx, cy);
+
+        // Displacement arrow (dx, dy) — length scaled by zoom, clamped for visibility
+        if (mag > 0.0f) {
+            const float arrow_len_s = mag * state.zoom;
+            if (arrow_len_s > 2.0f) {
+                const ImVec2 tip = to_screen(cx + e.dx, cy + e.dy);
+                draw_arrow(dl, center_s, tip, arrow_col, 2.0f);
+            }
+        }
+
+        // Angle arc: from 0 to e.angle, centered on ROI, radius = min(w,h)*0.3 in image px
+        if (std::abs(e.angle) > 0.001f) {
+            const float radius_s = std::min(e.w, e.h) * 0.3f * state.zoom;
+            if (radius_s > 4.0f) {
+                const float a0 = 0.0f;
+                const float a1 = e.angle;
+                // Reference line
+                dl->AddLine(center_s,
+                            {center_s.x + radius_s, center_s.y},
+                            arc_col, 1.5f);
+                // End line
+                dl->AddLine(center_s,
+                            {center_s.x + radius_s * std::cos(a1),
+                             center_s.y + radius_s * std::sin(a1)},
+                            arc_col, 1.5f);
+                // Arc
+                const float a_min = a0 < a1 ? a0 : a1;
+                const float a_max = a0 < a1 ? a1 : a0;
+                dl->PathArcTo(center_s, radius_s, a_min, a_max, 16);
+                dl->PathStroke(arc_col, false, 1.5f);
+            }
+        }
+
+        // Label (filename + dx/dy/angle summary if no explicit label)
+        char buf[128];
+        if (!e.label.empty()) {
+            std::snprintf(buf, sizeof(buf), "%s", e.label.c_str());
+        } else {
+            std::snprintf(buf, sizeof(buf), "dx:%.1f dy:%.1f a:%.2f", e.dx, e.dy, e.angle);
+        }
+        dl->AddText({tl.x + 3.0f, tl.y + 2.0f}, border_col, buf);
+    }
 }

@@ -6,8 +6,10 @@
 
 #include "gui/compare_viewer.h"
 #include "gui/image_viewer.h"
+#include "io/jsonl_io.h"
 #include "io/tiff_io.h"
 #include "util/image_data.h"
+#include "util/roi_data.h"
 
 #include <CLI/CLI.hpp>
 #include <atomic>
@@ -67,15 +69,31 @@ struct async_loader {
 // ---------------------------------------------------------------------------
 
 struct app_state {
-    app_mode*       mode          = nullptr;
-    image_viewer*   single_viewer = nullptr;
-    compare_viewer* compare       = nullptr;
-    image_data*     left_image    = nullptr;
-    image_data*     right_image   = nullptr;
-    std::string*    status_msg    = nullptr;
-    async_loader*   left_loader   = nullptr;
-    async_loader*   right_loader  = nullptr;
+    app_mode*                mode          = nullptr;
+    image_viewer*            single_viewer = nullptr;
+    compare_viewer*          compare       = nullptr;
+    image_data*              left_image    = nullptr;
+    image_data*              right_image   = nullptr;
+    std::string*             status_msg    = nullptr;
+    async_loader*            left_loader   = nullptr;
+    async_loader*            right_loader  = nullptr;
+    std::vector<roi_entry>*  overlays       = nullptr; // single mode
+    std::vector<roi_entry>*  left_overlays  = nullptr; // compare / split mode (left panel)
+    std::vector<roi_entry>*  right_overlays = nullptr; // compare mode (right panel)
 };
+
+// Returns true if path ends with the given (lower-case) extension including dot.
+static bool has_ext(const char* path, const char* ext) {
+    const size_t plen = std::strlen(path);
+    const size_t elen = std::strlen(ext);
+    if (plen < elen) return false;
+    for (size_t i = 0; i < elen; ++i) {
+        char c = path[plen - elen + i];
+        if (c >= 'A' && c <= 'Z') c += 32; // to lower
+        if (c != ext[i]) return false;
+    }
+    return true;
+}
 
 static void drop_callback(GLFWwindow* window, int count, const char** paths) {
     auto* app = static_cast<app_state*>(glfwGetWindowUserPointer(window));
@@ -84,15 +102,49 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
     case app_mode::none:
         break; // mode not selected yet, ignore drops
     case app_mode::single:
-        app->left_loader->start(paths[0]);
-        break;
-    case app_mode::compare:
-        app->left_loader->start(paths[0]);
-        if (count >= 2) app->right_loader->start(paths[1]);
-        break;
-    case app_mode::split:
-        app->left_loader->start(paths[0]);
-        break;
+        for (int i = 0; i < count; ++i) {
+            if (has_ext(paths[i], ".jsonl")) {
+                if (jsonl_io::load(paths[i], *app->overlays)) {
+                    app->single_viewer->set_overlays(*app->overlays);
+                    *app->status_msg = std::string("Overlay loaded: ") + paths[i];
+                }
+            } else {
+                app->left_loader->start(paths[i]);
+                *app->status_msg = "Loading...";
+            }
+        }
+        return; // status_msg already set above
+    case app_mode::compare: {
+        // Partition dropped files: .jsonl → overlays, others → images
+        std::vector<const char*> jsonl_files, img_files;
+        for (int i = 0; i < count; ++i)
+            (has_ext(paths[i], ".jsonl") ? jsonl_files : img_files).push_back(paths[i]);
+        if (!img_files.empty())  app->left_loader->start(img_files[0]);
+        if (img_files.size() >= 2) app->right_loader->start(img_files[1]);
+        if (!jsonl_files.empty()) {
+            jsonl_io::load(jsonl_files[0], *app->left_overlays);
+            app->compare->set_left_overlays(*app->left_overlays);
+        }
+        if (jsonl_files.size() >= 2) {
+            jsonl_io::load(jsonl_files[1], *app->right_overlays);
+            app->compare->set_right_overlays(*app->right_overlays);
+        }
+        *app->status_msg = "Loading...";
+        return;
+    }
+    case app_mode::split: {
+        for (int i = 0; i < count; ++i) {
+            if (has_ext(paths[i], ".jsonl")) {
+                jsonl_io::load(paths[i], *app->left_overlays);
+                app->compare->set_split_overlays(*app->left_overlays);
+                *app->status_msg = std::string("Overlay loaded: ") + paths[i];
+            } else {
+                app->left_loader->start(paths[i]);
+                *app->status_msg = "Loading...";
+            }
+        }
+        return;
+    }
     }
     *app->status_msg = "Loading...";
 }
@@ -104,18 +156,23 @@ int main(int argc, char** argv) {
     CLI::App cli{"VisionStudio - TIFF image viewer"};
     cli.set_version_flag("--version", "0.1.0");
 
-    std::string mode_str;
-    std::string arg_left, arg_right;
-    bool        arg_diff    = false;
-    float       arg_amplify = 1.0f;
+    std::string              mode_str;
+    std::vector<std::string> arg_images;
+    std::vector<std::string> arg_overlays;
+    bool                     arg_diff    = false;
+    float                    arg_amplify = 1.0f;
 
     cli.add_option("--mode", mode_str, "Viewer mode: single | compare | split")
        ->transform(CLI::IsMember({"single", "compare", "split"}, CLI::ignore_case));
-    cli.add_option("left",       arg_left,    "Left image (or single image)");
-    cli.add_option("-r,--right", arg_right,   "Right image (compare mode)");
-    cli.add_flag("--diff",       arg_diff,    "Enable diff mode on startup");
-    cli.add_option("--amplify",  arg_amplify, "Diff amplification factor (default: 1.0)")
+    cli.add_option("images", arg_images, "Image file(s). One file: single/split. Two files: compare.")
+       ->expected(0, 2);
+    cli.add_flag("--diff",      arg_diff,    "Enable diff mode on startup");
+    cli.add_option("--amplify", arg_amplify, "Diff amplification factor (default: 1.0)")
        ->check(CLI::Range(1.0f, 20.0f));
+    cli.add_option("--overlay", arg_overlays,
+                   "JSONL overlay file(s). One file: single/split. Two files: compare left+right.")
+       ->expected(1, 2)
+       ->check(CLI::ExistingFile);
 
     CLI11_PARSE(cli, argc, argv);
 
@@ -169,14 +226,18 @@ int main(int argc, char** argv) {
     char right_path_buf[512] = "";
     std::string status_msg;
 
-    async_loader left_loader;
-    async_loader right_loader;
+    async_loader           left_loader;
+    async_loader           right_loader;
+    std::vector<roi_entry> overlays;
+    std::vector<roi_entry> left_overlays;
+    std::vector<roi_entry> right_overlays;
 
     app_state drop_state{&mode,
                          &single_viewer, &compare,
                          &left_image, &right_image,
                          &status_msg,
-                         &left_loader, &right_loader};
+                         &left_loader, &right_loader,
+                         &overlays, &left_overlays, &right_overlays};
     glfwSetWindowUserPointer(window, &drop_state);
 
     // Apply diff flags from args (compare / split mode)
@@ -186,13 +247,27 @@ int main(int argc, char** argv) {
     }
 
     // Load images specified on command line
-    if (!arg_left.empty() && !arg_right.empty() && mode == app_mode::compare) {
-        left_loader.start(arg_left);
-        right_loader.start(arg_right);
+    if (!arg_images.empty()) {
+        left_loader.start(arg_images[0]);
+        if (arg_images.size() >= 2 && mode == app_mode::compare)
+            right_loader.start(arg_images[1]);
         status_msg = "Loading...";
-    } else if (!arg_left.empty()) {
-        left_loader.start(arg_left);
-        status_msg = "Loading...";
+    }
+
+    // Load overlay JSONL from CLI args
+    if (!arg_overlays.empty()) {
+        if (mode == app_mode::single) {
+            if (jsonl_io::load(arg_overlays[0], overlays))
+                single_viewer.set_overlays(overlays);
+        } else if (mode == app_mode::split) {
+            if (jsonl_io::load(arg_overlays[0], left_overlays))
+                compare.set_split_overlays(left_overlays);
+        } else if (mode == app_mode::compare) {
+            if (jsonl_io::load(arg_overlays[0], left_overlays))
+                compare.set_left_overlays(left_overlays);
+            if (arg_overlays.size() >= 2 && jsonl_io::load(arg_overlays[1], right_overlays))
+                compare.set_right_overlays(right_overlays);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -290,16 +365,18 @@ int main(int argc, char** argv) {
             }
             if (ImGui::BeginMenu("View")) {
                 if (mode == app_mode::single) {
-                    ImGui::MenuItem("Show Grid",    nullptr, &single_viewer.show_grid);
-                    ImGui::MenuItem("Show Minimap", nullptr, &single_viewer.show_minimap);
+                    ImGui::MenuItem("Show Grid",     nullptr, &single_viewer.show_grid);
+                    ImGui::MenuItem("Show Minimap",  nullptr, &single_viewer.show_minimap);
+                    ImGui::MenuItem("Show Overlays", nullptr, &single_viewer.show_overlays);
                     if (single_viewer.show_grid) {
                         ImGui::Separator();
                         ImGui::SliderInt("Grid Spacing##s", &single_viewer.grid_spacing, 1, 500);
                     }
                 } else {
-                    ImGui::MenuItem("Show Grid",    nullptr, &compare.show_grid);
-                    ImGui::MenuItem("Show Minimap", nullptr, &compare.show_minimap);
-                    ImGui::MenuItem("Sync Views",   nullptr, &compare.sync_views);
+                    ImGui::MenuItem("Show Grid",     nullptr, &compare.show_grid);
+                    ImGui::MenuItem("Show Minimap",  nullptr, &compare.show_minimap);
+                    ImGui::MenuItem("Show Overlays", nullptr, &compare.show_overlays);
+                    ImGui::MenuItem("Sync Views",    nullptr, &compare.sync_views);
                     if (mode == app_mode::split && compare.is_split()) {
                         ImGui::Separator();
                         ImGui::SetNextItemWidth(200.0f);

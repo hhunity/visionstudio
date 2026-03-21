@@ -9,6 +9,7 @@
     "glfw3",
     "tiff",
     "glad",
-    "cli11"
+    "cli11",
+    "nlohmann-json"
   ]
 }
