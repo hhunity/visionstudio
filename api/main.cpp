@@ -307,9 +307,11 @@ int main(int argc, char** argv) {
                          &overlays, &left_overlays, &right_overlays};
     glfwSetWindowUserPointer(window, &drop_state);
 
-    // Start SSE listener if launching directly in capture mode.
-    if (mode == app_mode::capture)
-        cap_cli.start_sse();
+    // In capture mode launched via CLI, connect and start SSE automatically.
+    if (mode == app_mode::capture) {
+        if (cap_cli.connect_server())
+            cap_cli.start_sse();
+    }
 
     // Apply diff flags from args (compare / split mode)
     if (mode == app_mode::compare || mode == app_mode::split) {
@@ -373,10 +375,8 @@ int main(int argc, char** argv) {
             ImGui::SameLine();
             if (ImGui::Button("Split",   {120.0f, 40.0f})) mode = app_mode::split;
             ImGui::SameLine();
-            if (ImGui::Button("Capture", {120.0f, 40.0f})) {
+            if (ImGui::Button("Capture", {120.0f, 40.0f}))
                 mode = app_mode::capture;
-                cap_cli.start_sse();
-            }
             ImGui::End();
 
             ImGui::Render();
@@ -420,11 +420,33 @@ int main(int argc, char** argv) {
             }
         }
 
-        // ----- Poll capture results (SSE) -----
+        // ----- Poll capture events (SSE) -----
         if (mode == app_mode::capture) {
-            while (auto path = cap_cli.poll_result()) {
-                left_loader.start(*path);
-                status_msg = "Capture complete: " + *path;
+            while (auto ev = cap_cli.poll_server_event()) {
+                switch (ev->type) {
+                case server_event_type::connected:
+                    server_connected = true;
+                    status_msg = "Server connected";
+                    break;
+                case server_event_type::disconnected:
+                    server_connected = false;
+                    cap_cli.stop_sse();
+                    status_msg = "Server disconnected";
+                    break;
+                case server_event_type::error:
+                    status_msg = "Server error: " + ev->message;
+                    break;
+                case server_event_type::capture_done:
+                    left_loader.start(ev->path);
+                    status_msg = "Capture complete: " + ev->path;
+                    break;
+                }
+            }
+            // Detect unexpected SSE drop (server crash etc.)
+            if (server_connected && cap_cli.get_sse_state() == sse_state::error) {
+                server_connected = false;
+                cap_cli.stop_sse();
+                status_msg = "Connection lost: " + cap_cli.get_last_error();
             }
         }
 
@@ -574,7 +596,10 @@ int main(int argc, char** argv) {
             if (ImGui::Button("Connect")) {
                 if (!cap_cli.connect_server())
                     status_msg = "Connect failed: " + cap_cli.get_last_error();
-                else { status_msg = "Server connected"; server_connected = true; }
+                else {
+                    status_msg = "Connecting...";
+                    cap_cli.start_sse();  // connected event will set server_connected
+                }
             }
             ImGui::EndDisabled();
             ImGui::SameLine();
@@ -582,7 +607,11 @@ int main(int argc, char** argv) {
             if (ImGui::Button("Disconnect")) {
                 if (!cap_cli.disconnect_server())
                     status_msg = "Disconnect failed: " + cap_cli.get_last_error();
-                else { status_msg = "Server disconnected"; server_connected = false; }
+                else {
+                    cap_cli.stop_sse();
+                    server_connected = false;
+                    status_msg = "Server disconnected";
+                }
             }
             ImGui::SameLine();
             ImGui::Text("|");

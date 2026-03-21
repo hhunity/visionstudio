@@ -123,6 +123,8 @@ void capture_client::sse_thread_func() {
     cli.set_read_timeout(0, 0);  // no timeout for streaming
 
     std::string buf;
+    std::string current_event;
+    std::string current_data;
 
     auto res = cli.Get(
         cfg_.sse_path,
@@ -139,14 +141,26 @@ void capture_client::sse_thread_func() {
         },
         [&](const char* data, size_t len) -> bool {
             buf.append(data, len);
-            // Process all complete lines ('\n' delimited).
             size_t pos;
             while ((pos = buf.find('\n')) != std::string::npos) {
                 std::string line = buf.substr(0, pos);
                 buf.erase(0, pos + 1);
                 if (!line.empty() && line.back() == '\r')
                     line.pop_back();
-                parse_sse_line(line);
+
+                if (line.empty()) {
+                    // Blank line: dispatch accumulated event
+                    if (!current_event.empty() || !current_data.empty()) {
+                        dispatch_event(current_event, current_data);
+                        current_event.clear();
+                        current_data.clear();
+                    }
+                } else if (line.rfind("event:", 0) == 0) {
+                    current_event = trim(line.substr(6));
+                } else if (line.rfind("data:", 0) == 0) {
+                    current_data = trim(line.substr(5));
+                }
+                // Ignore id:, retry:, and comment lines
             }
             return !stop_flag_.load();
         });
@@ -159,36 +173,47 @@ void capture_client::sse_thread_func() {
     }
 }
 
-void capture_client::parse_sse_line(const std::string& line) {
-    // SSE format: "data: <json>"
-    if (line.rfind("data:", 0) != 0) return;
-    const std::string json_str = trim(line.substr(5));
-    if (json_str.empty()) return;
-
-    try {
-        const auto j = nlohmann::json::parse(json_str);
-        if (j.contains("path") && j["path"].is_string())
-            push_result(j["path"].get<std::string>());
-    } catch (...) {
-        // Ignore malformed JSON lines.
+void capture_client::dispatch_event(const std::string& event_type,
+                                    const std::string& data) {
+    if (event_type == "connected") {
+        push_event({server_event_type::connected, {}, {}});
+    } else if (event_type == "disconnected") {
+        push_event({server_event_type::disconnected, {}, {}});
+    } else if (event_type == "error") {
+        std::string msg;
+        try {
+            const auto j = nlohmann::json::parse(data);
+            if (j.contains("message") && j["message"].is_string())
+                msg = j["message"].get<std::string>();
+        } catch (...) {}
+        push_event({server_event_type::error, {}, msg});
+    } else if (event_type == "capture_done") {
+        std::string path;
+        try {
+            const auto j = nlohmann::json::parse(data);
+            if (j.contains("path") && j["path"].is_string())
+                path = j["path"].get<std::string>();
+        } catch (...) {}
+        if (!path.empty())
+            push_event({server_event_type::capture_done, path, {}});
     }
 }
 
 // ---------------------------------------------------------------------------
-// Thread-safe queue / error helpers
+// Thread-safe event queue / error helpers
 // ---------------------------------------------------------------------------
 
-void capture_client::push_result(std::string path) {
-    std::lock_guard lock(queue_mtx_);
-    result_queue_.push_back(std::move(path));
+void capture_client::push_event(server_event ev) {
+    std::lock_guard lock(event_mtx_);
+    event_queue_.push_back(std::move(ev));
 }
 
-std::optional<std::string> capture_client::poll_result() {
-    std::lock_guard lock(queue_mtx_);
-    if (result_queue_.empty()) return std::nullopt;
-    std::string path = std::move(result_queue_.front());
-    result_queue_.erase(result_queue_.begin());
-    return path;
+std::optional<server_event> capture_client::poll_server_event() {
+    std::lock_guard lock(event_mtx_);
+    if (event_queue_.empty()) return std::nullopt;
+    server_event ev = std::move(event_queue_.front());
+    event_queue_.erase(event_queue_.begin());
+    return ev;
 }
 
 void capture_client::set_error(std::string msg) {
