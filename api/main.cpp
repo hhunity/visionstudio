@@ -16,6 +16,7 @@
 #include "util/image_data.h"
 #include "util/roi_data.h"
 
+#include "generated/third_party_licenses.h"
 #include <CLI/CLI.hpp>
 #include <nlohmann/json.hpp>
 #include <atomic>
@@ -256,6 +257,7 @@ int main(int argc, char** argv) {
     bool        show_profile_panel    = false;
     bool        show_camera_config    = false;
     bool        show_connect_config   = false;
+    bool        show_about            = false;
     bool        server_connected      = false;
 
     // Capture settings
@@ -568,6 +570,10 @@ int main(int argc, char** argv) {
                 ImGui::MenuItem("Profile Panel", nullptr, &show_profile_panel);
                 ImGui::EndMenu();
             }
+            if (ImGui::BeginMenu("Help")) {
+                if (ImGui::MenuItem("About")) show_about = true;
+                ImGui::EndMenu();
+            }
             ImGui::EndMenuBar();
         }
 
@@ -684,6 +690,24 @@ int main(int argc, char** argv) {
                     + (tab.modified ? " *" : "") + "##connsave";
                 if (ImGui::Button(save_label.c_str())) tab.save();
             }
+            ImGui::EndPopup();
+        }
+
+        // ----- About modal -----
+        if (show_about) ImGui::OpenPopup("About VisionStudio##modal");
+        ImGui::SetNextWindowSize({620, 520}, ImGuiCond_Always);
+        if (ImGui::BeginPopupModal("About VisionStudio##modal", &show_about,
+                                    ImGuiWindowFlags_NoResize)) {
+            ImGui::TextUnformatted("VisionStudio  v0.1.0");
+            ImGui::Separator();
+            const float text_h = ImGui::GetContentRegionAvail().y
+                                - ImGui::GetFrameHeightWithSpacing() - 4;
+            ImGui::InputTextMultiline("##about_text",
+                const_cast<char*>(kThirdPartyLicenses),
+                sizeof(kThirdPartyLicenses),
+                {-1, text_h},
+                ImGuiInputTextFlags_ReadOnly);
+            if (ImGui::Button("Close")) { show_about = false; ImGui::CloseCurrentPopup(); }
             ImGui::EndPopup();
         }
 

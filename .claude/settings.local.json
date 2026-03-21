@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(cmake --preset debug)",
-      "Bash(cmake --build --preset debug)"
+      "Bash(cmake --build --preset debug)",
+      "Bash(cmake --build build/debug --target visionstudio)",
+      "Bash(cmake -S /Users/hiroyukih/vscode/visionstudio -B /Users/hiroyukih/vscode/visionstudio/build/debug --preset debug)",
+      "Bash(cmake --build /Users/hiroyukih/vscode/visionstudio/build/debug --target visionstudio)"
     ]
   }
 }

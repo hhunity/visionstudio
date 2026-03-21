@@ -67,8 +67,16 @@ target_link_libraries(vs_capture PUBLIC
     Threads::Threads
 )
 
+# ----- Embed THIRD_PARTY_LICENSES.txt at build time -----
+file(READ "${CMAKE_SOURCE_DIR}/THIRD_PARTY_LICENSES.txt" LICENSE_CONTENT)
+configure_file(
+    "${CMAKE_SOURCE_DIR}/generated/third_party_licenses.h.in"
+    "${CMAKE_BINARY_DIR}/generated/third_party_licenses.h"
+)
+
 # ----- visionstudio: main application -----
 add_executable(visionstudio
     api/main.cpp
 )
+target_include_directories(visionstudio PRIVATE "${CMAKE_BINARY_DIR}")
 target_link_libraries(visionstudio PRIVATE vs_gui vs_io vs_capture CLI11::CLI11 implot::implot nfd::nfd)
