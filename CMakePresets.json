@@ -29,7 +29,7 @@
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/out/release"
       }
-    }
+    },
   ],
   "buildPresets": [
     {

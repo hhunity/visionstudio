@@ -75,8 +75,19 @@ configure_file(
 )
 
 # ----- visionstudio: main application -----
-add_executable(visionstudio
-    api/main.cpp
-)
+if(WIN32)
+    add_executable(visionstudio WIN32
+        api/main.cpp
+    )
+else()
+    add_executable(visionstudio
+        api/main.cpp
+    )
+endif()
 target_include_directories(visionstudio PRIVATE "${CMAKE_BINARY_DIR}")
 target_link_libraries(visionstudio PRIVATE vs_gui vs_io vs_capture CLI11::CLI11 implot::implot nfd::nfd)
+
+if(MSVC)
+    target_compile_definitions(visionstudio PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_options(visionstudio PRIVATE /W3 /utf-8)
+endif()

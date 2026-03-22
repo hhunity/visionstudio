@@ -711,6 +711,57 @@ int main(int argc, char** argv) {
             ImGui::EndPopup();
         }
 
+        // ----- Toolbar -----
+        {
+            bool&  show_grid      = use_single ? single_viewer.show_grid      : compare.show_grid;
+            bool&  show_minimap   = use_single ? single_viewer.show_minimap   : compare.show_minimap;
+            bool&  show_overlays  = use_single ? single_viewer.show_overlays  : compare.show_overlays;
+            bool&  show_tooltip   = use_single ? single_viewer.show_coordinates : compare.show_coordinates;
+            bool&  show_crosshair = use_single ? single_viewer.show_crosshair : compare.show_crosshair;
+
+            constexpr ImVec4 kOn  = {0.15f, 0.45f, 0.75f, 1.0f};
+            constexpr ImVec4 kOnH = {0.25f, 0.55f, 0.85f, 1.0f};
+            constexpr ImVec4 kOnA = {0.10f, 0.35f, 0.65f, 1.0f};
+
+            auto toggle_btn = [&](const char* label, bool& flag) {
+                const bool on = flag;  // capture before click changes it
+                if (on) {
+                    ImGui::PushStyleColor(ImGuiCol_Button,        kOn);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kOnH);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  kOnA);
+                }
+                if (ImGui::SmallButton(label)) flag = !flag;
+                if (on) ImGui::PopStyleColor(3);
+                ImGui::SameLine();
+            };
+
+            toggle_btn("Grid",      show_grid);
+            toggle_btn("Minimap",   show_minimap);
+            toggle_btn("Overlays",  show_overlays);
+            toggle_btn("Tooltip",   show_tooltip);
+            toggle_btn("Crosshair", show_crosshair);
+            if (!use_single) {
+                toggle_btn("Sync", compare.sync_views);
+                const bool diff_on = compare.diff_mode;
+                if (diff_on) {
+                    ImGui::PushStyleColor(ImGuiCol_Button,        kOn);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kOnH);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  kOnA);
+                }
+                if (ImGui::SmallButton("Diff")) {
+                    compare.diff_mode = !compare.diff_mode;
+                    if (compare.diff_mode) compare.diff_amplify = 1.0f;
+                }
+                if (diff_on) ImGui::PopStyleColor(3);
+                ImGui::SameLine();
+            }
+            ImGui::TextDisabled("|");
+            ImGui::SameLine();
+            toggle_btn("Pixel",   show_pixel_panel);
+            toggle_btn("Profile", show_profile_panel);
+            ImGui::NewLine();
+        }
+
         // ----- Viewer area -----
         const float status_h        = ImGui::GetFrameHeightWithSpacing();
         const float profile_panel_h = show_profile_panel ? 180.0f : 0.0f;

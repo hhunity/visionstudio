@@ -13,7 +13,8 @@ C++ImGuiライブラリで、巨大画像の高速画像ビューワーを提供
   - CMakePresets.jsonを使用
 - vcpkgによるパッケージ管理
   - vcpkg.jsonでvcpkgのインストール管理
-  
+- windows,mac,linuxでビルド可能なこと。
+
 ## プロジェクト構成
 - `external`
   - `vcpkg` - vcpkgフォルダ
