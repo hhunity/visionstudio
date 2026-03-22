@@ -81,6 +81,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "not found"})
 
     def _serve_tiff(self):
+        self.close_connection = True
         if not os.path.exists(capture_tiff_path):
             self._send_json(404, {"error": f"tiff not found: {capture_tiff_path}"})
             print(f"[Server] TIFF not found: {capture_tiff_path}")
@@ -125,6 +126,7 @@ class Handler(BaseHTTPRequestHandler):
             print(f"[SSE] Client disconnected. Total clients: {len(sse_clients)}")
 
     def _send_json(self, code: int, body: dict) -> None:
+        self.close_connection = True
         data = json.dumps(body).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json")

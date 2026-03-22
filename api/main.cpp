@@ -259,6 +259,7 @@ int main(int argc, char** argv) {
     bool        show_connect_config   = false;
     bool        show_about            = false;
     bool        server_connected      = false;
+    bool        capturing             = false;
 
     // Capture settings
     int  capture_mode          = 0;     // 0=Capture, 1=Mode1, 2=Mode2
@@ -480,6 +481,7 @@ int main(int argc, char** argv) {
                     status_msg = "Server error: " + ev->message;
                     break;
                 case server_event_type::capture_done:
+                    capturing = false;
                     if (capture_mode == 0) {
                         left_loader.start(ev->path);
                     } else if (capture_mode == 1) {
@@ -499,6 +501,7 @@ int main(int argc, char** argv) {
             // Detect unexpected SSE drop (server crash etc.)
             if (server_connected && cap_cli.get_sse_state() == sse_state::error) {
                 server_connected = false;
+                capturing        = false;
                 cap_cli.stop_sse();
                 status_msg = "Connection lost: " + cap_cli.get_last_error();
             }
@@ -874,6 +877,7 @@ int main(int argc, char** argv) {
                     else {
                         cap_cli.stop_sse();
                         server_connected = false;
+                        capturing        = false;
                         status_msg = "Server disconnected";
                     }
                 }
@@ -963,26 +967,32 @@ int main(int argc, char** argv) {
                 ImGui::Separator();
 
                 // Capture buttons
-                ImGui::BeginDisabled(!server_connected);
+                ImGui::BeginDisabled(!server_connected || capturing);
                 ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.18f, 0.55f, 0.18f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.25f, 0.70f, 0.25f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.12f, 0.40f, 0.12f, 1.0f});
                 if (ImGui::Button("Start Capture", {-1, 0})) {
                     if (!cap_cli.start_capture())
                         status_msg = "Start failed: " + cap_cli.get_last_error();
-                    else
+                    else {
+                        capturing  = true;
                         status_msg = "Capture started";
+                    }
                 }
                 ImGui::PopStyleColor(3);
+                ImGui::EndDisabled();
 
+                ImGui::BeginDisabled(!server_connected || !capturing);
                 ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.60f, 0.15f, 0.15f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.78f, 0.20f, 0.20f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.45f, 0.10f, 0.10f, 1.0f});
                 if (ImGui::Button("Stop Capture", {-1, 0})) {
                     if (!cap_cli.stop_capture())
                         status_msg = "Stop failed: " + cap_cli.get_last_error();
-                    else
+                    else {
+                        capturing  = false;
                         status_msg = "Capture stopped";
+                    }
                 }
                 ImGui::PopStyleColor(3);
                 ImGui::EndDisabled();
