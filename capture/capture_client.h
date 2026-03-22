@@ -9,7 +9,7 @@
 
 enum class sse_state { disconnected, connecting, connected, error };
 
-enum class server_event_type { connected, disconnected, error, capture_done };
+enum class server_event_type { disconnected, error, capture_done };
 
 struct server_event {
     server_event_type type;
@@ -51,6 +51,8 @@ public:
 private:
     void sse_thread_func();
     void dispatch_event(const std::string& event_type, const std::string& data);
+    // Download TIFF from url to a temp file. Returns local path, or empty on failure.
+    std::string download_capture(const std::string& url);
     void push_event(server_event ev);
     void set_error(std::string msg);
 

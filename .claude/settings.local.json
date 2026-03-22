@@ -15,7 +15,8 @@
       "Bash(git init:*)",
       "Bash(git submodule:*)",
       "Bash(cmake --preset debug -S /Users/hiroyukih/vscode/visionstudio -B /Users/hiroyukih/vscode/visionstudio/build/debug)",
-      "Bash(cmake --build /Users/hiroyukih/vscode/visionstudio/build/debug)"
+      "Bash(cmake --build /Users/hiroyukih/vscode/visionstudio/build/debug)",
+      "Bash(find /Users/hiroyukih/vscode/visionstudio -name httplib.h ! -path */external/vcpkg/buildtrees/*)"
     ]
   }
 }

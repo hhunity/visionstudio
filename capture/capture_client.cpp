@@ -1,6 +1,9 @@
 #include "capture/capture_client.h"
 #include <httplib.h>
 #include <nlohmann/json.hpp>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <sstream>
 
 // ---------------------------------------------------------------------------
@@ -105,8 +108,14 @@ bool capture_client::stop_capture() {
 // ---------------------------------------------------------------------------
 
 void capture_client::start_sse() {
-    if (sse_thread_.joinable()) return;  // already running
+    if (sse_thread_.joinable()) {
+        const auto s = sse_state_.load();
+        if (s == sse_state::connecting || s == sse_state::connected)
+            return; // actively running
+        sse_thread_.join(); // clean up finished thread before restart
+    }
     stop_flag_.store(false);
+    sse_state_.store(sse_state::connecting); // set before thread starts to avoid race with error detection
     sse_thread_ = std::thread(&capture_client::sse_thread_func, this);
 }
 
@@ -121,7 +130,10 @@ void capture_client::sse_thread_func() {
     sse_state_.store(sse_state::connecting);
 
     httplib::Client cli(cfg_.host, cfg_.port);
-    cli.set_read_timeout(0, 0);  // no timeout for streaming
+    // Do not set read_timeout to (0,0): that means poll(fd,1,0) = non-blocking,
+    // which immediately fails when no SSE body data is available.
+    // Use a large timeout; keepalives arrive every ~15s so it never fires.
+    cli.set_read_timeout(3600, 0);  // 1 hour
 
     std::string buf;
     std::string current_event;
@@ -167,8 +179,12 @@ void capture_client::sse_thread_func() {
         });
 
     if (!res && sse_state_.load() != sse_state::error) {
-        set_error("SSE: connection failed");
-        sse_state_.store(sse_state::error);
+        if (stop_flag_.load()) {
+            // Intentional stop via stop_sse(); let stop_sse() set disconnected.
+        } else {
+            set_error("SSE: " + httplib::to_string(res.error()));
+            sse_state_.store(sse_state::error);
+        }
     } else if (sse_state_.load() == sse_state::connected) {
         sse_state_.store(sse_state::disconnected);
     }
@@ -176,9 +192,7 @@ void capture_client::sse_thread_func() {
 
 void capture_client::dispatch_event(const std::string& event_type,
                                     const std::string& data) {
-    if (event_type == "connected") {
-        push_event({server_event_type::connected, {}, {}});
-    } else if (event_type == "disconnected") {
+    if (event_type == "disconnected") {
         push_event({server_event_type::disconnected, {}, {}});
     } else if (event_type == "error") {
         std::string msg;
@@ -189,15 +203,55 @@ void capture_client::dispatch_event(const std::string& event_type,
         } catch (...) {}
         push_event({server_event_type::error, {}, msg});
     } else if (event_type == "capture_done") {
-        std::string path;
+        std::string url;
         try {
             const auto j = nlohmann::json::parse(data);
-            if (j.contains("path") && j["path"].is_string())
-                path = j["path"].get<std::string>();
+            if (j.contains("url") && j["url"].is_string())
+                url = j["url"].get<std::string>();
         } catch (...) {}
-        if (!path.empty())
-            push_event({server_event_type::capture_done, path, {}});
+        if (!url.empty()) {
+            const auto local_path = download_capture(url);
+            if (!local_path.empty())
+                push_event({server_event_type::capture_done, local_path, {}});
+            else
+                push_event({server_event_type::error, {}, "capture download failed: " + url});
+        }
     }
+}
+
+// ---------------------------------------------------------------------------
+// TIFF download helper
+// ---------------------------------------------------------------------------
+
+std::string capture_client::download_capture(const std::string& url) {
+    // Extract path component from "http://host:port/path"
+    const auto scheme_end = url.find("://");
+    if (scheme_end == std::string::npos) return {};
+    const auto path_start = url.find('/', scheme_end + 3);
+    if (path_start == std::string::npos) return {};
+    const std::string path = url.substr(path_start);
+
+    // Build a unique temp file path
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto tmp = std::filesystem::temp_directory_path() /
+                     ("vs_capture_" + std::to_string(now) + ".tiff");
+
+    std::ofstream f(tmp, std::ios::binary);
+    if (!f) return {};
+
+    httplib::Client cli(cfg_.host, cfg_.port);
+    cli.set_read_timeout(cfg_.timeout_ms / 1000, (cfg_.timeout_ms % 1000) * 1000);
+    const auto res = cli.Get(path, [&](const char* data, size_t len) {
+        f.write(data, len);
+        return true;
+    });
+    f.close();
+
+    if (!res || res->status != 200) {
+        std::filesystem::remove(tmp);
+        return {};
+    }
+    return tmp.string();
 }
 
 // ---------------------------------------------------------------------------

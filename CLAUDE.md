@@ -28,6 +28,7 @@ C++ImGuiライブラリで、巨大画像の高速画像ビューワーを提供
 - `util` -ユーティリテの置き場  
 - `api` -main.cppの置き場。アプリケーションの入り口
 - `capture` - キャプチャモードの HTTP クライアント（capture_config, capture_client）
+- `test` - テストコード
 
 
 ## アプリケーションモード設計

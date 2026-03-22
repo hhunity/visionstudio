@@ -343,11 +343,6 @@ int main(int argc, char** argv) {
                          &overlays, &left_overlays, &right_overlays};
     glfwSetWindowUserPointer(window, &drop_state);
 
-    // In capture mode launched via CLI, connect and start SSE automatically.
-    if (mode == app_mode::capture) {
-        if (cap_cli.connect_server())
-            cap_cli.start_sse();
-    }
 
     // Apply diff flags from args (compare / split mode)
     if (mode == app_mode::compare || mode == app_mode::split) {
@@ -476,10 +471,6 @@ int main(int argc, char** argv) {
         if (mode == app_mode::capture) {
             while (auto ev = cap_cli.poll_server_event()) {
                 switch (ev->type) {
-                case server_event_type::connected:
-                    server_connected = true;
-                    status_msg = "Server connected";
-                    break;
                 case server_event_type::disconnected:
                     server_connected = false;
                     cap_cli.stop_sse();
@@ -798,6 +789,11 @@ int main(int argc, char** argv) {
                     sse_label = "Error";        sse_col = {1, 0.3f, 0.3f, 1};   break;
                 }
                 ImGui::TextColored(sse_col, "SSE: %s", sse_label);
+                if (cap_cli.get_sse_state() == sse_state::error) {
+                    const auto err = cap_cli.get_last_error();
+                    if (!err.empty())
+                        ImGui::TextDisabled("  %s", err.c_str());
+                }
                 ImGui::Separator();
 
                 // Connection settings (collapsible)
@@ -863,7 +859,11 @@ int main(int argc, char** argv) {
                 if (ImGui::Button("Connect", {-1, 0})) {
                     if (!cap_cli.connect_server())
                         status_msg = "Connect failed: " + cap_cli.get_last_error();
-                    else { status_msg = "Connecting..."; cap_cli.start_sse(); }
+                    else {
+                        server_connected = true;
+                        status_msg = "Connected";
+                        cap_cli.start_sse();
+                    }
                 }
                 ImGui::EndDisabled();
 
