@@ -264,6 +264,8 @@ int main(int argc, char** argv) {
     int  capture_mode          = 0;     // 0=Capture, 1=Mode1, 2=Mode2
     bool image_acquisition     = true;
     bool live_image            = false;
+    bool auto_detect           = true;
+    std::string ref_img_path;
 
     // Editable copies of connection settings (local to UI, applied on Save).
     struct conn_edit {
@@ -896,7 +898,14 @@ int main(int argc, char** argv) {
                     constexpr const char* kCaptureModes[] = {"Capture (Single)", "Mode1 (Split)", "Mode2 (Compare)"};
                     ImGui::TextDisabled("Capture Mode");
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                    ImGui::Combo("##cap_mode", &capture_mode, kCaptureModes, 3);
+                    const int prev_capture_mode = capture_mode;
+                    if (ImGui::Combo("##cap_mode", &capture_mode, kCaptureModes, 3)) {
+                        if (prev_capture_mode == 2 && capture_mode != 2) {
+                            // Leaving Mode2: clear ref image so it doesn't bleed into Mode1
+                            ref_img_path.clear();
+                            compare.unload_left();
+                        }
+                    }
 
                     ImGui::TextDisabled("Image Acquisition");
                     if (ImGui::RadioButton("Enable##acq",  image_acquisition))  image_acquisition = true;
@@ -907,6 +916,31 @@ int main(int argc, char** argv) {
                     if (ImGui::RadioButton("Enable##live",  live_image))  live_image = true;
                     ImGui::SameLine();
                     if (ImGui::RadioButton("Disable##live", !live_image)) live_image = false;
+
+                    ImGui::TextDisabled("Auto Detect");
+                    if (ImGui::RadioButton("Enable##ad",  auto_detect))  auto_detect = true;
+                    ImGui::SameLine();
+                    if (ImGui::RadioButton("Disable##ad", !auto_detect)) auto_detect = false;
+
+                    ImGui::BeginDisabled(capture_mode != 2);
+                    ImGui::TextDisabled("Ref Img");
+                    {
+                        const auto pos = ref_img_path.find_last_of("/\\");
+                        const std::string fname = ref_img_path.empty()
+                            ? "(none)"
+                            : (pos == std::string::npos ? ref_img_path : ref_img_path.substr(pos + 1));
+                        if (ImGui::Button(fname.c_str(), {-1, 0})) {
+                            constexpr nfdfilteritem_t kTiffFilter[] = {{"TIFF Image", "tiff,tif"}};
+                            nfdchar_t* out = nullptr;
+                            if (NFD::OpenDialog(out, kTiffFilter, 1) == NFD_OKAY) {
+                                ref_img_path = out;
+                                NFD::FreePath(out);
+                                left_loader.start(ref_img_path);
+                                status_msg = "Loading...";
+                            }
+                        }
+                    }
+                    ImGui::EndDisabled();
 
                     // Capture config files: path + browse + edit modal
                     ImGui::Separator();

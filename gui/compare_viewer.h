@@ -12,6 +12,7 @@ public:
     bool load_right(const image_data& img);
     bool load_single(const image_data& img);  // load same image to both left and right
     bool load_split(const image_data& img);   // split image: left portion / right portion
+    void unload_left();                        // clear the left panel
 
     bool is_split() const { return is_split_; }
     int  split_src_width() const { return split_src_.width; }
