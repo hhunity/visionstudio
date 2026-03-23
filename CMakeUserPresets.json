@@ -1,0 +1,36 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "windows-ninja-base",
+      "hidden": true,
+      "inherits": "base-ninja",
+      "cacheVariables": {
+        "CMAKE_MAKE_PROGRAM": "C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe",
+        "CMAKE_C_COMPILER": "cl.exe",
+        "CMAKE_CXX_COMPILER": "cl.exe"
+      }
+    },
+    {
+      "name": "windows-ninja-debug",
+      "displayName": "Windows Debug (Ninja + MSVC)",
+      "inherits": ["windows-ninja-base", "debug"]
+    },
+    {
+      "name": "windows-ninja-release",
+      "displayName": "Windows Release (Ninja + MSVC)",
+      "inherits": ["windows-ninja-base", "release"]
+    },
+    {
+      "name": "windows-vs",
+      "displayName": "Windows Visual Studio 2022",
+      "inherits": "vs"
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-ninja-debug",   "configurePreset": "windows-ninja-debug" },
+    { "name": "windows-ninja-release", "configurePreset": "windows-ninja-release" },
+    { "name": "windows-vs-debug",      "configurePreset": "windows-vs", "configuration": "Debug" },
+    { "name": "windows-vs-release",    "configurePreset": "windows-vs", "configuration": "Release" }
+  ]
+}

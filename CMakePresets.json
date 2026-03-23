@@ -4,7 +4,6 @@
     {
       "name": "base",
       "hidden": true,
-      "generator": "Ninja",
       "toolchainFile": "${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake",
       "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
@@ -12,8 +11,27 @@
       }
     },
     {
-      "name": "debug",
+      "name": "base-ninja",
+      "hidden": true,
       "inherits": "base",
+      "generator": "Ninja"
+    },
+    {
+      "name": "base-vs",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Visual Studio 17 2022",
+      "architecture": {
+        "value": "x64",
+        "strategy": "set"
+      },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
+      }
+    },
+    {
+      "name": "debug",
+      "inherits": "base-ninja",
       "displayName": "Debug",
       "binaryDir": "${sourceDir}/build/debug",
       "cacheVariables": {
@@ -23,7 +41,7 @@
     },
     {
       "name": "release",
-      "inherits": "base",
+      "inherits": "base-ninja",
       "displayName": "Release",
       "binaryDir": "${sourceDir}/build/release",
       "cacheVariables": {
@@ -33,34 +51,15 @@
     },
     {
       "name": "vs",
+      "inherits": "base-vs",
       "displayName": "Visual Studio 2022",
-      "generator": "Visual Studio 17 2022",
-      "binaryDir": "${sourceDir}/build/vs",
-      "toolchainFile": "${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake",
-      "cacheVariables": {
-        "VCPKG_DISABLE_METRICS": "1",
-        "VCPKG_TARGET_TRIPLET": "x64-windows"
-      }
+      "binaryDir": "${sourceDir}/build/vs"
     }
   ],
   "buildPresets": [
-    {
-      "name": "debug",
-      "configurePreset": "debug"
-    },
-    {
-      "name": "release",
-      "configurePreset": "release"
-    },
-    {
-      "name": "debug-vs",
-      "configurePreset": "vs",
-      "configuration": "Debug"
-    },
-    {
-      "name": "release-vs",
-      "configurePreset": "vs",
-      "configuration": "Release"
-    }
+    { "name": "debug",       "configurePreset": "debug" },
+    { "name": "release",     "configurePreset": "release" },
+    { "name": "debug-vs",    "configurePreset": "vs", "configuration": "Debug" },
+    { "name": "release-vs",  "configurePreset": "vs", "configuration": "Release" }
   ]
 }
