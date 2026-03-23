@@ -7,7 +7,8 @@
       "generator": "Ninja",
       "toolchainFile": "${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake",
       "cacheVariables": {
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "VCPKG_DISABLE_METRICS": "1"
       }
     },
     {
