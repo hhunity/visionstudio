@@ -1,0 +1,27 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "cmake-build-ninja-debug",
+      "type": "shell",
+      "command": "cmake --build --preset windows-ninja-debug",
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "cmake-build-vs-debug",
+      "type": "shell",
+      "command": "cmake --build --preset windows-vs-debug",
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": "$msCompile"
+    }
+  ]
+}
