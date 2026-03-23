@@ -30,6 +30,33 @@
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/out/release"
       }
+    },
+    {
+      "name": "base-vs",
+      "hidden": true,
+      "generator": "Visual Studio 17 2022",
+      "toolchainFile": "${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "VCPKG_DISABLE_METRICS": "1"
+      }
+    },
+    {
+      "name": "debug-vs",
+      "inherits": "base-vs",
+      "displayName": "Debug (Visual Studio)",
+      "binaryDir": "${sourceDir}/build/debug-vs",
+      "cacheVariables": {
+        "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/out/debug"
+      }
+    },
+    {
+      "name": "release-vs",
+      "inherits": "base-vs",
+      "displayName": "Release (Visual Studio)",
+      "binaryDir": "${sourceDir}/build/release-vs",
+      "cacheVariables": {
+        "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/out/release"
+      }
     }
   ],
   "buildPresets": [
@@ -40,6 +67,16 @@
     {
       "name": "release",
       "configurePreset": "release"
+    },
+    {
+      "name": "debug-vs",
+      "configurePreset": "debug-vs",
+      "configuration": "Debug"
+    },
+    {
+      "name": "release-vs",
+      "configurePreset": "release-vs",
+      "configuration": "Release"
     }
   ]
 }
