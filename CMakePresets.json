@@ -38,7 +38,8 @@
       "binaryDir": "${sourceDir}/build/vs",
       "toolchainFile": "${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake",
       "cacheVariables": {
-        "VCPKG_DISABLE_METRICS": "1"
+        "VCPKG_DISABLE_METRICS": "1",
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
       }
     }
   ],
