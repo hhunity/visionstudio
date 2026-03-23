@@ -1,6 +1,7 @@
 #include "capture/capture_client.h"
 #include <httplib.h>
 #include <nlohmann/json.hpp>
+#include <algorithm>
 #include <sstream>
 
 // ---------------------------------------------------------------------------
@@ -8,9 +9,12 @@
 // ---------------------------------------------------------------------------
 
 static std::string trim(const std::string& s) {
-    const auto b = s.find_first_not_of(" \t\r\n");
-    if (b == std::string::npos) return {};
-    return s.substr(b, s.find_last_not_of(" \t\r\n") - b + 1);
+    auto is_ws = [](unsigned char c) {
+        return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+    };
+    auto b = std::find_if_not(s.begin(), s.end(), is_ws);
+    auto e = std::find_if_not(s.rbegin(), s.rend(), is_ws).base();
+    return b < e ? std::string(b, e) : std::string{};
 }
 
 // ---------------------------------------------------------------------------
