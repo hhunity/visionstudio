@@ -2,11 +2,11 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
-#include <vector>
 #include <httplib.h>
 #include "capture/capture_config.h"
 
@@ -20,21 +20,10 @@ struct server_event {
     std::string       message; // error only
 };
 
-// ---------------------------------------------------------------------------
-// capture_client
-//
-// Single worker thread.  All commands are processed in the worker loop.
-// The SSE content callback only parses events — no command logic inside it.
-//
-// connect()       → push cmd::connect  → worker opens SSE GET (blocking)
-// start_capture() → push cmd::start   → sse_cli.stop() interrupts GET
-//                                        worker exits GET, executes POST /start,
-//                                        then reconnects SSE
-// stop_capture()  → push cmd::stop    → same as start (interrupt → POST → reconnect)
-// disconnect()    → push cmd::disconnect → interrupt → POST /disconnect → exit loop
-// ---------------------------------------------------------------------------
 class capture_client {
 public:
+    using logger_fn = std::function<void(const std::string&)>;
+
     explicit capture_client(capture_config cfg);
     ~capture_client();
 
@@ -46,6 +35,8 @@ public:
     void start_capture();
     void stop_capture();
 
+    void set_logger(logger_fn fn);
+
     std::optional<server_event> poll_server_event();
 
     sse_state   get_sse_state()  const { return sse_state_.load(); }
@@ -55,22 +46,22 @@ private:
     enum class cmd { connect, start_capture, stop_capture, disconnect };
 
     void worker_thread_func();
-    void run_sse(bool& disconnect_requested);
+    void run_sse();
 
+    httplib::Client make_cli() const;
     bool do_connect_post();
-    bool do_disconnect_post();
-    bool do_start_post();
-    bool do_stop_post();
+    bool do_simple_post(const std::string& path, const std::string& label);
 
     void push_cmd(cmd c);
-    void interrupt_sse();   // stop SSE + notify cv
+    void interrupt_sse();
     void dispatch_event(const std::string& event_type, const std::string& data);
     void push_event(server_event ev);
     void set_error(std::string msg);
+    void log(const std::string& msg) const;
 
     capture_config cfg_;
 
-    std::thread            worker_thread_;
+    std::thread worker_thread_;
 
     std::mutex       sse_cli_mtx_;
     httplib::Client* sse_cli_ptr_{nullptr};
@@ -82,9 +73,12 @@ private:
 
     std::atomic<sse_state> sse_state_{sse_state::disconnected};
 
-    mutable std::mutex        event_mtx_;
-    std::vector<server_event> event_queue_;
+    mutable std::mutex  event_mtx_;
+    std::deque<server_event> event_queue_;
 
     mutable std::mutex error_mtx_;
     std::string        last_error_;
+
+    mutable std::mutex logger_mtx_;
+    logger_fn          logger_;
 };
