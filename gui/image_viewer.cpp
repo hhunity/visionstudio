@@ -230,9 +230,47 @@ void image_viewer::draw_dashed_line(ImDrawList* dl, ImVec2 a, ImVec2 b,
 // ---------------------------------------------------------------------------
 
 void image_viewer::handle_input(const ImVec2& canvas_pos, const ImVec2& canvas_size,
-                                 view_state& state) const {
-    // Pan with left mouse drag
-    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+                                 view_state& state) {
+    bool handled_drag = false;
+
+    // --- Minimap drag (mirrors geometry in draw_minimap) ---
+    if (show_minimap && img_w_ > 0 && img_h_ > 0) {
+        constexpr float max_w  = 160.0f;
+        constexpr float max_h  = 120.0f;
+        constexpr float margin =   8.0f;
+        const float aspect = static_cast<float>(img_w_) / static_cast<float>(img_h_);
+        const float eff_aspect = minimap_force_aspect > 0.0f
+            ? minimap_force_aspect
+            : std::max(0.25f, std::min(4.0f, aspect));
+        float mw, mh;
+        if (eff_aspect >= max_w / max_h) { mw = max_w; mh = max_w / eff_aspect; }
+        else                              { mh = max_h; mw = max_h * eff_aspect; }
+        const float mx = canvas_pos.x + canvas_size.x - mw - margin;
+        const float my = canvas_pos.y + margin;
+
+        const ImVec2 mouse_pos = ImGui::GetIO().MousePos;
+        const bool in_minimap = mouse_pos.x >= mx && mouse_pos.x <= mx + mw &&
+                                 mouse_pos.y >= my && mouse_pos.y <= my + mh;
+
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && in_minimap && ImGui::IsItemHovered())
+            minimap_dragging_ = true;
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            minimap_dragging_ = false;
+
+        if (minimap_dragging_) {
+            const ImVec2 delta = ImGui::GetIO().MouseDelta;
+            if (delta.x != 0.0f || delta.y != 0.0f) {
+                const float sx = mw / static_cast<float>(img_w_);
+                const float sy = mh / static_cast<float>(img_h_);
+                state.pan_x -= delta.x / sx * state.zoom;
+                state.pan_y -= delta.y / sy * state.zoom;
+            }
+            handled_drag = true;
+        }
+    }
+
+    // Pan with left mouse drag (canvas, only when not dragging minimap)
+    if (!handled_drag && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
         const ImVec2 delta = ImGui::GetIO().MouseDelta;
         state.pan_x += delta.x;
         state.pan_y += delta.y;

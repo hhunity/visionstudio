@@ -88,7 +88,7 @@ private:
     void destroy_texture();
 
     void handle_input(const ImVec2& canvas_pos, const ImVec2& canvas_size,
-                      view_state& state) const;
+                      view_state& state);
     void draw_content(ImDrawList* dl, const ImVec2& canvas_pos,
                       const ImVec2& canvas_size, const view_state& state) const;
     void draw_grid(ImDrawList* dl, const ImVec2& origin,
@@ -119,4 +119,5 @@ private:
     std::vector<roi_entry> overlays_;
     float                  overlay_max_mag_ = 1.0f; // for color normalization
     hover_info             last_hover_;
+    bool                   minimap_dragging_ = false;
 };
