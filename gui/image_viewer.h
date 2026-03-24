@@ -23,7 +23,7 @@ public:
     // Upload image to GPU. Returns false if img is empty.
     bool load_image(const image_data& img);
     void unload_image();
-    bool has_image() const { return texture_id_ != 0; }
+    bool has_image() const { return !tiles_.empty(); }
 
     // Render the viewer canvas.
     //   id     : unique ImGui widget id string
@@ -103,9 +103,15 @@ private:
                                  ImU32 color, float thickness,
                                  float dash = 5.0f, float gap = 4.0f);
 
-    uint32_t   texture_id_ = 0;
-    int        img_w_      = 0;
-    int        img_h_      = 0;
+    // Vertical tiles: each covers rows [y0, y1) at full resolution.
+    struct tex_tile { uint32_t id; int y0, y1; };
+    std::vector<tex_tile> tiles_;
+    // Minimap thumbnail (downscaled single texture when tiles_ has >1 entry).
+    uint32_t minimap_tex_id_    = 0;
+    bool     minimap_owns_tex_  = false; // true when minimap_tex_id_ is a separate allocation
+
+    int img_w_ = 0;
+    int img_h_ = 0;
     image_data cpu_image_;          // CPU copy kept for pixel inspection
     view_state             owned_state_;
     bool                   needs_fit_ = false;  // fit view on first render after load

@@ -23,7 +23,7 @@ bool image_viewer::load_image(const image_data& img) {
     cpu_image_   = img;          // keep CPU copy for pixel inspection
     owned_state_ = view_state{};
     needs_fit_   = true;
-    return texture_id_ != 0;
+    return !tiles_.empty();
 }
 
 void image_viewer::unload_image() {
@@ -35,7 +35,8 @@ void image_viewer::unload_image() {
 // Texture management
 // ---------------------------------------------------------------------------
 
-void image_viewer::create_texture(const image_data& img) {
+// Upload one rectangular region of img as an independent GL texture.
+static uint32_t upload_tile(const image_data& img, int y0, int y1) {
     GLuint tex = 0;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
@@ -44,50 +45,87 @@ void image_viewer::create_texture(const image_data& img) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    const uint8_t* src = img.pixels.data() + static_cast<size_t>(y0) * img.width * 4;
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width, y1 - y0, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, src);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return static_cast<uint32_t>(tex);
+}
 
+// Build a nearest-neighbour downscaled RGBA thumbnail and upload it.
+static uint32_t upload_thumbnail(const image_data& img, int tw, int th) {
+    std::vector<uint8_t> buf(static_cast<size_t>(tw) * th * 4);
+    const float sx = static_cast<float>(img.width)  / tw;
+    const float sy = static_cast<float>(img.height) / th;
+    for (int y = 0; y < th; ++y) {
+        for (int x = 0; x < tw; ++x) {
+            const int src_x = std::min(static_cast<int>(x * sx), img.width  - 1);
+            const int src_y = std::min(static_cast<int>(y * sy), img.height - 1);
+            const uint8_t* s = img.pixels.data() + (static_cast<size_t>(src_y) * img.width + src_x) * 4;
+            uint8_t*       d = buf.data()        + (static_cast<size_t>(y) * tw + x) * 4;
+            d[0]=s[0]; d[1]=s[1]; d[2]=s[2]; d[3]=s[3];
+        }
+    }
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tw, th, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return static_cast<uint32_t>(tex);
+}
+
+void image_viewer::create_texture(const image_data& img) {
     GLint max_tex = 0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex);
 
-    if (img.width <= max_tex && img.height <= max_tex) {
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-                     img.width, img.height, 0,
-                     GL_RGBA, GL_UNSIGNED_BYTE, img.pixels.data());
+    // Split image into vertical tiles, each at most max_tex rows tall.
+    // Width is assumed to fit (line cameras are typically 2048 px wide).
+    const int tile_h  = max_tex;
+    const int n_tiles = (img.height + tile_h - 1) / tile_h;
+
+    tiles_.reserve(n_tiles);
+    for (int t = 0; t < n_tiles; ++t) {
+        const int y0 = t * tile_h;
+        const int y1 = std::min(y0 + tile_h, img.height);
+        tiles_.push_back({ upload_tile(img, y0, y1), y0, y1 });
+    }
+
+    // Minimap thumbnail.
+    if (n_tiles == 1) {
+        // Single tile: reuse it, no separate allocation.
+        minimap_tex_id_   = tiles_[0].id;
+        minimap_owns_tex_ = false;
     } else {
-        // Image exceeds GL_MAX_TEXTURE_SIZE; downsample for display only.
-        // CPU image (cpu_image_) keeps full resolution for pixel queries.
+        // Multiple tiles: build a downscaled thumbnail that fits in one texture.
         const float scale = static_cast<float>(max_tex) / static_cast<float>(std::max(img.width, img.height));
         const int tw = std::max(1, static_cast<int>(img.width  * scale));
         const int th = std::max(1, static_cast<int>(img.height * scale));
-        fprintf(stderr, "[image_viewer] texture downscaled %dx%d -> %dx%d (GL_MAX_TEXTURE_SIZE=%d)\n",
-                img.width, img.height, tw, th, max_tex);
-
-        std::vector<uint8_t> buf(static_cast<size_t>(tw) * th * 4);
-        const float sx = static_cast<float>(img.width)  / tw;
-        const float sy = static_cast<float>(img.height) / th;
-        for (int y = 0; y < th; ++y) {
-            for (int x = 0; x < tw; ++x) {
-                const int src_x = std::min(static_cast<int>(x * sx), img.width  - 1);
-                const int src_y = std::min(static_cast<int>(y * sy), img.height - 1);
-                const uint8_t* src = img.pixels.data() + (static_cast<size_t>(src_y) * img.width + src_x) * 4;
-                uint8_t*       dst = buf.data()        + (static_cast<size_t>(y)     * tw          + x)     * 4;
-                dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = src[3];
-            }
-        }
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tw, th, 0,
-                     GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+        fprintf(stderr, "[image_viewer] %d tiles, minimap thumbnail %dx%d\n", n_tiles, tw, th);
+        minimap_tex_id_   = upload_thumbnail(img, tw, th);
+        minimap_owns_tex_ = true;
     }
-
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 4); // restore default
-    glBindTexture(GL_TEXTURE_2D, 0);
-    texture_id_ = static_cast<uint32_t>(tex);
 }
 
 void image_viewer::destroy_texture() {
-    if (texture_id_ != 0) {
-        GLuint tex = static_cast<GLuint>(texture_id_);
-        glDeleteTextures(1, &tex);
-        texture_id_ = 0;
+    for (auto& t : tiles_) {
+        GLuint id = static_cast<GLuint>(t.id);
+        glDeleteTextures(1, &id);
     }
+    tiles_.clear();
+    if (minimap_owns_tex_ && minimap_tex_id_ != 0) {
+        GLuint id = static_cast<GLuint>(minimap_tex_id_);
+        glDeleteTextures(1, &id);
+    }
+    minimap_tex_id_   = 0;
+    minimap_owns_tex_ = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,7 +172,7 @@ void image_viewer::render(const char* id, float width, float height,
     (void)active; // input handling checks internally
 
     // Update hover info before drawing so crosshair can use it.
-    if (hovered && texture_id_ != 0) {
+    if (hovered && !tiles_.empty()) {
         const ImVec2 mouse = ImGui::GetIO().MousePos;
         const float fx = (mouse.x - canvas_pos.x - state->pan_x) / state->zoom;
         const float fy = (mouse.y - canvas_pos.y - state->pan_y) / state->zoom;
@@ -246,7 +284,7 @@ void image_viewer::draw_content(ImDrawList* dl, const ImVec2& canvas_pos,
     // Background
     dl->AddRectFilled(canvas_pos, clip_max, IM_COL32(40, 40, 40, 255));
 
-    if (texture_id_ == 0) {
+    if (tiles_.empty()) {
         dl->AddText({canvas_pos.x + 10.0f, canvas_pos.y + 10.0f},
                     IM_COL32(180, 180, 180, 255), "No image loaded");
         return;
@@ -255,10 +293,15 @@ void image_viewer::draw_content(ImDrawList* dl, const ImVec2& canvas_pos,
     const float img_sx = canvas_pos.x + state.pan_x;
     const float img_sy = canvas_pos.y + state.pan_y;
     const float img_sw = img_w_ * state.zoom;
-    const float img_sh = img_h_ * state.zoom;
 
-    auto tex_id = static_cast<ImTextureID>(texture_id_);
-    dl->AddImage(tex_id, {img_sx, img_sy}, {img_sx + img_sw, img_sy + img_sh});
+    // Draw each tile that intersects the visible canvas area.
+    for (const auto& tile : tiles_) {
+        const float ty0 = img_sy + tile.y0 * state.zoom;
+        const float ty1 = img_sy + tile.y1 * state.zoom;
+        if (ty1 < canvas_pos.y || ty0 > canvas_pos.y + canvas_size.y) continue;
+        dl->AddImage(static_cast<ImTextureID>(tile.id),
+                     {img_sx, ty0}, {img_sx + img_sw, ty1});
+    }
 
     if (show_grid)
         draw_grid(dl, canvas_pos, canvas_size, state);
@@ -319,7 +362,7 @@ image_viewer::mouse_query image_viewer::query_mouse_pixel(
         const ImVec2& canvas_pos, const ImVec2& canvas_size,
         const view_state& state) const {
     mouse_query q;
-    if (texture_id_ == 0) return q;
+    if (tiles_.empty()) return q;
     const ImVec2 mouse = ImGui::GetIO().MousePos;
     if (mouse.x < canvas_pos.x || mouse.x >= canvas_pos.x + canvas_size.x ||
         mouse.y < canvas_pos.y || mouse.y >= canvas_pos.y + canvas_size.y)
@@ -368,8 +411,8 @@ void image_viewer::draw_minimap(ImDrawList* dl, const ImVec2& canvas_pos,
     dl->AddRectFilled({mx - 1.0f, my - 1.0f}, {mx + mw + 1.0f, my + mh + 1.0f},
                       IM_COL32(0, 0, 0, 160));
 
-    // Thumbnail — same texture, full UV range.
-    auto tex_id = static_cast<ImTextureID>(texture_id_);
+    // Thumbnail — downscaled texture (or single tile if image fits in one).
+    auto tex_id = static_cast<ImTextureID>(minimap_tex_id_);
     dl->AddImage(tex_id, {mx, my}, {mx + mw, my + mh});
 
     // Visible region in image space.
