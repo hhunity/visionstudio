@@ -72,6 +72,16 @@ add_executable(visionstudio
 )
 target_link_libraries(visionstudio PRIVATE vs_gui vs_io vs_capture CLI11::CLI11 implot::implot)
 
+# ----- capture_cli: debug CLI for capture server communication -----
+add_executable(capture_cli
+    capture/capture_cli_main.cpp
+)
+target_link_libraries(capture_cli PRIVATE
+    httplib::httplib
+    CLI11::CLI11
+    Threads::Threads
+)
+
 if(WIN32)
     set_target_properties(visionstudio PROPERTIES
         WIN32_EXECUTABLE $<IF:$<CONFIG:Release>,TRUE,FALSE>
