@@ -4,7 +4,6 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
-#include <thread>
 #include <vector>
 
 namespace tiff_io {
@@ -12,26 +11,6 @@ namespace tiff_io {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-// Number of worker threads: hardware concurrency, capped at 8.
-static int worker_count(uint32_t units) {
-    const int hw = static_cast<int>(std::thread::hardware_concurrency());
-    return std::max(1, std::min({hw, 8, static_cast<int>(units)}));
-}
-
-// Run worker(thread_id) on nthreads threads (or inline when nthreads == 1).
-template<typename Fn>
-static void parallel_for(int nthreads, Fn worker) {
-    if (nthreads == 1) {
-        worker(0);
-        return;
-    }
-    std::vector<std::thread> threads;
-    threads.reserve(nthreads);
-    for (int t = 0; t < nthreads; ++t)
-        threads.emplace_back(worker, t);
-    for (auto& th : threads) th.join();
-}
 
 // Write a decoded gray/RGB/RGBA strip row into the RGBA output buffer.
 static void expand_strip_rows(const uint8_t* strip_buf, uint8_t* out_pixels,
@@ -68,7 +47,7 @@ static void expand_strip_rows(const uint8_t* strip_buf, uint8_t* out_pixels,
 // Fast path: 8-bit stripped (gray / RGB / RGBA), parallel
 // ---------------------------------------------------------------------------
 
-static bool read_strips_8bit(const std::string& path, TIFF* tif,
+static bool read_strips_8bit(const std::string& /*path*/, TIFF* tif,
                               uint32_t w, uint32_t h,
                               uint16_t photometric, uint16_t spp,
                               image_data& out,
@@ -77,38 +56,21 @@ static bool read_strips_8bit(const std::string& path, TIFF* tif,
     TIFFGetFieldDefaulted(tif, TIFFTAG_ROWSPERSTRIP, &rows_per_strip);
     if (rows_per_strip == 0) rows_per_strip = h;
 
-    const uint32_t  num_strips  = TIFFNumberOfStrips(tif);
-    const tmsize_t  strip_bytes = TIFFStripSize(tif);
-    const int       nthreads    = worker_count(num_strips);
+    const uint32_t num_strips  = TIFFNumberOfStrips(tif);
+    const tmsize_t strip_bytes = TIFFStripSize(tif);
+    std::vector<uint8_t> buf(static_cast<size_t>(strip_bytes));
 
-    std::atomic<uint32_t> strips_done{0};
-    std::atomic<bool>     had_error{false};
+    for (uint32_t s = 0; s < num_strips; ++s) {
+        if (TIFFReadEncodedStrip(tif, s, buf.data(), strip_bytes) < 0)
+            return false;
 
-    parallel_for(nthreads, [&](int tid) {
-        TIFF* ltif = TIFFOpen(path.c_str(), "r");
-        if (!ltif) { had_error.store(true); return; }
+        const uint32_t row0 = s * rows_per_strip;
+        const uint32_t row1 = std::min(row0 + rows_per_strip, h);
+        expand_strip_rows(buf.data(), out.pixels.data(), w, row0, row1, photometric, spp);
 
-        std::vector<uint8_t> buf(strip_bytes);
-
-        for (uint32_t s = static_cast<uint32_t>(tid); s < num_strips; s += nthreads) {
-            if (had_error.load()) break;
-
-            if (TIFFReadEncodedStrip(ltif, s, buf.data(), strip_bytes) < 0) {
-                had_error.store(true); break;
-            }
-
-            const uint32_t row0 = s * rows_per_strip;
-            const uint32_t row1 = std::min(row0 + rows_per_strip, h);
-            expand_strip_rows(buf.data(), out.pixels.data(), w, row0, row1, photometric, spp);
-
-            const uint32_t done = ++strips_done;
-            if (progress) progress->store(static_cast<float>(done) / num_strips);
-        }
-
-        TIFFClose(ltif);
-    });
-
-    return !had_error.load();
+        if (progress) progress->store(static_cast<float>(s + 1) / num_strips);
+    }
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +108,7 @@ static void expand_tile_rows(const uint8_t* tile_buf, uint8_t* out_pixels,
     }
 }
 
-static bool read_tiles_8bit(const std::string& path, TIFF* tif,
+static bool read_tiles_8bit(const std::string& /*path*/, TIFF* tif,
                              uint32_t w, uint32_t h,
                              uint16_t photometric, uint16_t spp,
                              image_data& out,
@@ -156,50 +118,32 @@ static bool read_tiles_8bit(const std::string& path, TIFF* tif,
     TIFFGetField(tif, TIFFTAG_TILELENGTH, &tile_h);
     if (tile_w == 0 || tile_h == 0) return false;
 
-    const uint32_t ntiles   = TIFFNumberOfTiles(tif);
-    const uint32_t tiles_x  = (w + tile_w - 1) / tile_w;
+    const uint32_t ntiles     = TIFFNumberOfTiles(tif);
+    const uint32_t tiles_x    = (w + tile_w - 1) / tile_w;
     const tmsize_t tile_bytes = TIFFTileSize(tif);
-    const int      nthreads  = worker_count(ntiles);
+    std::vector<uint8_t> buf(static_cast<size_t>(tile_bytes));
 
-    std::atomic<uint32_t> tiles_done{0};
-    std::atomic<bool>     had_error{false};
+    for (uint32_t t = 0; t < ntiles; ++t) {
+        if (TIFFReadEncodedTile(tif, t, buf.data(), tile_bytes) < 0)
+            return false;
 
-    parallel_for(nthreads, [&](int tid) {
-        TIFF* ltif = TIFFOpen(path.c_str(), "r");
-        if (!ltif) { had_error.store(true); return; }
+        const uint32_t tx     = (t % tiles_x) * tile_w;
+        const uint32_t ty     = (t / tiles_x) * tile_h;
+        const uint32_t copy_w = std::min(tile_w, w - tx);
+        const uint32_t copy_h = std::min(tile_h, h - ty);
+        expand_tile_rows(buf.data(), out.pixels.data(), w, tx, ty,
+                         tile_w, copy_w, copy_h, photometric, spp);
 
-        std::vector<uint8_t> buf(tile_bytes);
-
-        for (uint32_t t = static_cast<uint32_t>(tid); t < ntiles; t += nthreads) {
-            if (had_error.load()) break;
-
-            const uint32_t tx = (t % tiles_x) * tile_w;
-            const uint32_t ty = (t / tiles_x) * tile_h;
-
-            if (TIFFReadEncodedTile(ltif, t, buf.data(), tile_bytes) < 0) {
-                had_error.store(true); break;
-            }
-
-            const uint32_t copy_w = std::min(tile_w, w - tx);
-            const uint32_t copy_h = std::min(tile_h, h - ty);
-            expand_tile_rows(buf.data(), out.pixels.data(), w, tx, ty,
-                             tile_w, copy_w, copy_h, photometric, spp);
-
-            const uint32_t done = ++tiles_done;
-            if (progress) progress->store(static_cast<float>(done) / ntiles);
-        }
-
-        TIFFClose(ltif);
-    });
-
-    return !had_error.load();
+        if (progress) progress->store(static_cast<float>(t + 1) / ntiles);
+    }
+    return true;
 }
 
 // ---------------------------------------------------------------------------
 // Generic path: any format via TIFFReadRGBAStrip / TIFFReadRGBATile, parallel
 // ---------------------------------------------------------------------------
 
-static bool read_strips_generic(const std::string& path, TIFF* tif,
+static bool read_strips_generic(const std::string& /*path*/, TIFF* tif,
                                  uint32_t w, uint32_t h,
                                  image_data& out,
                                  std::atomic<float>* progress) {
@@ -208,48 +152,31 @@ static bool read_strips_generic(const std::string& path, TIFF* tif,
     if (rows_per_strip == 0) rows_per_strip = h;
 
     const uint32_t num_strips = TIFFNumberOfStrips(tif);
-    const int      nthreads   = worker_count(num_strips);
+    std::vector<uint32_t> rgba(static_cast<size_t>(w) * rows_per_strip);
 
-    std::atomic<uint32_t> strips_done{0};
-    std::atomic<bool>     had_error{false};
+    for (uint32_t s = 0; s < num_strips; ++s) {
+        const uint32_t row0 = s * rows_per_strip;
+        if (!TIFFReadRGBAStrip(tif, row0, rgba.data()))
+            return false;
 
-    parallel_for(nthreads, [&](int tid) {
-        TIFF* ltif = TIFFOpen(path.c_str(), "r");
-        if (!ltif) { had_error.store(true); return; }
+        const uint32_t row1 = std::min(row0 + rows_per_strip, h);
+        const uint32_t rows = row1 - row0;
 
-        std::vector<uint32_t> rgba(static_cast<size_t>(w) * rows_per_strip);
-
-        for (uint32_t s = static_cast<uint32_t>(tid); s < num_strips; s += nthreads) {
-            if (had_error.load()) break;
-
-            const uint32_t row0 = s * rows_per_strip;
-            if (!TIFFReadRGBAStrip(ltif, row0, rgba.data())) {
-                had_error.store(true); break;
+        // TIFFReadRGBAStrip stores rows bottom-up within the strip; flip to top-down.
+        for (uint32_t r = 0; r < rows; ++r) {
+            const uint32_t* src = rgba.data() + (rows - 1 - r) * w;
+            uint8_t* dst = out.pixels.data() + (row0 + r) * w * 4;
+            for (uint32_t x = 0; x < w; ++x) {
+                dst[x*4+0] = TIFFGetR(src[x]);
+                dst[x*4+1] = TIFFGetG(src[x]);
+                dst[x*4+2] = TIFFGetB(src[x]);
+                dst[x*4+3] = TIFFGetA(src[x]);
             }
-
-            const uint32_t row1 = std::min(row0 + rows_per_strip, h);
-            const uint32_t rows = row1 - row0;
-
-            // TIFFReadRGBAStrip stores rows bottom-up within the strip; flip to top-down.
-            for (uint32_t r = 0; r < rows; ++r) {
-                const uint32_t* src = rgba.data() + (rows - 1 - r) * w;
-                uint8_t* dst = out.pixels.data() + (row0 + r) * w * 4;
-                for (uint32_t x = 0; x < w; ++x) {
-                    dst[x*4+0] = TIFFGetR(src[x]);
-                    dst[x*4+1] = TIFFGetG(src[x]);
-                    dst[x*4+2] = TIFFGetB(src[x]);
-                    dst[x*4+3] = TIFFGetA(src[x]);
-                }
-            }
-
-            const uint32_t done = ++strips_done;
-            if (progress) progress->store(static_cast<float>(done) / num_strips);
         }
 
-        TIFFClose(ltif);
-    });
-
-    return !had_error.load();
+        if (progress) progress->store(static_cast<float>(s + 1) / num_strips);
+    }
+    return true;
 }
 
 static bool read_tiles_generic(const std::string& path, TIFF* tif,
@@ -263,50 +190,33 @@ static bool read_tiles_generic(const std::string& path, TIFF* tif,
 
     const uint32_t ntiles  = TIFFNumberOfTiles(tif);
     const uint32_t tiles_x = (w + tile_w - 1) / tile_w;
-    const int      nthreads = worker_count(ntiles);
+    std::vector<uint32_t> rgba(static_cast<size_t>(tile_w) * tile_h);
 
-    std::atomic<uint32_t> tiles_done{0};
-    std::atomic<bool>     had_error{false};
+    for (uint32_t t = 0; t < ntiles; ++t) {
+        const uint32_t tx = (t % tiles_x) * tile_w;
+        const uint32_t ty = (t / tiles_x) * tile_h;
 
-    parallel_for(nthreads, [&](int tid) {
-        TIFF* ltif = TIFFOpen(path.c_str(), "r");
-        if (!ltif) { had_error.store(true); return; }
+        if (!TIFFReadRGBATile(tif, tx, ty, rgba.data()))
+            return false;
 
-        std::vector<uint32_t> rgba(static_cast<size_t>(tile_w) * tile_h);
+        const uint32_t copy_w = std::min(tile_w, w - tx);
+        const uint32_t copy_h = std::min(tile_h, h - ty);
 
-        for (uint32_t t = static_cast<uint32_t>(tid); t < ntiles; t += nthreads) {
-            if (had_error.load()) break;
-
-            const uint32_t tx = (t % tiles_x) * tile_w;
-            const uint32_t ty = (t / tiles_x) * tile_h;
-
-            if (!TIFFReadRGBATile(ltif, tx, ty, rgba.data())) {
-                had_error.store(true); break;
+        // TIFFReadRGBATile stores rows bottom-up within the tile; flip to top-down.
+        for (uint32_t r = 0; r < copy_h; ++r) {
+            const uint32_t* src = rgba.data() + (tile_h - 1 - r) * tile_w;
+            uint8_t* dst = out.pixels.data() + (ty + r) * w * 4 + tx * 4;
+            for (uint32_t x = 0; x < copy_w; ++x) {
+                dst[x*4+0] = TIFFGetR(src[x]);
+                dst[x*4+1] = TIFFGetG(src[x]);
+                dst[x*4+2] = TIFFGetB(src[x]);
+                dst[x*4+3] = TIFFGetA(src[x]);
             }
-
-            const uint32_t copy_w = std::min(tile_w, w - tx);
-            const uint32_t copy_h = std::min(tile_h, h - ty);
-
-            // TIFFReadRGBATile stores rows bottom-up within the tile; flip to top-down.
-            for (uint32_t r = 0; r < copy_h; ++r) {
-                const uint32_t* src = rgba.data() + (tile_h - 1 - r) * tile_w;
-                uint8_t* dst = out.pixels.data() + (ty + r) * w * 4 + tx * 4;
-                for (uint32_t x = 0; x < copy_w; ++x) {
-                    dst[x*4+0] = TIFFGetR(src[x]);
-                    dst[x*4+1] = TIFFGetG(src[x]);
-                    dst[x*4+2] = TIFFGetB(src[x]);
-                    dst[x*4+3] = TIFFGetA(src[x]);
-                }
-            }
-
-            const uint32_t done = ++tiles_done;
-            if (progress) progress->store(static_cast<float>(done) / ntiles);
         }
 
-        TIFFClose(ltif);
-    });
-
-    return !had_error.load();
+        if (progress) progress->store(static_cast<float>(t + 1) / ntiles);
+    }
+    return true;
 }
 
 // ---------------------------------------------------------------------------
