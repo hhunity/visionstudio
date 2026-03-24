@@ -509,12 +509,16 @@ int main(int argc, char** argv) {
                     break;
                 }
             }
-            // Detect unexpected SSE drop (server crash etc.)
-            if (server_connected && cap_cli.get_sse_state() == sse_state::error) {
+            // Sync server_connected with sse_state
+            const auto cur_sse = cap_cli.get_sse_state();
+            if (!server_connected && cur_sse == sse_state::connected) {
+                server_connected = true;
+                status_msg = "Connected";
+            } else if (server_connected && cur_sse != sse_state::connected) {
                 server_connected = false;
                 capturing        = false;
-                cap_cli.stop_sse();
-                status_msg = "Connection lost: " + cap_cli.get_last_error();
+                if (cur_sse == sse_state::error)
+                    status_msg = "Connection lost: " + cap_cli.get_last_error();
             }
         }
 
@@ -858,7 +862,6 @@ int main(int argc, char** argv) {
                         cap_cfg.sse_path        = conn_buf.sse_path;
                         cap_cfg.timeout_ms      = conn_buf.timeout_ms;
                         capture_config::save("visionstudio.json", cap_cfg);
-                        cap_cli.update_config(cap_cfg);
                     }
                     if (!connect_tabs.empty()) {
                         ImGui::Separator();
@@ -883,28 +886,20 @@ int main(int argc, char** argv) {
                 ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.15f, 0.45f, 0.75f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.22f, 0.58f, 0.90f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.10f, 0.32f, 0.55f, 1.0f});
-                ImGui::BeginDisabled(server_connected);
+                ImGui::BeginDisabled(cap_cli.get_sse_state() != sse_state::disconnected &&
+                                     cap_cli.get_sse_state() != sse_state::error);
                 if (ImGui::Button("Connect", {-1, 0})) {
-                    if (!cap_cli.connect_server())
-                        status_msg = "Connect failed: " + cap_cli.get_last_error();
-                    else {
-                        server_connected = true;
-                        status_msg = "Connected";
-                        cap_cli.start_sse();
-                    }
+                    cap_cli.connect();
+                    status_msg = "Connecting...";
                 }
                 ImGui::EndDisabled();
 
                 ImGui::BeginDisabled(!server_connected);
                 if (ImGui::Button("Disconnect", {-1, 0})) {
-                    if (!cap_cli.disconnect_server())
-                        status_msg = "Disconnect failed: " + cap_cli.get_last_error();
-                    else {
-                        cap_cli.stop_sse();
-                        server_connected = false;
-                        capturing        = false;
-                        status_msg = "Server disconnected";
-                    }
+                    cap_cli.disconnect();
+                    server_connected = false;
+                    capturing        = false;
+                    status_msg = "Disconnecting...";
                 }
                 ImGui::EndDisabled();
                 ImGui::PopStyleColor(3);
@@ -997,12 +992,9 @@ int main(int argc, char** argv) {
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.25f, 0.70f, 0.25f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.12f, 0.40f, 0.12f, 1.0f});
                 if (ImGui::Button("Start Capture", {-1, 0})) {
-                    if (!cap_cli.start_capture())
-                        status_msg = "Start failed: " + cap_cli.get_last_error();
-                    else {
-                        capturing  = true;
-                        status_msg = "Capture started";
-                    }
+                    cap_cli.start_capture();
+                    capturing  = true;
+                    status_msg = "Capture started";
                 }
                 ImGui::PopStyleColor(3);
                 ImGui::EndDisabled();
@@ -1012,12 +1004,9 @@ int main(int argc, char** argv) {
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.78f, 0.20f, 0.20f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.45f, 0.10f, 0.10f, 1.0f});
                 if (ImGui::Button("Stop Capture", {-1, 0})) {
-                    if (!cap_cli.stop_capture())
-                        status_msg = "Stop failed: " + cap_cli.get_last_error();
-                    else {
-                        capturing  = false;
-                        status_msg = "Capture stopped";
-                    }
+                    cap_cli.stop_capture();
+                    capturing  = false;
+                    status_msg = "Capture stopped";
                 }
                 ImGui::PopStyleColor(3);
                 ImGui::EndDisabled();
@@ -1173,6 +1162,11 @@ int main(int argc, char** argv) {
                 const image_data* img = &single_viewer.get_image_data();
                 const int cx = hi.valid ? hi.img_x : -1;
                 const int cy = hi.valid ? hi.img_y : -1;
+                const auto& vs = single_viewer.get_view_state();
+                const int vis_x0 = static_cast<int>(-vs.pan_x / vs.zoom);
+                const int vis_x1 = static_cast<int>((-vs.pan_x + viewer_w) / vs.zoom);
+                const int vis_y0 = static_cast<int>(-vs.pan_y / vs.zoom);
+                const int vis_y1 = static_cast<int>((-vs.pan_y + viewer_h) / vs.zoom);
                 draw_profile("X Profile##xprof", true,  cy, {{img, IM_COL32(80, 200, 255, 220), cx}}, graph_w, graph_h, vis_x0, vis_x1);
                 ImGui::SameLine();
                 draw_profile("Y Profile##yprof", false, cx, {{img, IM_COL32(80, 200, 255, 220), cy}}, graph_w, graph_h, vis_y0, vis_y1);
@@ -1182,6 +1176,11 @@ int main(int argc, char** argv) {
                 const image_data* ri = &compare.get_right_image_data();
                 const int cx = hi.valid ? hi.img_x : -1;
                 const int cy = hi.valid ? hi.img_y : -1;
+                const auto& vs = compare.get_view_state();
+                const int vis_x0 = static_cast<int>(-vs.pan_x / vs.zoom);
+                const int vis_x1 = static_cast<int>((-vs.pan_x + viewer_w * 0.5f) / vs.zoom);
+                const int vis_y0 = static_cast<int>(-vs.pan_y / vs.zoom);
+                const int vis_y1 = static_cast<int>((-vs.pan_y + viewer_h) / vs.zoom);
                 draw_profile("X Profile##xprof", true,  cy,
                     {{li, IM_COL32(80, 200, 255, 220), cx},
                      {ri, IM_COL32(255, 160,  60, 220), cx}}, graph_w, graph_h, vis_x0, vis_x1);
