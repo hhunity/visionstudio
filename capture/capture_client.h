@@ -62,9 +62,15 @@ private:
     capture_config cfg_;
 
     std::thread worker_thread_;
+    std::thread sse_thread_;
 
     std::mutex       sse_cli_mtx_;
     httplib::Client* sse_cli_ptr_{nullptr};
+
+    std::mutex              sse_ready_mtx_;
+    std::condition_variable sse_ready_cv_;
+    bool                    sse_ready_{false};
+    bool                    sse_ready_ok_{false};
 
     std::mutex              cmd_mtx_;
     std::condition_variable cmd_cv_;
