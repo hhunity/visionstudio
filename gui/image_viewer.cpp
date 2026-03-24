@@ -226,8 +226,7 @@ void image_viewer::draw_content(ImDrawList* dl, const ImVec2& canvas_pos,
     const float img_sw = img_w_ * state.zoom;
     const float img_sh = img_h_ * state.zoom;
 
-    // Cast texture id to the void* ImTextureID expected by ImGui
-    auto tex_id = reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(texture_id_));
+    auto tex_id = static_cast<ImTextureID>(texture_id_);
     dl->AddImage(tex_id, {img_sx, img_sy}, {img_sx + img_sw, img_sy + img_sh});
 
     if (show_grid)
@@ -339,7 +338,7 @@ void image_viewer::draw_minimap(ImDrawList* dl, const ImVec2& canvas_pos,
                       IM_COL32(0, 0, 0, 160));
 
     // Thumbnail — same texture, full UV range.
-    auto tex_id = reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(texture_id_));
+    auto tex_id = static_cast<ImTextureID>(texture_id_);
     dl->AddImage(tex_id, {mx, my}, {mx + mw, my + mh});
 
     // Visible region in image space.
