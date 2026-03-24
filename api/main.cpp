@@ -55,7 +55,8 @@ struct async_loader {
         auto* prog = &progress;
         future = std::async(std::launch::async, [p = std::move(p), prog]() {
             image_data img;
-            tiff_io::read(p, img, prog);
+            if (!tiff_io::read(p, img, prog))
+                img.pixels.clear(); // ensure empty() == true so caller knows load failed
             return img;
         });
     }
@@ -392,31 +393,39 @@ int main(int argc, char** argv) {
         {
             image_data tmp;
             if (left_loader.poll(tmp)) {
-                left_image = std::move(tmp);
-                switch (mode) {
-                case app_mode::single:
-                    single_viewer.load_image(left_image);
-                    break;
-                case app_mode::compare:
-                    compare.load_left(left_image);
-                    compare.left_label = left_loader.path;
-                    break;
-                case app_mode::split:
-                    compare.load_split(left_image);
-                    compare.left_label  = left_loader.path;
-                    compare.right_label = left_loader.path;
-                    break;
-                default:
-                    break;
+                if (tmp.empty()) {
+                    status_msg = "Load failed: " + left_loader.path;
+                } else {
+                    left_image = std::move(tmp);
+                    switch (mode) {
+                    case app_mode::single:
+                        single_viewer.load_image(left_image);
+                        break;
+                    case app_mode::compare:
+                        compare.load_left(left_image);
+                        compare.left_label = left_loader.path;
+                        break;
+                    case app_mode::split:
+                        compare.load_split(left_image);
+                        compare.left_label  = left_loader.path;
+                        compare.right_label = left_loader.path;
+                        break;
+                    default:
+                        break;
+                    }
+                    if (!right_loader.active)
+                        status_msg = "Loaded: " + left_loader.path;
                 }
-                if (!right_loader.active)
-                    status_msg = "Loaded: " + left_loader.path;
             }
             if (right_loader.poll(tmp)) {
-                right_image = std::move(tmp);
-                compare.load_right(right_image);
-                compare.right_label = right_loader.path;
-                status_msg          = "Loaded";
+                if (tmp.empty()) {
+                    status_msg = "Load failed: " + right_loader.path;
+                } else {
+                    right_image = std::move(tmp);
+                    compare.load_right(right_image);
+                    compare.right_label = right_loader.path;
+                    status_msg          = "Loaded";
+                }
             }
         }
 

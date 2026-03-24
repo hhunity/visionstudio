@@ -447,6 +447,11 @@ bool read(const std::string& path, image_data& out, std::atomic<float>* progress
                             (photometric == PHOTOMETRIC_RGB &&
                              (samples_per_pixel == 3 || samples_per_pixel == 4)));
 
+    fprintf(stderr, "[tiff_io] %s: %ux%u photo=%u bps=%u spp=%u planar=%u tiled=%s fast=%s\n",
+            path.c_str(), w, h,
+            photometric, bits_per_sample, samples_per_pixel, planar_config,
+            is_tiled ? "yes" : "no", fast_path ? "yes" : "no");
+
     bool ok = false;
     if (fast_path) {
         ok = is_tiled
