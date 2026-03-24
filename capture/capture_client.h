@@ -2,7 +2,6 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
-#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -24,13 +23,14 @@ struct server_event {
 // ---------------------------------------------------------------------------
 // capture_client
 //
-// Two background threads, UI thread never blocks on HTTP:
+// Single worker thread processes all commands sequentially.
 //
-//   sse_thread   GET /events + PUT /connect (response callback)
-//                SSE parsing only — no command processing
-//
-//   cmd_thread   start / stop / disconnect via condition variable queue
-//                POST /disconnect before signalling sse_thread to stop
+//   connect()        → push cmd::connect  → worker opens SSE GET (blocking)
+//   start_capture()  → push cmd::start    → processed in SSE content callback
+//   stop_capture()   → push cmd::stop     → processed in SSE content callback
+//   disconnect()     → push cmd::disconnect + sse_cli.stop()
+//                      → content callback returns false → GET returns
+//                      → worker posts /disconnect then exits loop
 // ---------------------------------------------------------------------------
 class capture_client {
 public:
@@ -51,10 +51,9 @@ public:
     std::string get_last_error() const;
 
 private:
-    enum class cmd { start_capture, stop_capture, disconnect };
+    enum class cmd { connect, start_capture, stop_capture, disconnect };
 
-    void sse_thread_func();
-    void cmd_thread_func();
+    void worker_thread_func();
 
     bool do_connect_post();
     bool do_disconnect_post();
@@ -68,12 +67,9 @@ private:
 
     capture_config cfg_;
 
-    std::thread            sse_thread_;
-    std::thread            cmd_thread_;
-    std::atomic<bool>      stop_flag_{false};
-    std::atomic<sse_state> sse_state_{sse_state::disconnected};
+    std::thread            worker_thread_;
 
-    // sse_cli_ptr_ lets disconnect() call stop() to interrupt the blocking Get.
+    // sse_cli_ptr_ lets disconnect() call stop() to interrupt a silent stream.
     // httplib::Client::stop() is thread-safe.
     std::mutex       sse_cli_mtx_;
     httplib::Client* sse_cli_ptr_{nullptr};
@@ -81,6 +77,9 @@ private:
     std::mutex              cmd_mtx_;
     std::condition_variable cmd_cv_;
     std::deque<cmd>         cmd_queue_;
+    bool                    shutdown_{false};
+
+    std::atomic<sse_state> sse_state_{sse_state::disconnected};
 
     mutable std::mutex        event_mtx_;
     std::vector<server_event> event_queue_;
