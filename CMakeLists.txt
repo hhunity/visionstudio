@@ -13,6 +13,7 @@ endif()
 find_package(imgui CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(TIFF REQUIRED)
+find_package(ZLIB REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(glad CONFIG REQUIRED)
 find_package(Threads REQUIRED)
@@ -20,16 +21,25 @@ find_package(CLI11 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(implot CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
+find_package(nfd CONFIG REQUIRED)
 
-# ----- vs_io: TIFF IO + JSONL IO library -----
+# ----- cpplib_io: tiff_io from external/cpplib (built as static) -----
+add_library(cpplib_io STATIC
+    external/cpplib/io/tiff_io.cpp
+)
+target_include_directories(cpplib_io PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>
+)
+target_link_libraries(cpplib_io PUBLIC TIFF::TIFF ZLIB::ZLIB Threads::Threads)
+
+# ----- vs_io: JSONL IO library (tiff_io now provided by cpplib_io) -----
 add_library(vs_io STATIC
-    io/tiff_io.cpp
     io/jsonl_io.cpp
 )
 target_include_directories(vs_io PUBLIC
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>
 )
-target_link_libraries(vs_io PUBLIC TIFF::TIFF Threads::Threads nlohmann_json::nlohmann_json)
+target_link_libraries(vs_io PUBLIC cpplib_io nlohmann_json::nlohmann_json)
 
 # ----- vs_gui: GUI library -----
 add_library(vs_gui STATIC
@@ -64,6 +74,13 @@ target_link_libraries(vs_capture PUBLIC
     httplib::httplib
     nlohmann_json::nlohmann_json
     Threads::Threads
+)
+
+# ----- Embed THIRD_PARTY_LICENSES.txt at build time -----
+file(READ "${CMAKE_SOURCE_DIR}/THIRD_PARTY_LICENSES.txt" LICENSE_CONTENT)
+configure_file(
+    "${CMAKE_SOURCE_DIR}/generated/third_party_licenses.h.in"
+    "${CMAKE_BINARY_DIR}/generated/third_party_licenses.h"
 )
 
 # ----- visionstudio: main application -----

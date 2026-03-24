@@ -2,7 +2,21 @@
   "permissions": {
     "allow": [
       "Bash(cmake --preset debug)",
-      "Bash(cmake --build --preset debug)"
+      "Bash(cmake --build --preset debug)",
+      "Bash(cmake --build build/debug --target visionstudio)",
+      "Bash(cmake -S /Users/hiroyukih/vscode/visionstudio -B /Users/hiroyukih/vscode/visionstudio/build/debug --preset debug)",
+      "Bash(cmake --build /Users/hiroyukih/vscode/visionstudio/build/debug --target visionstudio)",
+      "Bash(cmake --build /Users/hiroyukih/vscode/visionstudio/build/debug --preset debug)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(curl -s https://raw.githubusercontent.com/hhunity/cpplib/master/io/tiff_io.h)",
+      "Bash(curl -s https://raw.githubusercontent.com/hhunity/cpplib/master/CMakeLists.txt)",
+      "Bash(curl -s https://raw.githubusercontent.com/hhunity/cpplib/master/io/CMakeLists.txt)",
+      "Bash(git init:*)",
+      "Bash(git submodule:*)",
+      "Bash(cmake --preset debug -S /Users/hiroyukih/vscode/visionstudio -B /Users/hiroyukih/vscode/visionstudio/build/debug)",
+      "Bash(cmake --build /Users/hiroyukih/vscode/visionstudio/build/debug)",
+      "Bash(find /Users/hiroyukih/vscode/visionstudio -name httplib.h ! -path */external/vcpkg/buildtrees/*)"
     ]
   }
 }

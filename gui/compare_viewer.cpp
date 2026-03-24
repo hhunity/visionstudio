@@ -64,6 +64,12 @@ bool compare_viewer::load_left(const image_data& img) {
     return left_viewer_.load_image(img);
 }
 
+void compare_viewer::unload_left() {
+    is_split_     = false;
+    diff_applied_ = false;
+    left_viewer_.unload_image();
+}
+
 bool compare_viewer::load_right(const image_data& img) {
     is_split_     = false;
     right_orig_   = img;

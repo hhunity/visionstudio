@@ -11,7 +11,8 @@ struct capture_config {
     std::string              disconnect_path = "/disconnect";
     std::string              sse_path        = "/events";
     int                      timeout_ms      = 5000;
-    std::vector<std::string> config_files; // paths to camera JSON config files
+    std::vector<std::string> connect_config_files; // paths to connection config files (any format)
+    std::vector<std::string> capture_config_files; // paths to capture config files (JSON)
 
     // Load capture settings from visionstudio.json.
     // Returns defaults if the file is not found or the "capture" key is missing.

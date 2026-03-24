@@ -1,4 +1,5 @@
 #include <glad/glad.h>
+#include <nfd.hpp>
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
@@ -15,6 +16,7 @@
 #include "util/image_data.h"
 #include "util/roi_data.h"
 
+#include "generated/third_party_licenses.h"
 #include <CLI/CLI.hpp>
 #include <nlohmann/json.hpp>
 #include <atomic>
@@ -233,6 +235,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    NFD::Init();
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImPlot::CreateContext();
@@ -254,44 +257,78 @@ int main(int argc, char** argv) {
     bool        show_pixel_panel      = true;
     bool        show_profile_panel    = false;
     bool        show_camera_config    = false;
+    bool        show_connect_config   = false;
+    bool        show_about            = false;
     bool        server_connected      = false;
+    bool        capturing             = false;
 
-    // Camera config editor state: one entry per file in cap_cfg.config_files.
+    // Capture settings
+    int  capture_mode          = 0;     // 0=Capture, 1=Mode1, 2=Mode2
+    bool image_acquisition     = true;
+    bool live_image            = false;
+    bool auto_detect           = true;
+    std::string ref_img_path;
+
+    // Editable copies of connection settings (local to UI, applied on Save).
+    struct conn_edit {
+        char host[128];
+        int  port;
+        char connect_path[64];
+        char start_path[64];
+        char stop_path[64];
+        char disconnect_path[64];
+        char sse_path[64];
+        int  timeout_ms;
+    };
+    auto make_conn_edit = [](const capture_config& c) {
+        conn_edit e{};
+        std::strncpy(e.host,            c.host.c_str(),            sizeof(e.host) - 1);
+        e.port = c.port;
+        std::strncpy(e.connect_path,    c.connect_path.c_str(),    sizeof(e.connect_path) - 1);
+        std::strncpy(e.start_path,      c.start_path.c_str(),      sizeof(e.start_path) - 1);
+        std::strncpy(e.stop_path,       c.stop_path.c_str(),       sizeof(e.stop_path) - 1);
+        std::strncpy(e.disconnect_path, c.disconnect_path.c_str(), sizeof(e.disconnect_path) - 1);
+        std::strncpy(e.sse_path,        c.sse_path.c_str(),        sizeof(e.sse_path) - 1);
+        e.timeout_ms = c.timeout_ms;
+        return e;
+    };
+    // Camera config editor state: one entry per file in cap_cfg.capture_config_files.
     struct config_tab {
         std::string path;
         std::string text;
-        std::string error;   // empty = valid JSON
         bool        modified = false;
 
         void load() {
             std::ifstream f(path);
-            if (!f.is_open()) { error = "Cannot open file"; return; }
+            if (!f.is_open()) return;
             text = std::string(std::istreambuf_iterator<char>(f), {});
-            validate();
             modified = false;
         }
         void save() {
             std::ofstream f(path);
-            if (!f.is_open()) { error = "Cannot write file"; return; }
+            if (!f.is_open()) return;
             f << text;
             modified = false;
         }
-        void validate() {
-            try { (void)nlohmann::json::parse(text); error.clear(); }
-            catch (const std::exception& e) { error = e.what(); }
-        }
     };
-    std::vector<config_tab> config_tabs;
+    std::vector<config_tab> config_tabs;         // capture_config_files
+    int                     selected_config_tab  = 0;
+    std::vector<config_tab> connect_tabs;        // connect_config_files
+    int                     selected_connect_tab = 0;
 
-    capture_config cap_cfg = capture_config::load("visionstudio.json");
+    capture_config cap_cfg  = capture_config::load("visionstudio.json");
     capture_client cap_cli(cap_cfg);
+    conn_edit      conn_buf = make_conn_edit(cap_cfg);
 
-    // Build config editor tabs from cap_cfg.config_files.
-    for (const auto& p : cap_cfg.config_files) {
-        config_tab t;
-        t.path = p;
-        t.load();
+    // Build config editor tabs from capture_config_files.
+    for (const auto& p : cap_cfg.capture_config_files) {
+        config_tab t; t.path = p; t.load();
         config_tabs.push_back(std::move(t));
+    }
+    // Build connect editor tabs from connect_config_files.
+    for (const auto& p : cap_cfg.connect_config_files) {
+        config_tab t; t.path = p; t.load();
+        connect_tabs.push_back(std::move(t));
     }
 
     async_loader           left_loader;
@@ -387,6 +424,10 @@ int main(int argc, char** argv) {
             continue;
         }
 
+        // In capture mode, the internal viewer is determined by capture_mode.
+        const bool use_single = (mode == app_mode::single)
+                             || (mode == app_mode::capture && capture_mode == 0);
+
         // ----- Poll async loaders -----
         {
             image_data tmp;
@@ -408,6 +449,18 @@ int main(int argc, char** argv) {
                         compare.left_label  = left_loader.path;
                         compare.right_label = left_loader.path;
                         break;
+                case app_mode::capture:
+                    if (capture_mode == 0) {
+                        single_viewer.load_image(left_image);
+                    } else if (capture_mode == 1) {
+                        compare.load_split(left_image);
+                        compare.left_label  = left_loader.path;
+                        compare.right_label = left_loader.path;
+                    } else {
+                        compare.load_left(left_image);
+                        compare.left_label = left_loader.path;
+                    }
+                    break;
                     default:
                         break;
                     }
@@ -431,10 +484,6 @@ int main(int argc, char** argv) {
         if (mode == app_mode::capture) {
             while (auto ev = cap_cli.poll_server_event()) {
                 switch (ev->type) {
-                case server_event_type::connected:
-                    server_connected = true;
-                    status_msg = "Server connected";
-                    break;
                 case server_event_type::disconnected:
                     server_connected = false;
                     status_msg = "Server disconnected";
@@ -443,7 +492,19 @@ int main(int argc, char** argv) {
                     status_msg = "Server error: " + ev->message;
                     break;
                 case server_event_type::capture_done:
-                    left_loader.start(ev->path);
+                    capturing = false;
+                    if (capture_mode == 0) {
+                        left_loader.start(ev->path);
+                    } else if (capture_mode == 1) {
+                        // Split: load same image into compare as split source
+                        left_loader.start(ev->path);
+                    } else {
+                        // Compare: alternate left/right each capture
+                        if (left_image.empty())
+                            left_loader.start(ev->path);
+                        else
+                            right_loader.start(ev->path);
+                    }
                     status_msg = "Capture complete: " + ev->path;
                     break;
                 }
@@ -451,6 +512,8 @@ int main(int argc, char** argv) {
             // Detect unexpected SSE drop (server crash etc.)
             if (server_connected && cap_cli.get_sse_state() == sse_state::error) {
                 server_connected = false;
+                capturing        = false;
+                cap_cli.stop_sse();
                 status_msg = "Connection lost: " + cap_cli.get_last_error();
             }
         }
@@ -469,13 +532,14 @@ int main(int argc, char** argv) {
 
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem("Open...")) open_file = true;
+                if (mode != app_mode::capture)
+                    if (ImGui::MenuItem("Open...")) open_file = true;
                 ImGui::Separator();
                 if (ImGui::MenuItem("Quit")) glfwSetWindowShouldClose(window, GLFW_TRUE);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("View")) {
-                if (mode == app_mode::single || mode == app_mode::capture) {
+                if (use_single) {
                     ImGui::MenuItem("Show Grid",     nullptr, &single_viewer.show_grid);
                     ImGui::MenuItem("Show Minimap",  nullptr, &single_viewer.show_minimap);
                     ImGui::MenuItem("Show Overlays",  nullptr, &single_viewer.show_overlays);
@@ -527,39 +591,39 @@ int main(int argc, char** argv) {
                 ImGui::MenuItem("Profile Panel", nullptr, &show_profile_panel);
                 ImGui::EndMenu();
             }
+            if (ImGui::BeginMenu("Help")) {
+                if (ImGui::MenuItem("About")) show_about = true;
+                ImGui::EndMenu();
+            }
             ImGui::EndMenuBar();
         }
 
-        if (open_file) ImGui::OpenPopup("##open_file");
-
-        // ----- Open file popup (adapts to mode) -----
-        if (ImGui::BeginPopupModal("##open_file", nullptr,
-                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+        // ----- Open file via native dialog -----
+        if (open_file) {
+            constexpr nfdfilteritem_t kTiffFilter[] = {{"TIFF Image", "tiff,tif"}};
             if (mode == app_mode::compare) {
-                ImGui::Text("Left TIFF:");
-                ImGui::SetNextItemWidth(400.0f);
-                ImGui::InputText("##lp", left_path_buf, sizeof(left_path_buf));
-                ImGui::Text("Right TIFF:");
-                ImGui::SetNextItemWidth(400.0f);
-                ImGui::InputText("##rp", right_path_buf, sizeof(right_path_buf));
-            } else {
-                ImGui::Text("TIFF path:");
-                ImGui::SetNextItemWidth(400.0f);
-                ImGui::InputText("##lp", left_path_buf, sizeof(left_path_buf));
-            }
-
-            if (ImGui::Button("Load")) {
-                if (left_path_buf[0]) {
+                nfdchar_t* out = nullptr;
+                if (NFD::OpenDialog(out, kTiffFilter, 1) == NFD_OKAY) {
+                    std::strncpy(left_path_buf, out, sizeof(left_path_buf) - 1);
+                    NFD::FreePath(out);
+                    out = nullptr;
+                    if (NFD::OpenDialog(out, kTiffFilter, 1) == NFD_OKAY) {
+                        std::strncpy(right_path_buf, out, sizeof(right_path_buf) - 1);
+                        NFD::FreePath(out);
+                    }
                     left_loader.start(left_path_buf);
-                    if (mode == app_mode::compare && right_path_buf[0])
-                        right_loader.start(right_path_buf);
+                    if (right_path_buf[0]) right_loader.start(right_path_buf);
                     status_msg = "Loading...";
                 }
-                ImGui::CloseCurrentPopup();
+            } else {
+                nfdchar_t* out = nullptr;
+                if (NFD::OpenDialog(out, kTiffFilter, 1) == NFD_OKAY) {
+                    std::strncpy(left_path_buf, out, sizeof(left_path_buf) - 1);
+                    NFD::FreePath(out);
+                    left_loader.start(left_path_buf);
+                    status_msg = "Loading...";
+                }
             }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
         }
 
         // ----- Camera config editor modal -----
@@ -567,111 +631,404 @@ int main(int argc, char** argv) {
         ImGui::SetNextWindowSize({700, 540}, ImGuiCond_Always);
         if (ImGui::BeginPopupModal("Camera Config##modal", &show_camera_config,
                                     ImGuiWindowFlags_NoResize)) {
-            if (ImGui::BeginTabBar("##cfg_tabs")) {
-                for (auto& tab : config_tabs) {
-                    // Use filename as tab label
-                    const std::string label = [&]{
-                        auto pos = tab.path.find_last_of("/\\");
-                        return (pos == std::string::npos) ? tab.path : tab.path.substr(pos + 1);
-                    }();
-                    const std::string tab_label = label + (tab.modified ? " *" : "") + "##" + tab.path;
-                    if (ImGui::BeginTabItem(tab_label.c_str())) {
-                        // Path row
-                        ImGui::SetNextItemWidth(-120.0f);
-                        ImGui::InputText("##path", &tab.path);
-                        ImGui::SameLine();
-                        if (ImGui::Button("Reload")) tab.load();
+            if (!config_tabs.empty()) {
+                // File selector
+                if (config_tabs.size() > 1) {
+                    std::vector<const char*> names;
+                    for (const auto& t : config_tabs) names.push_back(t.path.c_str());
+                    ImGui::SetNextItemWidth(-1);
+                    ImGui::Combo("##cfg_sel", &selected_config_tab, names.data(),
+                                 static_cast<int>(names.size()));
+                }
 
-                        // Error indicator
-                        if (!tab.error.empty()) {
-                            ImGui::TextColored({1, 0.4f, 0.4f, 1}, "JSON error: %s", tab.error.c_str());
-                        } else {
-                            ImGui::TextColored({0.4f, 1, 0.4f, 1}, "Valid JSON");
-                        }
+                auto& tab = config_tabs[selected_config_tab];
 
-                        // Text editor
-                        const float avail_h = ImGui::GetContentRegionAvail().y
-                                            - ImGui::GetFrameHeightWithSpacing() - 4;
-                        if (ImGui::InputTextMultiline("##ed", &tab.text,
-                                                      {-1, avail_h}))
-                            tab.validate();
-
-                        // Save button
-                        ImGui::BeginDisabled(!tab.error.empty());
-                        if (ImGui::Button("Save")) tab.save();
-                        ImGui::EndDisabled();
-
-                        ImGui::EndTabItem();
+                // Path row
+                ImGui::SetNextItemWidth(-180.0f);
+                if (ImGui::InputText("##path", &tab.path)) tab.modified = true;
+                ImGui::SameLine();
+                if (ImGui::Button("Browse##cfg")) {
+                    nfdchar_t* out = nullptr;
+                    if (NFD::OpenDialog(out) == NFD_OKAY) {
+                        tab.path = out;
+                        NFD::FreePath(out);
+                        tab.load();
                     }
                 }
-                ImGui::EndTabBar();
+                ImGui::SameLine();
+                if (ImGui::Button("Reload")) tab.load();
+
+                // Text editor
+                const float avail_h = ImGui::GetContentRegionAvail().y
+                                    - ImGui::GetFrameHeightWithSpacing() - 4;
+                if (ImGui::InputTextMultiline("##ed", &tab.text, {-1, avail_h}))
+                    tab.modified = true;
+
+                // Save button
+                const std::string save_label = std::string("Save")
+                    + (tab.modified ? " *" : "") + "##save";
+                if (ImGui::Button(save_label.c_str())) tab.save();
             }
             ImGui::EndPopup();
         }
 
-        // ----- Capture control bar (capture mode only) -----
-        if (mode == app_mode::capture) {
-            ImGui::BeginDisabled(server_connected);
-            if (ImGui::Button("Connect")) {
-                cap_cli.connect();
-                status_msg = "Connecting...";
-            }
-            ImGui::EndDisabled();
-            ImGui::SameLine();
-            ImGui::BeginDisabled(!server_connected);
-            if (ImGui::Button("Disconnect")) {
-                cap_cli.disconnect();
-                server_connected = false;
-                status_msg = "Disconnecting...";
-            }
-            ImGui::SameLine();
-            ImGui::Text("|");
-            ImGui::SameLine();
-            if (ImGui::Button("Start Capture")) {
-                cap_cli.start_capture();
-                status_msg = "Starting capture...";
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Stop Capture")) {
-                cap_cli.stop_capture();
-                status_msg = "Stopping capture...";
-            }
-            ImGui::EndDisabled();
-            if (!config_tabs.empty()) {
+        // ----- Connect config editor modal -----
+        if (show_connect_config) ImGui::OpenPopup("Connect Config##modal");
+        ImGui::SetNextWindowSize({700, 540}, ImGuiCond_Always);
+        if (ImGui::BeginPopupModal("Connect Config##modal", &show_connect_config,
+                                    ImGuiWindowFlags_NoResize)) {
+            if (!connect_tabs.empty()) {
+                if (connect_tabs.size() > 1) {
+                    std::vector<const char*> names;
+                    for (const auto& t : connect_tabs) names.push_back(t.path.c_str());
+                    ImGui::SetNextItemWidth(-1);
+                    ImGui::Combo("##conn_sel", &selected_connect_tab, names.data(),
+                                 static_cast<int>(names.size()));
+                }
+
+                auto& tab = connect_tabs[selected_connect_tab];
+
+                ImGui::SetNextItemWidth(-180.0f);
+                if (ImGui::InputText("##path", &tab.path)) tab.modified = true;
                 ImGui::SameLine();
-                if (ImGui::Button("Camera Config...")) show_camera_config = true;
+                if (ImGui::Button("Browse##conn_cfg")) {
+                    nfdchar_t* out = nullptr;
+                    if (NFD::OpenDialog(out) == NFD_OKAY) {
+                        tab.path = out;
+                        NFD::FreePath(out);
+                        tab.load();
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Reload##conn")) tab.load();
+
+                const float avail_h = ImGui::GetContentRegionAvail().y
+                                    - ImGui::GetFrameHeightWithSpacing() - 4;
+                if (ImGui::InputTextMultiline("##ed", &tab.text, {-1, avail_h}))
+                    tab.modified = true;
+
+                const std::string save_label = std::string("Save")
+                    + (tab.modified ? " *" : "") + "##connsave";
+                if (ImGui::Button(save_label.c_str())) tab.save();
             }
-            ImGui::SameLine();
-            ImGui::Text("|");
-            ImGui::SameLine();
-            const char* sse_label = "";
-            ImVec4      sse_col   = {1, 1, 1, 1};
-            switch (cap_cli.get_sse_state()) {
-            case sse_state::disconnected:
-                sse_label = "SSE: Disconnected"; sse_col = {0.6f, 0.6f, 0.6f, 1}; break;
-            case sse_state::connecting:
-                sse_label = "SSE: Connecting..."; sse_col = {1, 0.8f, 0, 1};      break;
-            case sse_state::connected:
-                sse_label = "SSE: Connected";    sse_col = {0.2f, 1, 0.4f, 1};   break;
-            case sse_state::error:
-                sse_label = "SSE: Error";        sse_col = {1, 0.3f, 0.3f, 1};   break;
+            ImGui::EndPopup();
+        }
+
+        // ----- About modal -----
+        if (show_about) ImGui::OpenPopup("About VisionStudio##modal");
+        ImGui::SetNextWindowSize({620, 520}, ImGuiCond_Always);
+        if (ImGui::BeginPopupModal("About VisionStudio##modal", &show_about,
+                                    ImGuiWindowFlags_NoResize)) {
+            ImGui::TextUnformatted("VisionStudio  v0.1.0");
+            ImGui::Separator();
+            const float text_h = ImGui::GetContentRegionAvail().y
+                                - ImGui::GetFrameHeightWithSpacing() - 4;
+            ImGui::InputTextMultiline("##about_text",
+                const_cast<char*>(kThirdPartyLicenses),
+                sizeof(kThirdPartyLicenses),
+                {-1, text_h},
+                ImGuiInputTextFlags_ReadOnly);
+            if (ImGui::Button("Close")) { show_about = false; ImGui::CloseCurrentPopup(); }
+            ImGui::EndPopup();
+        }
+
+        // ----- Toolbar -----
+        {
+            bool&  show_grid      = use_single ? single_viewer.show_grid      : compare.show_grid;
+            bool&  show_minimap   = use_single ? single_viewer.show_minimap   : compare.show_minimap;
+            bool&  show_overlays  = use_single ? single_viewer.show_overlays  : compare.show_overlays;
+            bool&  show_tooltip   = use_single ? single_viewer.show_coordinates : compare.show_coordinates;
+            bool&  show_crosshair = use_single ? single_viewer.show_crosshair : compare.show_crosshair;
+
+            constexpr ImVec4 kOn  = {0.15f, 0.45f, 0.75f, 1.0f};
+            constexpr ImVec4 kOnH = {0.25f, 0.55f, 0.85f, 1.0f};
+            constexpr ImVec4 kOnA = {0.10f, 0.35f, 0.65f, 1.0f};
+
+            auto toggle_btn = [&](const char* label, bool& flag) {
+                const bool on = flag;  // capture before click changes it
+                if (on) {
+                    ImGui::PushStyleColor(ImGuiCol_Button,        kOn);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kOnH);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  kOnA);
+                }
+                if (ImGui::SmallButton(label)) flag = !flag;
+                if (on) ImGui::PopStyleColor(3);
+                ImGui::SameLine();
+            };
+
+            toggle_btn("Grid",      show_grid);
+            toggle_btn("Minimap",   show_minimap);
+            toggle_btn("Overlays",  show_overlays);
+            toggle_btn("Tooltip",   show_tooltip);
+            toggle_btn("Crosshair", show_crosshair);
+            if (!use_single) {
+                toggle_btn("Sync", compare.sync_views);
+                const bool diff_on = compare.diff_mode;
+                if (diff_on) {
+                    ImGui::PushStyleColor(ImGuiCol_Button,        kOn);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kOnH);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  kOnA);
+                }
+                if (ImGui::SmallButton("Diff")) {
+                    compare.diff_mode = !compare.diff_mode;
+                    if (compare.diff_mode) compare.diff_amplify = 1.0f;
+                }
+                if (diff_on) ImGui::PopStyleColor(3);
+                ImGui::SameLine();
             }
-            ImGui::TextColored(sse_col, "%s", sse_label);
+            ImGui::TextDisabled("|");
+            ImGui::SameLine();
+            toggle_btn("Pixel",   show_pixel_panel);
+            toggle_btn("Profile", show_profile_panel);
+            ImGui::NewLine();
         }
 
         // ----- Viewer area -----
         const float status_h        = ImGui::GetFrameHeightWithSpacing();
         const float profile_panel_h = show_profile_panel ? 180.0f : 0.0f;
         const float viewer_h        = ImGui::GetContentRegionAvail().y - status_h - profile_panel_h;
-        constexpr float panel_w = 240.0f;
+
+        constexpr float panel_w         = 240.0f;  // right pixel panel
+        constexpr float capture_panel_w = 180.0f;  // left capture control panel
         const float spacing_x = ImGui::GetStyle().ItemSpacing.x;
-        const float viewer_w  = show_pixel_panel
-            ? ImGui::GetContentRegionAvail().x - panel_w - spacing_x
+        const float avail_x   = ImGui::GetContentRegionAvail().x;
+
+        const float left_w  = (mode == app_mode::capture) ? capture_panel_w + spacing_x : 0.0f;
+        const float right_w = show_pixel_panel ? panel_w + spacing_x : 0.0f;
+        const float viewer_w = (left_w > 0.0f || right_w > 0.0f)
+            ? avail_x - left_w - right_w
             : 0.0f;
+
+        // ----- Left capture control panel -----
+        if (mode == app_mode::capture) {
+            if (ImGui::BeginChild("##capture_ctrl", {capture_panel_w, viewer_h},
+                                  ImGuiChildFlags_Borders)) {
+                // SSE status indicator
+                const char* sse_label = "";
+                ImVec4      sse_col   = {1, 1, 1, 1};
+                switch (cap_cli.get_sse_state()) {
+                case sse_state::disconnected:
+                    sse_label = "Disconnected"; sse_col = {0.6f, 0.6f, 0.6f, 1}; break;
+                case sse_state::connecting:
+                    sse_label = "Connecting..."; sse_col = {1, 0.8f, 0, 1};      break;
+                case sse_state::connected:
+                    sse_label = "Connected";    sse_col = {0.2f, 1, 0.4f, 1};   break;
+                case sse_state::error:
+                    sse_label = "Error";        sse_col = {1, 0.3f, 0.3f, 1};   break;
+                }
+                ImGui::TextColored(sse_col, "SSE: %s", sse_label);
+                if (cap_cli.get_sse_state() == sse_state::error) {
+                    const auto err = cap_cli.get_last_error();
+                    if (!err.empty())
+                        ImGui::TextDisabled("  %s", err.c_str());
+                }
+                ImGui::Separator();
+
+                // Connection settings (collapsible)
+                ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4{0.35f, 0.35f, 0.35f, 1.0f});
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4{0.45f, 0.45f, 0.45f, 1.0f});
+                ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4{0.28f, 0.28f, 0.28f, 1.0f});
+                const bool conn_open = ImGui::CollapsingHeader("Connect Settings");
+                ImGui::PopStyleColor(3);
+                if (conn_open) {
+                    ImGui::BeginDisabled(server_connected);
+                    const float fw = ImGui::GetContentRegionAvail().x;
+                    bool conn_changed = false;
+                    auto labeled = [&](const char* label, auto fn) {
+                        ImGui::TextDisabled("%s", label);
+                        ImGui::SetNextItemWidth(fw);
+                        if (fn()) conn_changed = true;
+                    };
+                    labeled("Host",        [&]{ return ImGui::InputText("##host",       conn_buf.host,            sizeof(conn_buf.host)); });
+                    labeled("Port",        [&]{ return ImGui::InputInt ("##port",       &conn_buf.port,           0); });
+                    ImGui::Separator();
+                    labeled("Connect",     [&]{ return ImGui::InputText("##conn_path",  conn_buf.connect_path,    sizeof(conn_buf.connect_path)); });
+                    labeled("Start",       [&]{ return ImGui::InputText("##start_path", conn_buf.start_path,      sizeof(conn_buf.start_path)); });
+                    labeled("Stop",        [&]{ return ImGui::InputText("##stop_path",  conn_buf.stop_path,       sizeof(conn_buf.stop_path)); });
+                    labeled("Disconnect",  [&]{ return ImGui::InputText("##disc_path",  conn_buf.disconnect_path, sizeof(conn_buf.disconnect_path)); });
+                    labeled("SSE",         [&]{ return ImGui::InputText("##sse_path",   conn_buf.sse_path,        sizeof(conn_buf.sse_path)); });
+                    labeled("Timeout(ms)", [&]{ return ImGui::InputInt ("##timeout",    &conn_buf.timeout_ms,     0); });
+                    if (conn_changed) {
+                        cap_cfg.host            = conn_buf.host;
+                        cap_cfg.port            = conn_buf.port;
+                        cap_cfg.connect_path    = conn_buf.connect_path;
+                        cap_cfg.start_path      = conn_buf.start_path;
+                        cap_cfg.stop_path       = conn_buf.stop_path;
+                        cap_cfg.disconnect_path = conn_buf.disconnect_path;
+                        cap_cfg.sse_path        = conn_buf.sse_path;
+                        cap_cfg.timeout_ms      = conn_buf.timeout_ms;
+                        capture_config::save("visionstudio.json", cap_cfg);
+                        cap_cli.update_config(cap_cfg);
+                    }
+                    if (!connect_tabs.empty()) {
+                        ImGui::Separator();
+                        ImGui::TextDisabled("Connect Config File");
+                        for (int i = 0; i < static_cast<int>(connect_tabs.size()); ++i) {
+                            const auto& p   = connect_tabs[i].path;
+                            const auto  pos = p.find_last_of("/\\");
+                            const std::string fname = (pos == std::string::npos) ? p : p.substr(pos + 1);
+                            ImGui::PushID(i);
+                            if (ImGui::Button(fname.empty() ? "(no file)" : fname.c_str(), {-1, 0})) {
+                                selected_connect_tab = i;
+                                show_connect_config = true;
+                            }
+                            ImGui::PopID();
+                        }
+                    }
+                    ImGui::EndDisabled();
+                }
+                ImGui::Separator();
+
+                // Connection buttons (blue)
+                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.15f, 0.45f, 0.75f, 1.0f});
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.22f, 0.58f, 0.90f, 1.0f});
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.10f, 0.32f, 0.55f, 1.0f});
+                ImGui::BeginDisabled(server_connected);
+                if (ImGui::Button("Connect", {-1, 0})) {
+                    if (!cap_cli.connect_server())
+                        status_msg = "Connect failed: " + cap_cli.get_last_error();
+                    else {
+                        server_connected = true;
+                        status_msg = "Connected";
+                        cap_cli.start_sse();
+                    }
+                }
+                ImGui::EndDisabled();
+
+                ImGui::BeginDisabled(!server_connected);
+                if (ImGui::Button("Disconnect", {-1, 0})) {
+                    if (!cap_cli.disconnect_server())
+                        status_msg = "Disconnect failed: " + cap_cli.get_last_error();
+                    else {
+                        cap_cli.stop_sse();
+                        server_connected = false;
+                        capturing        = false;
+                        status_msg = "Server disconnected";
+                    }
+                }
+                ImGui::EndDisabled();
+                ImGui::PopStyleColor(3);
+                ImGui::Separator();
+
+                // Capture Settings (collapsible)
+                // In debug builds, always accessible; in release, requires connection.
+#ifndef NDEBUG
+                constexpr bool cap_settings_disabled = false;
+#else
+                const bool cap_settings_disabled = !server_connected;
+#endif
+                ImGui::BeginDisabled(cap_settings_disabled);
+                ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4{0.35f, 0.35f, 0.35f, 1.0f});
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4{0.45f, 0.45f, 0.45f, 1.0f});
+                ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4{0.28f, 0.28f, 0.28f, 1.0f});
+                const bool cap_settings_open = ImGui::CollapsingHeader("Capture Settings");
+                ImGui::PopStyleColor(3);
+                if (cap_settings_open) {
+                    constexpr const char* kCaptureModes[] = {"Capture (Single)", "Mode1 (Split)", "Mode2 (Compare)"};
+                    ImGui::TextDisabled("Capture Mode");
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                    const int prev_capture_mode = capture_mode;
+                    if (ImGui::Combo("##cap_mode", &capture_mode, kCaptureModes, 3)) {
+                        if (prev_capture_mode == 2 && capture_mode != 2) {
+                            // Leaving Mode2: clear ref image so it doesn't bleed into Mode1
+                            ref_img_path.clear();
+                            compare.unload_left();
+                        }
+                    }
+
+                    ImGui::TextDisabled("Image Acquisition");
+                    if (ImGui::RadioButton("Enable##acq",  image_acquisition))  image_acquisition = true;
+                    ImGui::SameLine();
+                    if (ImGui::RadioButton("Disable##acq", !image_acquisition)) image_acquisition = false;
+
+                    ImGui::TextDisabled("Live Image");
+                    if (ImGui::RadioButton("Enable##live",  live_image))  live_image = true;
+                    ImGui::SameLine();
+                    if (ImGui::RadioButton("Disable##live", !live_image)) live_image = false;
+
+                    ImGui::TextDisabled("Auto Detect");
+                    if (ImGui::RadioButton("Enable##ad",  auto_detect))  auto_detect = true;
+                    ImGui::SameLine();
+                    if (ImGui::RadioButton("Disable##ad", !auto_detect)) auto_detect = false;
+
+                    ImGui::BeginDisabled(capture_mode != 2);
+                    ImGui::TextDisabled("Ref Img");
+                    {
+                        const auto pos = ref_img_path.find_last_of("/\\");
+                        const std::string fname = ref_img_path.empty()
+                            ? "(none)"
+                            : (pos == std::string::npos ? ref_img_path : ref_img_path.substr(pos + 1));
+                        if (ImGui::Button(fname.c_str(), {-1, 0})) {
+                            constexpr nfdfilteritem_t kTiffFilter[] = {{"TIFF Image", "tiff,tif"}};
+                            nfdchar_t* out = nullptr;
+                            if (NFD::OpenDialog(out, kTiffFilter, 1) == NFD_OKAY) {
+                                ref_img_path = out;
+                                NFD::FreePath(out);
+                                left_loader.start(ref_img_path);
+                                status_msg = "Loading...";
+                            }
+                        }
+                    }
+                    ImGui::EndDisabled();
+
+                    // Capture config files: path + browse + edit modal
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Capture Config Files");
+                    const float fw = ImGui::GetContentRegionAvail().x;
+                    for (int i = 0; i < static_cast<int>(cap_cfg.capture_config_files.size()); ++i) {
+                        ImGui::PushID(i);
+                        // Filename label
+                        const auto& fpath = cap_cfg.capture_config_files[i];
+                        const auto  pos   = fpath.find_last_of("/\\");
+                        const std::string fname = (pos == std::string::npos) ? fpath : fpath.substr(pos + 1);
+                        if (ImGui::Button(fname.empty() ? "(no file)" : fname.c_str(), {-1, 0})) {
+                            selected_config_tab = i;
+                            show_camera_config = true;
+                        }
+                        ImGui::PopID();
+                    }
+                }
+                ImGui::EndDisabled();
+                ImGui::Separator();
+
+                // Capture buttons
+                ImGui::BeginDisabled(!server_connected || capturing);
+                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.18f, 0.55f, 0.18f, 1.0f});
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.25f, 0.70f, 0.25f, 1.0f});
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.12f, 0.40f, 0.12f, 1.0f});
+                if (ImGui::Button("Start Capture", {-1, 0})) {
+                    if (!cap_cli.start_capture())
+                        status_msg = "Start failed: " + cap_cli.get_last_error();
+                    else {
+                        capturing  = true;
+                        status_msg = "Capture started";
+                    }
+                }
+                ImGui::PopStyleColor(3);
+                ImGui::EndDisabled();
+
+                ImGui::BeginDisabled(!server_connected || !capturing);
+                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.60f, 0.15f, 0.15f, 1.0f});
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.78f, 0.20f, 0.20f, 1.0f});
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.45f, 0.10f, 0.10f, 1.0f});
+                if (ImGui::Button("Stop Capture", {-1, 0})) {
+                    if (!cap_cli.stop_capture())
+                        status_msg = "Stop failed: " + cap_cli.get_last_error();
+                    else {
+                        capturing  = false;
+                        status_msg = "Capture stopped";
+                    }
+                }
+                ImGui::PopStyleColor(3);
+                ImGui::EndDisabled();
+            }
+            ImGui::EndChild();
+            ImGui::SameLine();
+        }
 
         const ImVec2 viewer_origin = ImGui::GetCursorScreenPos();
 
-        if (mode == app_mode::single || mode == app_mode::capture) {
+        if (use_single) {
             single_viewer.render("single_canvas", viewer_w, viewer_h);
         } else {
             compare.render(viewer_w, viewer_h);
@@ -769,7 +1126,7 @@ int main(int argc, char** argv) {
             ImGui::SetCursorScreenPos({viewer_origin.x + viewer_w + spacing_x, viewer_origin.y});
             ImGui::BeginChild("##pixel_panel", {panel_w, viewer_h}, ImGuiChildFlags_Borders);
 
-            if (mode == app_mode::single || mode == app_mode::capture) {
+            if (use_single) {
                 const auto& hi = single_viewer.get_hover_info();
                 if (!hi.valid) {
                     ImGui::TextDisabled("--");
@@ -800,7 +1157,10 @@ int main(int argc, char** argv) {
 
         // ----- Bottom profile panel -----
         if (show_profile_panel) {
-            ImGui::SetCursorScreenPos({viewer_origin.x, viewer_origin.y + viewer_h});
+            // Anchor to the left edge of the content region (not viewer_origin.x),
+            // so the panel spans the full width including the capture control panel.
+            const float content_left_x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
+            ImGui::SetCursorScreenPos({content_left_x, viewer_origin.y + viewer_h});
             const float avail_w = ImGui::GetContentRegionAvail().x;
             ImGui::BeginChild("##profile_bottom", {avail_w, profile_panel_h}, ImGuiChildFlags_Borders);
             const float graph_h = ImGui::GetContentRegionAvail().y;
@@ -808,29 +1168,8 @@ int main(int argc, char** argv) {
             const float graph_w = (ImGui::GetContentRegionAvail().x
                                    - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
 
-            // Compute visible image range from current view state.
-            int vis_x0 = -1, vis_x1 = -1, vis_y0 = -1, vis_y1 = -1;
-            {
-                const view_state* vs = nullptr;
-                const image_data* ref_img = nullptr;
-                if (mode == app_mode::single || mode == app_mode::capture) {
-                    vs      = &single_viewer.get_view_state();
-                    ref_img = &single_viewer.get_image_data();
-                } else {
-                    vs      = &compare.get_view_state();
-                    ref_img = &compare.get_left_image_data();
-                }
-                if (vs && ref_img && !ref_img->empty() && vs->zoom > 0.0f) {
-                    const float z = vs->zoom;
-                    vis_x0 = std::max(0, (int)(-vs->pan_x / z));
-                    vis_y0 = std::max(0, (int)(-vs->pan_y / z));
-                    vis_x1 = std::min(ref_img->width  - 1, (int)((-vs->pan_x + viewer_w) / z));
-                    vis_y1 = std::min(ref_img->height - 1, (int)((-vs->pan_y + viewer_h) / z));
-                }
-            }
-
-            if (mode == app_mode::single || mode == app_mode::capture) {
-                const auto& hi        = single_viewer.get_hover_info();
+            if (use_single) {
+                const auto& hi    = single_viewer.get_hover_info();
                 const image_data* img = &single_viewer.get_image_data();
                 const int cx = hi.valid ? hi.img_x : -1;
                 const int cy = hi.valid ? hi.img_y : -1;
@@ -923,5 +1262,6 @@ int main(int argc, char** argv) {
     ImGui::DestroyContext();
     glfwDestroyWindow(window);
     glfwTerminate();
+    NFD::Quit();
     return 0;
 }

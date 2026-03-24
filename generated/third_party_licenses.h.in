@@ -1,0 +1,2 @@
+#pragma once
+inline constexpr char kThirdPartyLicenses[] = R"LICENSES(@LICENSE_CONTENT@)LICENSES";
