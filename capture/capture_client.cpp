@@ -3,7 +3,6 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <fstream>
-#include <sstream>
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -52,23 +51,41 @@ bool capture_client::connect_server() {
         {"timeout_ms",      cfg_.timeout_ms},
     };
 
-    httplib::MultipartFormDataItems form;
-    form.push_back({"config", meta.dump(), "", "application/json"});
+    // Build multipart/form-data body manually for compatibility with all
+    // cpp-httplib versions (Put with MultipartFormDataItems is not universally available).
+    const std::string boundary = "----VisionStudioBoundary"
+                                 + std::to_string(cfg_.port);
+    std::string body;
 
-    // File parts: camera config files
+    // Part 1: JSON config
+    body += "--" + boundary + "\r\n";
+    body += "Content-Disposition: form-data; name=\"config\"\r\n";
+    body += "Content-Type: application/json\r\n\r\n";
+    body += meta.dump();
+    body += "\r\n";
+
+    // Part 2+: camera config files
     for (const auto& file_path : cfg_.config_files) {
         std::ifstream f(file_path, std::ios::binary);
         if (!f.is_open()) {
             set_error("connect_server: cannot open config file: " + file_path);
             return false;
         }
-        std::string content((std::istreambuf_iterator<char>(f)), {});
+        const std::string content((std::istreambuf_iterator<char>(f)), {});
         const auto sep   = file_path.find_last_of("/\\");
         const auto fname = sep == std::string::npos ? file_path : file_path.substr(sep + 1);
-        form.push_back({"camera_config", content, fname, "application/octet-stream"});
+        body += "--" + boundary + "\r\n";
+        body += "Content-Disposition: form-data; name=\"camera_config\""
+                "; filename=\"" + fname + "\"\r\n";
+        body += "Content-Type: application/octet-stream\r\n\r\n";
+        body += content;
+        body += "\r\n";
     }
 
-    auto res = cli.Put(cfg_.connect_path, form);
+    body += "--" + boundary + "--\r\n";
+
+    const std::string content_type = "multipart/form-data; boundary=" + boundary;
+    auto res = cli.Put(cfg_.connect_path, body, content_type.c_str());
     if (!res) {
         set_error("connect_server: connection failed");
         return false;
