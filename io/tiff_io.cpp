@@ -310,6 +310,104 @@ static bool read_tiles_generic(const std::string& path, TIFF* tif,
 }
 
 // ---------------------------------------------------------------------------
+// 16-bit grayscale paths: read raw uint16 data, auto-scale to 8-bit.
+// Required because TIFFReadRGBAStrip maps 16-bit values by v*255/65535,
+// which makes 12-bit camera data (0-4095) render as near-black (0-15).
+// ---------------------------------------------------------------------------
+
+static bool read_strips_gray16(const std::string& path, TIFF* tif,
+                                uint32_t w, uint32_t h,
+                                uint16_t photometric,
+                                image_data& out,
+                                std::atomic<float>* progress) {
+    (void)path; // uses the already-open tif handle
+    uint32_t rps = h;
+    TIFFGetFieldDefaulted(tif, TIFFTAG_ROWSPERSTRIP, &rps);
+    if (rps == 0) rps = h;
+    const uint32_t num_strips = TIFFNumberOfStrips(tif);
+    const tmsize_t sbytes     = TIFFStripSize(tif);
+
+    // Read all strips into a raw uint16 buffer.
+    std::vector<uint16_t> raw(static_cast<size_t>(w) * h, 0);
+    std::vector<uint8_t>  buf(static_cast<size_t>(sbytes));
+    for (uint32_t s = 0; s < num_strips; ++s) {
+        if (TIFFReadEncodedStrip(tif, s, buf.data(), sbytes) < 0) return false;
+        const uint32_t row0 = s * rps;
+        const uint32_t row1 = std::min(row0 + rps, h);
+        for (uint32_t r = row0; r < row1; ++r) {
+            const auto* src = reinterpret_cast<const uint16_t*>(buf.data()) + (r - row0) * w;
+            std::memcpy(raw.data() + r * w, src, w * sizeof(uint16_t));
+        }
+        if (progress) progress->store(static_cast<float>(s + 1) / num_strips * 0.8f);
+    }
+
+    // Find the actual maximum to auto-scale (handles 10/12/14/16-bit cameras).
+    uint16_t max_val = 1;
+    for (uint16_t v : raw) if (v > max_val) max_val = v;
+
+    const bool  invert = (photometric == PHOTOMETRIC_MINISWHITE);
+    const float scale  = 255.0f / static_cast<float>(max_val);
+    for (size_t i = 0; i < raw.size(); ++i) {
+        uint8_t v = static_cast<uint8_t>(static_cast<float>(raw[i]) * scale + 0.5f);
+        if (invert) v = static_cast<uint8_t>(255 - v);
+        out.pixels[i * 4 + 0] = v;
+        out.pixels[i * 4 + 1] = v;
+        out.pixels[i * 4 + 2] = v;
+        out.pixels[i * 4 + 3] = 255;
+    }
+    if (progress) progress->store(1.0f);
+    return true;
+}
+
+static bool read_tiles_gray16(const std::string& path, TIFF* tif,
+                               uint32_t w, uint32_t h,
+                               uint16_t photometric,
+                               image_data& out,
+                               std::atomic<float>* progress) {
+    (void)path;
+    uint32_t tile_w = 0, tile_h = 0;
+    TIFFGetField(tif, TIFFTAG_TILEWIDTH,  &tile_w);
+    TIFFGetField(tif, TIFFTAG_TILELENGTH, &tile_h);
+    if (tile_w == 0 || tile_h == 0) return false;
+
+    const uint32_t ntiles     = TIFFNumberOfTiles(tif);
+    const uint32_t tiles_x    = (w + tile_w - 1) / tile_w;
+    const tmsize_t tile_bytes = TIFFTileSize(tif);
+
+    std::vector<uint16_t> raw(static_cast<size_t>(w) * h, 0);
+    std::vector<uint8_t>  buf(static_cast<size_t>(tile_bytes));
+    for (uint32_t t = 0; t < ntiles; ++t) {
+        if (TIFFReadEncodedTile(tif, t, buf.data(), tile_bytes) < 0) return false;
+        const uint32_t tx     = (t % tiles_x) * tile_w;
+        const uint32_t ty     = (t / tiles_x) * tile_h;
+        const uint32_t copy_w = std::min(tile_w, w - tx);
+        const uint32_t copy_h = std::min(tile_h, h - ty);
+        for (uint32_t r = 0; r < copy_h; ++r) {
+            const auto* src = reinterpret_cast<const uint16_t*>(buf.data()) + r * tile_w;
+            uint16_t*   dst = raw.data() + (ty + r) * w + tx;
+            std::memcpy(dst, src, copy_w * sizeof(uint16_t));
+        }
+        if (progress) progress->store(static_cast<float>(t + 1) / ntiles * 0.8f);
+    }
+
+    uint16_t max_val = 1;
+    for (uint16_t v : raw) if (v > max_val) max_val = v;
+
+    const bool  invert = (photometric == PHOTOMETRIC_MINISWHITE);
+    const float scale  = 255.0f / static_cast<float>(max_val);
+    for (size_t i = 0; i < raw.size(); ++i) {
+        uint8_t v = static_cast<uint8_t>(static_cast<float>(raw[i]) * scale + 0.5f);
+        if (invert) v = static_cast<uint8_t>(255 - v);
+        out.pixels[i * 4 + 0] = v;
+        out.pixels[i * 4 + 1] = v;
+        out.pixels[i * 4 + 2] = v;
+        out.pixels[i * 4 + 3] = 255;
+    }
+    if (progress) progress->store(1.0f);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -354,6 +452,15 @@ bool read(const std::string& path, image_data& out, std::atomic<float>* progress
         ok = is_tiled
             ? read_tiles_8bit(path, tif, w, h, photometric, samples_per_pixel, out, progress)
             : read_strips_8bit(path, tif, w, h, photometric, samples_per_pixel, out, progress);
+    }
+
+    // 16-bit grayscale: read raw uint16 and auto-scale to 8-bit.
+    // Must run before the generic fallback because TIFFReadRGBAStrip maps 16-bit
+    // values with v*255/65535, turning 12-bit camera data (0-4095) into 0-15 (near black).
+    if (!ok && bits_per_sample == 16 && is_gray && samples_per_pixel == 1 && is_contig) {
+        ok = is_tiled
+            ? read_tiles_gray16(path, tif, w, h, photometric, out, progress)
+            : read_strips_gray16(path, tif, w, h, photometric, out, progress);
     }
 
     // Generic fallback: any format, any bit depth (1/2/4/16-bit, palette, CMYK, …)
