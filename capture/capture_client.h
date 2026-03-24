@@ -23,14 +23,15 @@ struct server_event {
 // ---------------------------------------------------------------------------
 // capture_client
 //
-// Single worker thread processes all commands sequentially.
+// Single worker thread.  All commands are processed in the worker loop.
+// The SSE content callback only parses events — no command logic inside it.
 //
-//   connect()        → push cmd::connect  → worker opens SSE GET (blocking)
-//   start_capture()  → push cmd::start    → processed in SSE content callback
-//   stop_capture()   → push cmd::stop     → processed in SSE content callback
-//   disconnect()     → push cmd::disconnect + sse_cli.stop()
-//                      → content callback returns false → GET returns
-//                      → worker posts /disconnect then exits loop
+// connect()       → push cmd::connect  → worker opens SSE GET (blocking)
+// start_capture() → push cmd::start   → sse_cli.stop() interrupts GET
+//                                        worker exits GET, executes POST /start,
+//                                        then reconnects SSE
+// stop_capture()  → push cmd::stop    → same as start (interrupt → POST → reconnect)
+// disconnect()    → push cmd::disconnect → interrupt → POST /disconnect → exit loop
 // ---------------------------------------------------------------------------
 class capture_client {
 public:
@@ -54,6 +55,7 @@ private:
     enum class cmd { connect, start_capture, stop_capture, disconnect };
 
     void worker_thread_func();
+    void run_sse(bool& disconnect_requested);
 
     bool do_connect_post();
     bool do_disconnect_post();
@@ -61,6 +63,7 @@ private:
     bool do_stop_post();
 
     void push_cmd(cmd c);
+    void interrupt_sse();   // stop SSE + notify cv
     void dispatch_event(const std::string& event_type, const std::string& data);
     void push_event(server_event ev);
     void set_error(std::string msg);
@@ -69,8 +72,6 @@ private:
 
     std::thread            worker_thread_;
 
-    // sse_cli_ptr_ lets disconnect() call stop() to interrupt a silent stream.
-    // httplib::Client::stop() is thread-safe.
     std::mutex       sse_cli_mtx_;
     httplib::Client* sse_cli_ptr_{nullptr};
 

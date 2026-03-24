@@ -27,10 +27,7 @@ capture_client::~capture_client() {
         shutdown_ = true;
     }
     cmd_cv_.notify_all();
-    {
-        std::lock_guard lock(sse_cli_mtx_);
-        if (sse_cli_ptr_) sse_cli_ptr_->stop();
-    }
+    interrupt_sse();
     if (worker_thread_.joinable()) worker_thread_.join();
 }
 
@@ -43,148 +40,172 @@ void capture_client::connect() {
     cmd_cv_.notify_one();
 }
 
+// All three below interrupt the blocking SSE GET so the worker loop
+// can dequeue the command immediately, without waiting for SSE data.
+
 void capture_client::disconnect() {
     push_cmd(cmd::disconnect);
-    cmd_cv_.notify_one();
-    // Also interrupt a silent SSE stream immediately.
-    std::lock_guard lock(sse_cli_mtx_);
-    if (sse_cli_ptr_) sse_cli_ptr_->stop();
+    interrupt_sse();
 }
 
 void capture_client::start_capture() {
     push_cmd(cmd::start_capture);
-    cmd_cv_.notify_one();
+    interrupt_sse();
 }
 
 void capture_client::stop_capture() {
     push_cmd(cmd::stop_capture);
+    interrupt_sse();
+}
+
+void capture_client::interrupt_sse() {
     cmd_cv_.notify_one();
+    std::lock_guard lock(sse_cli_mtx_);
+    if (sse_cli_ptr_) sse_cli_ptr_->stop();
 }
 
 // ---------------------------------------------------------------------------
 // Worker thread
 //
-// Waits for commands and processes them one by one.
-// cmd::connect opens a blocking SSE GET; while streaming, start/stop/disconnect
-// commands are drained inside the content callback (POST requests are fast).
+// Waits for cmd::connect, then enters an SSE loop.
+// Each time the SSE GET is interrupted (by start/stop/disconnect),
+// the worker falls through to the command-processing block,
+// executes the pending command, then reconnects SSE (unless disconnecting).
 // ---------------------------------------------------------------------------
 
 void capture_client::worker_thread_func() {
     while (true) {
-        cmd c;
+        // Wait for cmd::connect.  Other commands arriving before connect
+        // are discarded — they make no sense without an active connection.
         {
             std::unique_lock lock(cmd_mtx_);
             cmd_cv_.wait(lock, [&] {
                 return !cmd_queue_.empty() || shutdown_;
             });
-            if (shutdown_ && cmd_queue_.empty()) return;
-            c = cmd_queue_.front();
+            if (shutdown_) return;
+            const cmd c = cmd_queue_.front();
             cmd_queue_.pop_front();
+            if (c != cmd::connect) continue;
         }
 
-        // Only cmd::connect is meaningful at the top level.
-        // start/stop/disconnect are handled inside the SSE content callback.
-        if (c != cmd::connect) continue;
+        // SSE loop: open SSE, process any commands that interrupted it,
+        // reconnect until disconnect or error.
+        bool disconnect_requested = false;
+        while (!disconnect_requested && !shutdown_) {
+            run_sse(disconnect_requested);
+            if (disconnect_requested || shutdown_) break;
 
-        {
-            sse_state_.store(sse_state::connecting);
-
-            httplib::Client sse_cli(cfg_.host, cfg_.port);
-            sse_cli.set_read_timeout(0, 0);
-
+            // SSE was interrupted by a start/stop command (or a server error).
+            // Drain the command queue and execute each pending HTTP action.
+            bool reconnect = true;
             {
-                std::lock_guard lock(sse_cli_mtx_);
-                sse_cli_ptr_ = &sse_cli;
+                std::unique_lock lock(cmd_mtx_);
+                while (!cmd_queue_.empty()) {
+                    const cmd c = cmd_queue_.front();
+                    cmd_queue_.pop_front();
+                    lock.unlock();
+                    switch (c) {
+                    case cmd::start_capture:
+                        if (!do_start_post())
+                            push_event({server_event_type::error, {},
+                                        "start failed: " + get_last_error()});
+                        break;
+                    case cmd::stop_capture:
+                        if (!do_stop_post())
+                            push_event({server_event_type::error, {},
+                                        "stop failed: " + get_last_error()});
+                        break;
+                    case cmd::disconnect:
+                        disconnect_requested = true;
+                        reconnect = false;
+                        break;
+                    default:
+                        break;
+                    }
+                    lock.lock();
+                    if (disconnect_requested) break;
+                }
             }
 
-            std::string buf, cur_event, cur_data;
-            bool disconnect_requested = false;
-
-            sse_cli.Get(
-                cfg_.sse_path,
-                httplib::Headers{{"Accept", "text/event-stream"},
-                                 {"Cache-Control", "no-cache"}},
-
-                [&](const httplib::Response& r) -> bool {
-                    if (r.status < 200 || r.status >= 300) {
-                        set_error("SSE: HTTP " + std::to_string(r.status));
-                        sse_state_.store(sse_state::error);
-                        return false;
-                    }
-                    if (!do_connect_post()) {
-                        sse_state_.store(sse_state::error);
-                        return false;
-                    }
-                    sse_state_.store(sse_state::connected);
-                    return true;
-                },
-
-                [&](const char* data, size_t len) -> bool {
-                    // Parse incoming SSE lines.
-                    buf.append(data, len);
-                    size_t pos;
-                    while ((pos = buf.find('\n')) != std::string::npos) {
-                        std::string line = buf.substr(0, pos);
-                        buf.erase(0, pos + 1);
-                        if (!line.empty() && line.back() == '\r')
-                            line.pop_back();
-                        if (line.empty()) {
-                            if (!cur_event.empty() || !cur_data.empty()) {
-                                dispatch_event(cur_event, cur_data);
-                                cur_event.clear();
-                                cur_data.clear();
-                            }
-                        } else if (line.rfind("event:", 0) == 0) {
-                            cur_event = trim(line.substr(6));
-                        } else if (line.rfind("data:", 0) == 0) {
-                            cur_data = trim(line.substr(5));
-                        }
-                    }
-
-                    // Drain commands that arrived while streaming.
-                    // start/stop POSTs are fast; disconnect just sets a flag.
-                    cmd pending;
-                    while ([&] {
-                        std::lock_guard lock(cmd_mtx_);
-                        if (cmd_queue_.empty()) return false;
-                        pending = cmd_queue_.front();
-                        cmd_queue_.pop_front();
-                        return true;
-                    }()) {
-                        switch (pending) {
-                        case cmd::start_capture:
-                            if (!do_start_post())
-                                push_event({server_event_type::error, {},
-                                            "start failed: " + get_last_error()});
-                            break;
-                        case cmd::stop_capture:
-                            if (!do_stop_post())
-                                push_event({server_event_type::error, {},
-                                            "stop failed: " + get_last_error()});
-                            break;
-                        case cmd::disconnect:
-                            disconnect_requested = true;
-                            break;
-                        default:
-                            break;
-                        }
-                    }
-
-                    return !disconnect_requested && !shutdown_;
-                });
-
-            {
-                std::lock_guard lock(sse_cli_mtx_);
-                sse_cli_ptr_ = nullptr;
-            }
-
-            if (disconnect_requested)
+            if (disconnect_requested) {
                 do_disconnect_post();
-
-            if (sse_state_.load() == sse_state::connected)
-                sse_state_.store(sse_state::disconnected);
+            } else if (reconnect) {
+                // Re-open SSE so we can receive capture_done etc.
+                sse_state_.store(sse_state::connecting);
+            }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// run_sse
+//
+// Opens GET /events (blocking).  The content callback only parses SSE
+// events — no command logic.  Returns when the stream ends for any reason.
+// disconnect_requested is set if the server sent a "disconnected" event.
+// ---------------------------------------------------------------------------
+
+void capture_client::run_sse(bool& disconnect_requested) {
+    httplib::Client sse_cli(cfg_.host, cfg_.port);
+    sse_cli.set_read_timeout(0, 0);
+
+    {
+        std::lock_guard lock(sse_cli_mtx_);
+        sse_cli_ptr_ = &sse_cli;
+    }
+
+    std::string buf, cur_event, cur_data;
+
+    sse_cli.Get(
+        cfg_.sse_path,
+        httplib::Headers{{"Accept", "text/event-stream"},
+                         {"Cache-Control", "no-cache"}},
+
+        [&](const httplib::Response& r) -> bool {
+            if (r.status < 200 || r.status >= 300) {
+                set_error("SSE: HTTP " + std::to_string(r.status));
+                sse_state_.store(sse_state::error);
+                return false;
+            }
+            if (!do_connect_post()) {
+                sse_state_.store(sse_state::error);
+                return false;
+            }
+            sse_state_.store(sse_state::connected);
+            return true;
+        },
+
+        [&](const char* data, size_t len) -> bool {
+            buf.append(data, len);
+            size_t pos;
+            while ((pos = buf.find('\n')) != std::string::npos) {
+                std::string line = buf.substr(0, pos);
+                buf.erase(0, pos + 1);
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+
+                if (line.empty()) {
+                    if (!cur_event.empty() || !cur_data.empty()) {
+                        dispatch_event(cur_event, cur_data);
+                        cur_event.clear();
+                        cur_data.clear();
+                    }
+                } else if (line.rfind("event:", 0) == 0) {
+                    cur_event = trim(line.substr(6));
+                } else if (line.rfind("data:", 0) == 0) {
+                    cur_data = trim(line.substr(5));
+                }
+            }
+            // Keep going until externally interrupted via sse_cli.stop().
+            return !shutdown_;
+        });
+
+    {
+        std::lock_guard lock(sse_cli_mtx_);
+        sse_cli_ptr_ = nullptr;
+    }
+
+    if (sse_state_.load() == sse_state::connected)
+        sse_state_.store(sse_state::disconnected);
 }
 
 // ---------------------------------------------------------------------------
