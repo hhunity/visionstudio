@@ -82,9 +82,11 @@ void capture_client::worker_thread_func() {
             cmd_queue_.pop_front();
         }
 
-        switch (c) {
-        // ------------------------------------------------------------------
-        case cmd::connect: {
+        // Only cmd::connect is meaningful at the top level.
+        // start/stop/disconnect are handled inside the SSE content callback.
+        if (c != cmd::connect) continue;
+
+        {
             sse_state_.store(sse_state::connecting);
 
             httplib::Client sse_cli(cfg_.host, cfg_.port);
@@ -181,13 +183,6 @@ void capture_client::worker_thread_func() {
 
             if (sse_state_.load() == sse_state::connected)
                 sse_state_.store(sse_state::disconnected);
-            break;
-        }
-
-        // ------------------------------------------------------------------
-        // Commands that arrive before connect (or after disconnect) are ignored.
-        default:
-            break;
         }
     }
 }
