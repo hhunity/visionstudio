@@ -84,19 +84,29 @@ configure_file(
 )
 
 # ----- visionstudio: main application -----
-if(WIN32)
-    add_executable(visionstudio WIN32
-        api/main.cpp
+add_executable(visionstudio
+    api/main.cpp
+)
+target_link_libraries(visionstudio PRIVATE vs_gui vs_io vs_capture CLI11::CLI11 implot::implot)
+
+# ----- capture_cli: debug sandbox (opt-in, cmake -DBUILD_CAPTURE_CLI=ON) -----
+option(BUILD_CAPTURE_CLI "Build capture_cli debug sandbox" OFF)
+if(BUILD_CAPTURE_CLI)
+    add_executable(capture_cli
+        capture/capture_cli_main.cpp
     )
-else()
-    add_executable(visionstudio
-        api/main.cpp
+    target_link_libraries(capture_cli PRIVATE
+        vs_capture
+        CLI11::CLI11
     )
 endif()
-target_include_directories(visionstudio PRIVATE "${CMAKE_BINARY_DIR}")
-target_link_libraries(visionstudio PRIVATE vs_gui vs_io vs_capture CLI11::CLI11 implot::implot nfd::nfd)
 
-if(MSVC)
-    target_compile_definitions(visionstudio PRIVATE _CRT_SECURE_NO_WARNINGS)
-    target_compile_options(visionstudio PRIVATE /W3 /utf-8)
+if(WIN32)
+    set_target_properties(visionstudio PROPERTIES
+        WIN32_EXECUTABLE $<IF:$<CONFIG:Release>,TRUE,FALSE>
+    )
+    target_link_options(visionstudio PRIVATE
+        $<$<CONFIG:Debug>:/SUBSYSTEM:CONSOLE>
+        $<$<CONFIG:Release>:/SUBSYSTEM:WINDOWS>
+    )
 endif()

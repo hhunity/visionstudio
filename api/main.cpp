@@ -57,7 +57,8 @@ struct async_loader {
         auto* prog = &progress;
         future = std::async(std::launch::async, [p = std::move(p), prog]() {
             image_data img;
-            tiff_io::read(p, img, prog);
+            if (!tiff_io::read(p, img, prog))
+                img.pixels.clear(); // ensure empty() == true so caller knows load failed
             return img;
         });
     }
@@ -344,6 +345,9 @@ int main(int argc, char** argv) {
                          &overlays, &left_overlays, &right_overlays};
     glfwSetWindowUserPointer(window, &drop_state);
 
+    // In capture mode launched via CLI, connect automatically.
+    if (mode == app_mode::capture)
+        cap_cli.connect();
 
     // Apply diff flags from args (compare / split mode)
     if (mode == app_mode::compare || mode == app_mode::split) {
@@ -428,20 +432,23 @@ int main(int argc, char** argv) {
         {
             image_data tmp;
             if (left_loader.poll(tmp)) {
-                left_image = std::move(tmp);
-                switch (mode) {
-                case app_mode::single:
-                    single_viewer.load_image(left_image);
-                    break;
-                case app_mode::compare:
-                    compare.load_left(left_image);
-                    compare.left_label = left_loader.path;
-                    break;
-                case app_mode::split:
-                    compare.load_split(left_image);
-                    compare.left_label  = left_loader.path;
-                    compare.right_label = left_loader.path;
-                    break;
+                if (tmp.empty()) {
+                    status_msg = "Load failed: " + left_loader.path;
+                } else {
+                    left_image = std::move(tmp);
+                    switch (mode) {
+                    case app_mode::single:
+                        single_viewer.load_image(left_image);
+                        break;
+                    case app_mode::compare:
+                        compare.load_left(left_image);
+                        compare.left_label = left_loader.path;
+                        break;
+                    case app_mode::split:
+                        compare.load_split(left_image);
+                        compare.left_label  = left_loader.path;
+                        compare.right_label = left_loader.path;
+                        break;
                 case app_mode::capture:
                     if (capture_mode == 0) {
                         single_viewer.load_image(left_image);
@@ -454,17 +461,22 @@ int main(int argc, char** argv) {
                         compare.left_label = left_loader.path;
                     }
                     break;
-                default:
-                    break;
+                    default:
+                        break;
+                    }
+                    if (!right_loader.active)
+                        status_msg = "Loaded: " + left_loader.path;
                 }
-                if (!right_loader.active)
-                    status_msg = "Loaded: " + left_loader.path;
             }
             if (right_loader.poll(tmp)) {
-                right_image = std::move(tmp);
-                compare.load_right(right_image);
-                compare.right_label = right_loader.path;
-                status_msg          = "Loaded";
+                if (tmp.empty()) {
+                    status_msg = "Load failed: " + right_loader.path;
+                } else {
+                    right_image = std::move(tmp);
+                    compare.load_right(right_image);
+                    compare.right_label = right_loader.path;
+                    status_msg          = "Loaded";
+                }
             }
         }
 
@@ -474,7 +486,6 @@ int main(int argc, char** argv) {
                 switch (ev->type) {
                 case server_event_type::disconnected:
                     server_connected = false;
-                    cap_cli.stop_sse();
                     status_msg = "Server disconnected";
                     break;
                 case server_event_type::error:
@@ -534,6 +545,13 @@ int main(int argc, char** argv) {
                     ImGui::MenuItem("Show Overlays",  nullptr, &single_viewer.show_overlays);
                     ImGui::MenuItem("Show Tooltip",   nullptr, &single_viewer.show_coordinates);
                     ImGui::MenuItem("Show Crosshair", nullptr, &single_viewer.show_crosshair);
+                    if (single_viewer.show_minimap) {
+                        ImGui::Separator();
+                        ImGui::SetNextItemWidth(160.0f);
+                        ImGui::SliderFloat("Minimap Aspect##ms", &single_viewer.minimap_force_aspect, 0.0f, 10.0f, "%.1f");
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("0 = image aspect  >0 = forced W/H ratio");
+                    }
                     if (single_viewer.show_grid) {
                         ImGui::Separator();
                         ImGui::SliderInt("Grid Spacing##s", &single_viewer.grid_spacing, 1, 500);
@@ -545,6 +563,13 @@ int main(int argc, char** argv) {
                     ImGui::MenuItem("Show Tooltip",   nullptr, &compare.show_coordinates);
                     ImGui::MenuItem("Show Crosshair", nullptr, &compare.show_crosshair);
                     ImGui::MenuItem("Sync Views",     nullptr, &compare.sync_views);
+                    if (compare.show_minimap) {
+                        ImGui::Separator();
+                        ImGui::SetNextItemWidth(160.0f);
+                        ImGui::SliderFloat("Minimap Aspect##mc", &compare.minimap_force_aspect, 0.0f, 10.0f, "%.1f");
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("0 = image aspect  >0 = forced W/H ratio");
+                    }
                     if (mode == app_mode::split && compare.is_split()) {
                         ImGui::Separator();
                         ImGui::SetNextItemWidth(200.0f);
@@ -1022,13 +1047,13 @@ int main(int argc, char** argv) {
         struct series_entry { const image_data* img; ImU32 color; int cursor; };
 
         // draw_profile: renders a luminance profile using ImPlot.
-        //   plot_id : unique ImPlot ID string (use "##..." to hide title)
-        //   is_x    : true = horizontal scan at row `fixed`, false = vertical at col `fixed`
-        //   compact : true = suppress axis labels / Y tick labels (for small pixel panel)
+        //   vis_min/vis_max : when >= 0, the visible-range data is stretched across
+        //                     the full X axis and overlaid in yellow so you can compare
+        //                     detail against the overall shape.
         auto draw_profile = [&](const char* plot_id, bool is_x, int fixed,
                                 std::initializer_list<series_entry> series,
-                                float gw, float gh, bool compact) {
-            // Determine total number of pixels along the profile axis.
+                                float gw, float gh,
+                                int vis_min = -1, int vis_max = -1) {
             int total = 0;
             for (const auto& s : series) {
                 if (s.img && !s.img->empty()) {
@@ -1037,22 +1062,21 @@ int main(int argc, char** argv) {
                 }
             }
 
+            const bool has_vis = vis_min >= 0 && vis_max > vis_min;
+
             const ImPlotFlags plot_flags =
                 ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect | ImPlotFlags_NoMouseText;
-            // Always hide tick labels to maximise plot area; grid lines are kept.
             constexpr ImPlotAxisFlags kAxFlags =
                 ImPlotAxisFlags_NoLabel | ImPlotAxisFlags_NoTickLabels;
 
             if (ImPlot::BeginPlot(plot_id, {gw, gh}, plot_flags)) {
                 ImPlot::SetupAxes(nullptr, nullptr, kAxFlags, kAxFlags);
-                ImPlot::SetupAxisLimits(ImAxis_X1, 0, total > 1 ? total - 1 : 1,
-                                        ImGuiCond_Always);
+                ImPlot::SetupAxisLimits(ImAxis_X1, 0, total > 1 ? total - 1 : 1, ImGuiCond_Always);
                 ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 255, ImGuiCond_Always);
 
                 int sidx = 0;
                 for (const auto& s : series) {
                     if (!s.img || s.img->empty() || fixed < 0 || total <= 0) { ++sidx; continue; }
-                    // Build float luminance array using this series' own size.
                     const int n = is_x ? s.img->width : s.img->height;
                     std::vector<float> ys(n);
                     for (int i = 0; i < n; ++i) {
@@ -1060,10 +1084,28 @@ int main(int argc, char** argv) {
                                              : s.img->pixel_at(fixed, i);
                         ys[i] = 0.299f * px[0] + 0.587f * px[1] + 0.114f * px[2];
                     }
-                    // Each series needs a unique label so ImPlot treats them separately.
+
+                    // Full-range line.
                     char lbl[16]; snprintf(lbl, sizeof(lbl), "##lum%d", sidx);
-                    ImPlot::SetNextLineStyle(ImGui::ColorConvertU32ToFloat4(s.color), 1.5f);
+                    ImPlot::SetNextLineStyle(ImGui::ColorConvertU32ToFloat4(s.color), 1.0f);
                     ImPlot::PlotLine(lbl, ys.data(), n);
+
+                    // Visible-range stretched overlay: extract vis slice and
+                    // scale its x positions to span 0..total-1 (same axis).
+                    if (has_vis) {
+                        const int v0 = std::max(0, vis_min);
+                        const int v1 = std::min(n - 1, vis_max);
+                        const int m  = v1 - v0 + 1;
+                        if (m > 1) {
+                            std::vector<float> vis_ys(ys.begin() + v0, ys.begin() + v1 + 1);
+                            // xscale maps m points to span [0 .. total-1].
+                            const double xscale = static_cast<double>(total - 1) / (m - 1);
+                            char vlbl[16]; snprintf(vlbl, sizeof(vlbl), "##vis%d", sidx);
+                            ImPlot::SetNextLineStyle(
+                                ImGui::ColorConvertU32ToFloat4(IM_COL32(255, 220, 60, 200)), 1.5f);
+                            ImPlot::PlotLine(vlbl, vis_ys.data(), m, xscale, 0.0);
+                        }
+                    }
 
                     // Cursor: vertical red line at hover position.
                     if (s.cursor >= 0 && s.cursor < n) {
@@ -1122,37 +1164,31 @@ int main(int argc, char** argv) {
             const float avail_w = ImGui::GetContentRegionAvail().x;
             ImGui::BeginChild("##profile_bottom", {avail_w, profile_panel_h}, ImGuiChildFlags_Borders);
             const float graph_h = ImGui::GetContentRegionAvail().y;
-            const float graph_w = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+            // 4 plots: [X full] [X zoomed] [Y full] [Y zoomed]
+            const float graph_w = (ImGui::GetContentRegionAvail().x
+                                   - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
 
             if (use_single) {
                 const auto& hi    = single_viewer.get_hover_info();
                 const image_data* img = &single_viewer.get_image_data();
                 const int cx = hi.valid ? hi.img_x : -1;
                 const int cy = hi.valid ? hi.img_y : -1;
-                ImGui::BeginGroup();
-                draw_profile("X Profile##xprof_btm", true,  cy, {{img, IM_COL32(80, 200, 255, 220), cx}}, graph_w, graph_h, false);
-                ImGui::EndGroup();
+                draw_profile("X Profile##xprof", true,  cy, {{img, IM_COL32(80, 200, 255, 220), cx}}, graph_w, graph_h, vis_x0, vis_x1);
                 ImGui::SameLine();
-                ImGui::BeginGroup();
-                draw_profile("Y Profile##yprof_btm", false, cx, {{img, IM_COL32(80, 200, 255, 220), cy}}, graph_w, graph_h, false);
-                ImGui::EndGroup();
+                draw_profile("Y Profile##yprof", false, cx, {{img, IM_COL32(80, 200, 255, 220), cy}}, graph_w, graph_h, vis_y0, vis_y1);
             } else {
                 const auto& hi    = compare.get_hover_info();
                 const image_data* li = &compare.get_left_image_data();
                 const image_data* ri = &compare.get_right_image_data();
                 const int cx = hi.valid ? hi.img_x : -1;
                 const int cy = hi.valid ? hi.img_y : -1;
-                ImGui::BeginGroup();
-                draw_profile("X Profile##xprof_btm", true,  cy,
+                draw_profile("X Profile##xprof", true,  cy,
                     {{li, IM_COL32(80, 200, 255, 220), cx},
-                     {ri, IM_COL32(255, 160,  60, 220), cx}}, graph_w, graph_h, false);
-                ImGui::EndGroup();
+                     {ri, IM_COL32(255, 160,  60, 220), cx}}, graph_w, graph_h, vis_x0, vis_x1);
                 ImGui::SameLine();
-                ImGui::BeginGroup();
-                draw_profile("Y Profile##yprof_btm", false, cx,
+                draw_profile("Y Profile##yprof", false, cx,
                     {{li, IM_COL32(80, 200, 255, 220), cy},
-                     {ri, IM_COL32(255, 160,  60, 220), cy}}, graph_w, graph_h, false);
-                ImGui::EndGroup();
+                     {ri, IM_COL32(255, 160,  60, 220), cy}}, graph_w, graph_h, vis_y0, vis_y1);
             }
 
             ImGui::EndChild();

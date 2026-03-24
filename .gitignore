@@ -9,6 +9,9 @@
 /build/
 /out/
 
+# CMake user presets (machine-specific)
+CMakeUserPresets.json
+
 # CMake generated
 CMakeCache.txt
 CMakeFiles/
