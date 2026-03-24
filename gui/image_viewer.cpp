@@ -333,11 +333,16 @@ void image_viewer::draw_minimap(ImDrawList* dl, const ImVec2& canvas_pos,
     constexpr float max_h  = 120.0f;
     constexpr float margin =   8.0f;
 
-    // Preserve image aspect ratio within the max bounds.
+    // Determine effective aspect ratio for the minimap box.
+    // When minimap_force_aspect > 0, use it instead of the image's natural aspect.
     const float aspect = static_cast<float>(img_w_) / static_cast<float>(img_h_);
+    const float eff_aspect = (minimap_force_aspect > 0.0f) ? minimap_force_aspect : aspect;
     float mw, mh;
-    if (aspect >= max_w / max_h) { mw = max_w; mh = max_w / aspect; }
-    else                          { mh = max_h; mw = max_h * aspect; }
+    if (eff_aspect >= max_w / max_h) { mw = max_w; mh = max_w / eff_aspect; }
+    else                              { mh = max_h; mw = max_h * eff_aspect; }
+    // Guard against degenerate sizes.
+    if (mw < 4.0f) mw = 4.0f;
+    if (mh < 4.0f) mh = 4.0f;
 
     // Top-right corner of canvas.
     const float mx = canvas_pos.x + canvas_size.x - mw - margin;

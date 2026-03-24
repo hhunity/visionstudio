@@ -42,9 +42,10 @@ static void expand_strip_rows(const uint8_t* strip_buf, uint8_t* out_pixels,
     for (uint32_t r = row0; r < row1; ++r) {
         uint8_t* dst = out_pixels + r * w * 4;
         if (is_gray) {
+            const bool invert = (photometric == PHOTOMETRIC_MINISWHITE);
             const uint8_t* src = strip_buf + (r - row0) * w;
             for (uint32_t x = 0; x < w; ++x) {
-                const uint8_t v = src[x];
+                const uint8_t v = invert ? static_cast<uint8_t>(255 - src[x]) : src[x];
                 dst[x*4+0] = v; dst[x*4+1] = v;
                 dst[x*4+2] = v; dst[x*4+3] = 255;
             }
@@ -123,9 +124,10 @@ static void expand_tile_rows(const uint8_t* tile_buf, uint8_t* out_pixels,
     for (uint32_t r = 0; r < copy_h; ++r) {
         uint8_t* dst = out_pixels + (ty + r) * img_w * 4 + tx * 4;
         if (is_gray) {
+            const bool invert = (photometric == PHOTOMETRIC_MINISWHITE);
             const uint8_t* src = tile_buf + r * tile_w;
             for (uint32_t x = 0; x < copy_w; ++x) {
-                const uint8_t v = src[x];
+                const uint8_t v = invert ? static_cast<uint8_t>(255 - src[x]) : src[x];
                 dst[x*4+0] = v; dst[x*4+1] = v;
                 dst[x*4+2] = v; dst[x*4+3] = 255;
             }

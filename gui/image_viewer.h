@@ -72,12 +72,16 @@ public:
     void clear_overlays();
 
     // Display options
-    bool show_grid        = false;
-    int  grid_spacing     = 100;   // spacing in image-space pixels
-    bool show_coordinates = false;
-    bool show_minimap     = true;
-    bool show_overlays    = true;
-    bool show_crosshair   = false;
+    bool  show_grid           = false;
+    int   grid_spacing        = 100;   // spacing in image-space pixels
+    bool  show_coordinates    = false;
+    bool  show_minimap        = true;
+    bool  show_overlays       = true;
+    bool  show_crosshair      = false;
+    // Minimap aspect ratio override: 0 = preserve image aspect; >0 = force this W/H ratio.
+    // Useful for very elongated images (e.g. line-scan) where the natural minimap
+    // becomes too thin to be useful.
+    float minimap_force_aspect = 0.0f;
 
 private:
     void create_texture(const image_data& img);

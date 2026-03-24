@@ -41,13 +41,14 @@ public:
     // width/height of 0 means "fill available space".
     void render(float width, float height);
 
-    bool        show_grid        = false;
-    int         grid_spacing     = 100;
-    bool        show_coordinates = false;
-    bool        show_minimap     = true;
-    bool        show_overlays    = true;
-    bool        show_crosshair   = false;
-    bool        sync_views       = true;
+    bool        show_grid             = false;
+    int         grid_spacing          = 100;
+    bool        show_coordinates      = false;
+    bool        show_minimap          = true;
+    bool        show_overlays         = true;
+    bool        show_crosshair        = false;
+    float       minimap_force_aspect  = 0.0f;
+    bool        sync_views            = true;
     bool        diff_mode        = false;  // right panel shows |left - right|
     float       diff_amplify     = 1.0f;   // multiply diff values to enhance subtle differences
     int         split_x          = 0;      // split position in pixels; only used in split mode

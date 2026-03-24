@@ -476,6 +476,13 @@ int main(int argc, char** argv) {
                     ImGui::MenuItem("Show Overlays",  nullptr, &single_viewer.show_overlays);
                     ImGui::MenuItem("Show Tooltip",   nullptr, &single_viewer.show_coordinates);
                     ImGui::MenuItem("Show Crosshair", nullptr, &single_viewer.show_crosshair);
+                    if (single_viewer.show_minimap) {
+                        ImGui::Separator();
+                        ImGui::SetNextItemWidth(160.0f);
+                        ImGui::SliderFloat("Minimap Aspect##ms", &single_viewer.minimap_force_aspect, 0.0f, 10.0f, "%.1f");
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("0 = image aspect  >0 = forced W/H ratio");
+                    }
                     if (single_viewer.show_grid) {
                         ImGui::Separator();
                         ImGui::SliderInt("Grid Spacing##s", &single_viewer.grid_spacing, 1, 500);
@@ -487,6 +494,13 @@ int main(int argc, char** argv) {
                     ImGui::MenuItem("Show Tooltip",   nullptr, &compare.show_coordinates);
                     ImGui::MenuItem("Show Crosshair", nullptr, &compare.show_crosshair);
                     ImGui::MenuItem("Sync Views",     nullptr, &compare.sync_views);
+                    if (compare.show_minimap) {
+                        ImGui::Separator();
+                        ImGui::SetNextItemWidth(160.0f);
+                        ImGui::SliderFloat("Minimap Aspect##mc", &compare.minimap_force_aspect, 0.0f, 10.0f, "%.1f");
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("0 = image aspect  >0 = forced W/H ratio");
+                    }
                     if (mode == app_mode::split && compare.is_split()) {
                         ImGui::Separator();
                         ImGui::SetNextItemWidth(200.0f);
