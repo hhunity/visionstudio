@@ -1,147 +1,145 @@
-// Debug CLI tool for capture HTTP server communication.
+// Sandbox CLI for capture_client.
+// Exercises the real capture_client library so you can test server communication
+// without launching the full GUI.
 //
 // Usage:
-//   capture_cli post <path> [--host HOST] [--port PORT]
-//   capture_cli sse          [--host HOST] [--port PORT]
+//   capture_cli [--host HOST] [--port PORT] <command>
+//
+// Commands (executed in order, multiple allowed):
+//   connect      - connect() + wait for SSE connected
+//   start        - start_capture()
+//   stop         - stop_capture()
+//   disconnect   - disconnect()
+//   wait <ms>    - sleep for N milliseconds
 //
 // Examples:
-//   capture_cli post /connect
-//   capture_cli post /start --host 192.168.1.10 --port 9090
-//   capture_cli sse
-//   capture_cli sse --port 9090
+//   capture_cli connect start wait 3000 stop disconnect
+//   capture_cli --port 9090 connect
 
 #include <CLI/CLI.hpp>
-#include <httplib.h>
+#include <chrono>
 #include <iostream>
 #include <string>
+#include <thread>
+#include <vector>
 
-static void run_post(const std::string& host, int port, const std::string& path,
-                     const std::string& body, const std::string& content_type) {
-    const std::string url = host + ":" + std::to_string(port) + path;
-    std::cout << "POST " << url << "\n";
-    if (!body.empty())
-        std::cout << "body: " << body << "\n";
+#include "capture/capture_client.h"
+#include "capture/capture_config.h"
 
-    httplib::Client cli(host, port);
-    cli.set_connection_timeout(5, 0);
-    cli.set_read_timeout(5, 0);
-
-    httplib::Result res;
-    if (body.empty())
-        res = cli.Post(path);
-    else
-        res = cli.Post(path, body, content_type);
-
-    if (!res) {
-        std::cerr << "-> (no response / connection error)\n";
-        return;
+// Poll events from the client and print them.  Returns true if a "done" event
+// (disconnected / error) arrived.
+static bool drain_events(capture_client& client) {
+    bool done = false;
+    while (auto ev = client.poll_server_event()) {
+        switch (ev->type) {
+        case server_event_type::connected:
+            std::cout << "[event] connected\n";
+            break;
+        case server_event_type::disconnected:
+            std::cout << "[event] disconnected\n";
+            done = true;
+            break;
+        case server_event_type::error:
+            std::cout << "[event] error: " << ev->message << "\n";
+            done = true;
+            break;
+        case server_event_type::capture_done:
+            std::cout << "[event] capture_done  path=" << ev->path << "\n";
+            break;
+        }
     }
-    std::cout << "-> " << res->status << "\n";
-    if (!res->body.empty())
-        std::cout << "body:\n" << res->body << "\n";
+    return done;
 }
 
-static void run_sse(const std::string& host, int port, const std::string& path) {
-    const std::string url = host + ":" + std::to_string(port) + path;
-    std::cout << "GET " << url << " (SSE stream, Ctrl-C to stop)\n";
-
-    httplib::Client cli(host, port);
-    cli.set_read_timeout(0, 0); // no timeout for streaming
-
-    std::string buf;
-
-    cli.Get(
-        path,
-        httplib::Headers{{"Accept",        "text/event-stream"},
-                         {"Cache-Control", "no-cache"},
-                         {"Connection",    "keep-alive"}},
-
-        [&](const httplib::Response& r) -> bool {
-            std::cout << "-> " << r.status << "\n";
-            if (r.status < 200 || r.status >= 300) {
-                std::cerr << "error: HTTP " << r.status << "\n";
-                return false;
-            }
-            std::cout << "stream open\n";
-            return true;
-        },
-
-        [&](const char* data, size_t len) -> bool {
-            const std::string chunk(data, len);
-            std::cout << "raw << " << chunk;
-            if (!chunk.empty() && chunk.back() != '\n')
-                std::cout << "\n";
-            std::cout.flush();
-
-            buf.append(chunk);
-            size_t pos;
-            std::string cur_event, cur_data;
-            while ((pos = buf.find('\n')) != std::string::npos) {
-                std::string line = buf.substr(0, pos);
-                buf.erase(0, pos + 1);
-                if (!line.empty() && line.back() == '\r') line.pop_back();
-
-                if (line.empty()) {
-                    if (!cur_event.empty() || !cur_data.empty()) {
-                        std::cout << "[event] event=" << cur_event
-                                  << "  data=" << cur_data << "\n";
-                        cur_event.clear();
-                        cur_data.clear();
-                    }
-                } else if (line.rfind("event:", 0) == 0) {
-                    cur_event = line.substr(6);
-                    if (!cur_event.empty() && cur_event.front() == ' ')
-                        cur_event.erase(0, 1);
-                } else if (line.rfind("data:", 0) == 0) {
-                    cur_data = line.substr(5);
-                    if (!cur_data.empty() && cur_data.front() == ' ')
-                        cur_data.erase(0, 1);
-                }
-            }
-            return true;
-        });
-
-    std::cout << "stream closed\n";
+// Wait until sse_state reaches connected (or error), printing events as they arrive.
+static bool wait_connected(capture_client& client, int timeout_ms = 10000) {
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+        drain_events(client);
+        const auto state = client.get_sse_state();
+        if (state == sse_state::connected) return true;
+        if (state == sse_state::error) {
+            std::cerr << "error: " << client.get_last_error() << "\n";
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    std::cerr << "timeout waiting for connected\n";
+    return false;
 }
 
 int main(int argc, char** argv) {
-    CLI::App app{"capture_cli - debug HTTP client for capture server"};
-    app.require_subcommand(1);
+    CLI::App app{"capture_cli - sandbox for capture_client library"};
 
-    // ---------- post ----------
-    auto* post_cmd = app.add_subcommand("post", "Send POST to a path");
+    std::string host = "localhost";
+    int         port = 8080;
+    std::vector<std::string> cmds;
 
-    std::string post_host = "localhost";
-    int         post_port = 8080;
-    std::string post_path = "/connect";
-    std::string post_body;
-    std::string post_ct = "application/json";
-
-    post_cmd->add_option("path", post_path, "URL path, e.g. /start")->required();
-    post_cmd->add_option("--host", post_host, "Server host")->default_str("localhost");
-    post_cmd->add_option("--port", post_port, "Server port")->default_str("8080");
-    post_cmd->add_option("--body,-b", post_body, "Request body (optional)");
-    post_cmd->add_option("--content-type,-c", post_ct, "Content-Type")->default_str("application/json");
-
-    post_cmd->callback([&] {
-        run_post(post_host, post_port, post_path, post_body, post_ct);
-    });
-
-    // ---------- sse ----------
-    auto* sse_cmd = app.add_subcommand("sse", "Connect to SSE stream");
-
-    std::string sse_host = "localhost";
-    int         sse_port = 8080;
-    std::string sse_path = "/events";
-
-    sse_cmd->add_option("--host", sse_host, "Server host")->default_str("localhost");
-    sse_cmd->add_option("--port", sse_port, "Server port")->default_str("8080");
-    sse_cmd->add_option("--path", sse_path, "SSE path")->default_str("/events");
-
-    sse_cmd->callback([&] {
-        run_sse(sse_host, sse_port, sse_path);
-    });
+    app.add_option("--host", host, "Server host")->default_str("localhost");
+    app.add_option("--port", port, "Server port")->default_str("8080");
+    app.add_option("commands", cmds, "Commands: connect start stop disconnect wait <ms>")
+        ->required();
 
     CLI11_PARSE(app, argc, argv);
+
+    capture_config cfg;
+    cfg.host = host;
+    cfg.port = port;
+
+    capture_client client(cfg);
+    client.set_logger([](const std::string& msg) {
+        std::cout << msg << "\n";
+    });
+
+    for (size_t i = 0; i < cmds.size(); ++i) {
+        const auto& cmd = cmds[i];
+
+        if (cmd == "connect") {
+            std::cout << ">> connect\n";
+            client.connect();
+            wait_connected(client);
+
+        } else if (cmd == "start") {
+            std::cout << ">> start_capture\n";
+            client.start_capture();
+            drain_events(client);
+
+        } else if (cmd == "stop") {
+            std::cout << ">> stop_capture\n";
+            client.stop_capture();
+            drain_events(client);
+
+        } else if (cmd == "disconnect") {
+            std::cout << ">> disconnect\n";
+            client.disconnect();
+            // drain until disconnected or error
+            for (int t = 0; t < 100; ++t) {
+                if (drain_events(client)) break;
+                const auto s = client.get_sse_state();
+                if (s == sse_state::disconnected || s == sse_state::error) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+
+        } else if (cmd == "wait") {
+            if (i + 1 >= cmds.size()) {
+                std::cerr << "wait requires a millisecond argument\n";
+                return 1;
+            }
+            const int ms = std::stoi(cmds[++i]);
+            std::cout << ">> wait " << ms << "ms\n";
+            const auto deadline =
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+            while (std::chrono::steady_clock::now() < deadline) {
+                drain_events(client);
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+
+        } else {
+            std::cerr << "unknown command: " << cmd << "\n";
+            return 1;
+        }
+    }
+
     return 0;
 }

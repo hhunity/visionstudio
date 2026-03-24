@@ -77,9 +77,8 @@ add_executable(capture_cli
     capture/capture_cli_main.cpp
 )
 target_link_libraries(capture_cli PRIVATE
-    httplib::httplib
+    vs_capture
     CLI11::CLI11
-    Threads::Threads
 )
 
 if(WIN32)
