@@ -2,6 +2,7 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <fstream>
 #include <sstream>
 
 // ---------------------------------------------------------------------------
@@ -38,7 +39,36 @@ bool capture_client::connect_server() {
                                (cfg_.timeout_ms % 1000) * 1000);
     cli.set_read_timeout(cfg_.timeout_ms / 1000,
                          (cfg_.timeout_ms % 1000) * 1000);
-    auto res = cli.Post(cfg_.connect_path);
+
+    // JSON part: connection metadata
+    const nlohmann::json meta = {
+        {"host",            cfg_.host},
+        {"port",            cfg_.port},
+        {"connect_path",    cfg_.connect_path},
+        {"start_path",      cfg_.start_path},
+        {"stop_path",       cfg_.stop_path},
+        {"disconnect_path", cfg_.disconnect_path},
+        {"sse_path",        cfg_.sse_path},
+        {"timeout_ms",      cfg_.timeout_ms},
+    };
+
+    httplib::MultipartFormDataItems form;
+    form.push_back({"config", meta.dump(), "", "application/json"});
+
+    // File parts: camera config files
+    for (const auto& file_path : cfg_.config_files) {
+        std::ifstream f(file_path, std::ios::binary);
+        if (!f.is_open()) {
+            set_error("connect_server: cannot open config file: " + file_path);
+            return false;
+        }
+        std::string content((std::istreambuf_iterator<char>(f)), {});
+        const auto sep   = file_path.find_last_of("/\\");
+        const auto fname = sep == std::string::npos ? file_path : file_path.substr(sep + 1);
+        form.push_back({"camera_config", content, fname, "application/octet-stream"});
+    }
+
+    auto res = cli.Put(cfg_.connect_path, form);
     if (!res) {
         set_error("connect_server: connection failed");
         return false;

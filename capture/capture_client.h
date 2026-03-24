@@ -25,7 +25,8 @@ public:
     capture_client(const capture_client&)            = delete;
     capture_client& operator=(const capture_client&) = delete;
 
-    // Send POST to connect / disconnect endpoint. Returns true on HTTP 2xx.
+    // Send PUT (multipart/form-data) to connect endpoint with JSON config and
+    // camera config files, or POST to disconnect endpoint. Returns true on HTTP 2xx.
     bool connect_server();
     bool disconnect_server();
 
