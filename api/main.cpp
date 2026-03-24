@@ -725,11 +725,6 @@ int main(int argc, char** argv) {
                 }
             }
 
-            // Dim helper: keep RGB, replace alpha.
-            auto with_alpha = [](ImU32 col, uint8_t a) -> ImU32 {
-                return (col & 0x00FFFFFFu) | (static_cast<ImU32>(a) << 24);
-            };
-
             const bool has_vis = vis_min >= 0 && vis_max >= vis_min;
 
             const ImPlotFlags plot_flags =
@@ -754,20 +749,19 @@ int main(int argc, char** argv) {
                         ys[i] = 0.299f * px[0] + 0.587f * px[1] + 0.114f * px[2];
                     }
 
-                    // Full-range line: dim when visible overlay is present.
+                    // Full-range line: always drawn in original color (not dimmed).
                     char lbl[16]; snprintf(lbl, sizeof(lbl), "##lum%d", sidx);
-                    const ImU32 dim_col = has_vis ? with_alpha(s.color, 55) : s.color;
-                    ImPlot::SetNextLineStyle(ImGui::ColorConvertU32ToFloat4(dim_col), 1.0f);
+                    ImPlot::SetNextLineStyle(ImGui::ColorConvertU32ToFloat4(s.color), 1.0f);
                     ImPlot::PlotLine(lbl, ys.data(), n);
 
-                    // Visible-range overlay: original color, slightly thicker.
+                    // Visible-range overlay: yellow, slightly thicker.
                     if (has_vis) {
                         const int v0 = std::max(0, vis_min);
                         const int v1 = std::min(n - 1, vis_max);
                         if (v0 <= v1) {
                             char vlbl[16]; snprintf(vlbl, sizeof(vlbl), "##vis%d", sidx);
                             ImPlot::SetNextLineStyle(
-                                ImGui::ColorConvertU32ToFloat4(s.color), 2.0f);
+                                ImGui::ColorConvertU32ToFloat4(IM_COL32(255, 220, 0, 230)), 2.5f);
                             ImPlot::PlotLine(vlbl, ys.data() + v0, v1 - v0 + 1, 1.0, v0);
                         }
                     }
