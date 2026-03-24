@@ -579,6 +579,7 @@ int main(int argc, char** argv) {
                         ImGui::SetNextItemWidth(200.0f);
                         ImGui::SliderInt("Split##sp", &compare.split_x,
                                          1, compare.split_src_width() - 1);
+                        compare.split_dragging = ImGui::IsItemActive();
                     }
                     ImGui::Separator();
                     if (ImGui::MenuItem("Diff Mode", nullptr, &compare.diff_mode))
