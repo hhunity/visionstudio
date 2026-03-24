@@ -72,47 +72,36 @@ void capture_client::interrupt_sse() {
 
 void capture_client::worker_thread_func() {
     while (true) {
-        {
-            std::unique_lock lock(cmd_mtx_);
-            cmd_cv_.wait(lock, [&] { return !cmd_queue_.empty() || shutdown_; });
-            if (shutdown_) return;
-            const cmd c = cmd_queue_.front();
-            cmd_queue_.pop_front();
-            if (c != cmd::connect) continue;
-        }
+        std::unique_lock lock(cmd_mtx_);
+        cmd_cv_.wait(lock, [&] { return !cmd_queue_.empty() || shutdown_; });
+        if (shutdown_) return;
 
-        bool disconnect_requested = false;
-        while (!disconnect_requested && !shutdown_) {
+        const cmd c = cmd_queue_.front();
+        cmd_queue_.pop_front();
+        lock.unlock();
+
+        const sse_state state = sse_state_.load();
+
+        switch (c) {
+        case cmd::connect:
+            if (state != sse_state::disconnected) break; // already connected
             run_sse();
-            if (shutdown_) break;
-
-            std::unique_lock lock(cmd_mtx_);
-            while (!cmd_queue_.empty()) {
-                const cmd c = cmd_queue_.front();
-                cmd_queue_.pop_front();
-                lock.unlock();
-                switch (c) {
-                case cmd::start_capture:
-                    if (!do_simple_post(cfg_.start_path, "start"))
-                        push_event({server_event_type::error, {}, get_last_error()});
-                    break;
-                case cmd::stop_capture:
-                    if (!do_simple_post(cfg_.stop_path, "stop"))
-                        push_event({server_event_type::error, {}, get_last_error()});
-                    break;
-                case cmd::disconnect:
-                    disconnect_requested = true;
-                    break;
-                default:
-                    break;
-                }
-                lock.lock();
-                if (disconnect_requested) break;
-            }
-        }
-
-        if (disconnect_requested)
+            break;
+        case cmd::start_capture:
+            if (state != sse_state::connected) break;
+            if (!do_simple_post(cfg_.start_path, "start"))
+                push_event({server_event_type::error, {}, get_last_error()});
+            break;
+        case cmd::stop_capture:
+            if (state != sse_state::connected) break;
+            if (!do_simple_post(cfg_.stop_path, "stop"))
+                push_event({server_event_type::error, {}, get_last_error()});
+            break;
+        case cmd::disconnect:
+            if (state == sse_state::disconnected) break;
             do_simple_post(cfg_.disconnect_path, "disconnect");
+            break;
+        }
     }
 }
 
