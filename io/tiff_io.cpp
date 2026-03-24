@@ -385,8 +385,15 @@ bool read(const std::string& path, image_data& out, std::atomic<float>* progress
             : read_strips_generic(path, tif, w, h, out, progress);
     }
 
-    if (!ok)
+    if (!ok) {
         fprintf(stderr, "tiff_io::read: failed to decode '%s'\n", path.c_str());
+    } else {
+        const uint8_t* p = out.pixels.data();
+        // Print first 4 pixel RGBA values to verify data is non-zero
+        fprintf(stderr, "[tiff_io] pixels[0..3] RGBA: (%u,%u,%u,%u) (%u,%u,%u,%u) (%u,%u,%u,%u) (%u,%u,%u,%u)\n",
+                p[0],p[1],p[2],p[3], p[4],p[5],p[6],p[7],
+                p[8],p[9],p[10],p[11], p[12],p[13],p[14],p[15]);
+    }
 
     TIFFClose(tif);
     return ok;
