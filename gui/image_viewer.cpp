@@ -35,36 +35,18 @@ void image_viewer::unload_image() {
 // ---------------------------------------------------------------------------
 
 void image_viewer::create_texture(const image_data& img) {
-    const size_t data_size = static_cast<size_t>(img.width) * img.height * 4;
-
-    // Upload pixel data to a PBO first so the CPU→GPU DMA can proceed
-    // asynchronously while the rest of the frame is processed.
-    GLuint pbo = 0;
-    glGenBuffers(1, &pbo);
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo);
-    glBufferData(GL_PIXEL_UNPACK_BUFFER,
-                 static_cast<GLsizeiptr>(data_size),
-                 img.pixels.data(), GL_STREAM_DRAW);
-
-    // Create the texture and initiate the PBO→texture transfer.
-    // Passing nullptr as the pixel pointer tells GL to read from the bound PBO.
-    // This call returns immediately; the GPU performs the copy in the background.
     GLuint tex = 0;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST); // crisp pixels when zoomed in
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
                  img.width, img.height, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE, nullptr); // nullptr = use bound PBO
-
-    // Unbind and delete the PBO.  OpenGL keeps the underlying storage alive
-    // until the pending GPU copy completes, so this is safe.
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-    glDeleteBuffers(1, &pbo);
-
+                 GL_RGBA, GL_UNSIGNED_BYTE, img.pixels.data());
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4); // restore default
     glBindTexture(GL_TEXTURE_2D, 0);
     texture_id_ = static_cast<uint32_t>(tex);
 }
