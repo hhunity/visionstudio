@@ -4,10 +4,6 @@
 #include <algorithm>
 #include <fstream>
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 static std::string trim(const std::string& s) {
     auto is_ws = [](unsigned char c) {
         return c == ' ' || c == '\t' || c == '\r' || c == '\n';
@@ -21,75 +17,73 @@ static std::string trim(const std::string& s) {
 // capture_client
 // ---------------------------------------------------------------------------
 
-capture_client::capture_client(capture_config cfg)
-    : cfg_(std::move(cfg)) {}
+capture_client::capture_client(capture_config cfg) : cfg_(std::move(cfg)) {}
 
 capture_client::~capture_client() {
+    // Wake cmd_thread and interrupt SSE Get so both threads exit cleanly.
     stop_flag_.store(true);
-    if (worker_thread_.joinable()) worker_thread_.join();
+    cmd_cv_.notify_all();
+    {
+        std::lock_guard lock(sse_cli_mtx_);
+        if (sse_cli_ptr_) sse_cli_ptr_->stop();
+    }
+    if (cmd_thread_.joinable()) cmd_thread_.join();
+    if (sse_thread_.joinable()) sse_thread_.join();
 }
 
 // ---------------------------------------------------------------------------
-// Public API  (called from UI thread — only enqueue, never block on HTTP)
+// Public API  (UI thread — never blocks on HTTP)
 // ---------------------------------------------------------------------------
 
 void capture_client::connect() {
-    if (worker_thread_.joinable()) return; // already running
+    if (sse_thread_.joinable()) return;
     stop_flag_.store(false);
     sse_state_.store(sse_state::connecting);
-    worker_thread_ = std::thread(&capture_client::worker_thread_func, this);
+    cmd_thread_ = std::thread(&capture_client::cmd_thread_func, this);
+    sse_thread_ = std::thread(&capture_client::sse_thread_func, this);
 }
 
 void capture_client::disconnect() {
     push_cmd(cmd::disconnect);
-    // Interrupt the blocking GET /events immediately so the worker thread
-    // drains the command queue and posts /disconnect without waiting for
-    // the next SSE data chunk.  httplib::Client::stop() is thread-safe.
-    std::lock_guard lock(sse_cli_mtx_);
-    if (sse_cli_ptr_) sse_cli_ptr_->stop();
+    cmd_cv_.notify_one();
 }
 
-void capture_client::start_capture() { push_cmd(cmd::start_capture); }
-void capture_client::stop_capture()  { push_cmd(cmd::stop_capture);  }
+void capture_client::start_capture() {
+    push_cmd(cmd::start_capture);
+    cmd_cv_.notify_one();
+}
+
+void capture_client::stop_capture() {
+    push_cmd(cmd::stop_capture);
+    cmd_cv_.notify_one();
+}
 
 // ---------------------------------------------------------------------------
-// Worker thread
-//
-// All HTTP calls happen here, in this order:
-//   1. GET /events  (open SSE stream)
-//   2. PUT /connect (once SSE headers are confirmed)
-//   3. Loop: parse SSE events + drain command queue (start / stop)
-//   4. On disconnect command (or stop_flag_): exit content loop
-//   5. POST /disconnect
+// SSE thread — GET /events only, no command processing
 // ---------------------------------------------------------------------------
 
-void capture_client::worker_thread_func() {
+void capture_client::sse_thread_func() {
     httplib::Client sse_cli(cfg_.host, cfg_.port);
-    sse_cli.set_read_timeout(0, 0); // no timeout — streaming
+    sse_cli.set_read_timeout(0, 0);
 
     {
         std::lock_guard lock(sse_cli_mtx_);
         sse_cli_ptr_ = &sse_cli;
     }
 
-    std::string buf;
-    std::string cur_event;
-    std::string cur_data;
-    bool        disconnect_requested = false;
+    std::string buf, cur_event, cur_data;
 
-    auto res = sse_cli.Get(
+    sse_cli.Get(
         cfg_.sse_path,
         httplib::Headers{{"Accept", "text/event-stream"},
                          {"Cache-Control", "no-cache"}},
 
-        // ---- response-header callback: called once when server replies ----
-        [&](const httplib::Response& response) -> bool {
-            if (response.status < 200 || response.status >= 300) {
-                set_error("SSE: HTTP " + std::to_string(response.status));
+        [&](const httplib::Response& r) -> bool {
+            if (r.status < 200 || r.status >= 300) {
+                set_error("SSE: HTTP " + std::to_string(r.status));
                 sse_state_.store(sse_state::error);
                 return false;
             }
-            // SSE stream confirmed; POST /connect on the same thread.
             if (!do_connect_post()) {
                 sse_state_.store(sse_state::error);
                 return false;
@@ -98,9 +92,7 @@ void capture_client::worker_thread_func() {
             return true;
         },
 
-        // ---- content callback: called for every incoming SSE chunk --------
         [&](const char* data, size_t len) -> bool {
-            // Parse SSE lines.
             buf.append(data, len);
             size_t pos;
             while ((pos = buf.find('\n')) != std::string::npos) {
@@ -120,28 +112,7 @@ void capture_client::worker_thread_func() {
                     cur_data = trim(line.substr(5));
                 }
             }
-
-            // Drain command queue — all HTTP calls stay on this thread.
-            cmd c;
-            while (pop_cmd(c)) {
-                switch (c) {
-                case cmd::start_capture:
-                    if (!do_start_post())
-                        push_event({server_event_type::error, {},
-                                    "start failed: " + get_last_error()});
-                    break;
-                case cmd::stop_capture:
-                    if (!do_stop_post())
-                        push_event({server_event_type::error, {},
-                                    "stop failed: " + get_last_error()});
-                    break;
-                case cmd::disconnect:
-                    disconnect_requested = true;
-                    break;
-                }
-            }
-
-            return !disconnect_requested && !stop_flag_.load();
+            return !stop_flag_.load();
         });
 
     {
@@ -149,27 +120,60 @@ void capture_client::worker_thread_func() {
         sse_cli_ptr_ = nullptr;
     }
 
-    // Drain any commands that arrived while GET was interrupted
-    // (e.g. disconnect() called when server was silent).
-    cmd c;
-    while (pop_cmd(c)) {
-        if (c == cmd::disconnect) disconnect_requested = true;
-        // start/stop commands after disconnect are ignored
-    }
+    // Wake cmd_thread so it can exit (covers server-crash case).
+    stop_flag_.store(true);
+    cmd_cv_.notify_all();
 
-    if (disconnect_requested)
-        do_disconnect_post();
-
-    if (!res && sse_state_.load() != sse_state::error) {
-        set_error("SSE: connection failed");
-        sse_state_.store(sse_state::error);
-    } else if (sse_state_.load() == sse_state::connected) {
+    if (sse_state_.load() == sse_state::connected)
         sse_state_.store(sse_state::disconnected);
+    // sse_state::error is already set in the callbacks above.
+}
+
+// ---------------------------------------------------------------------------
+// Command thread — start / stop / disconnect
+// ---------------------------------------------------------------------------
+
+void capture_client::cmd_thread_func() {
+    while (true) {
+        cmd c;
+        {
+            std::unique_lock lock(cmd_mtx_);
+            cmd_cv_.wait(lock, [&] {
+                return !cmd_queue_.empty() || stop_flag_.load();
+            });
+            if (cmd_queue_.empty()) return; // stop_flag_ set, no pending cmds
+            c = cmd_queue_.front();
+            cmd_queue_.pop_front();
+        }
+
+        switch (c) {
+        case cmd::start_capture:
+            if (!do_start_post())
+                push_event({server_event_type::error, {},
+                            "start failed: " + get_last_error()});
+            break;
+
+        case cmd::stop_capture:
+            if (!do_stop_post())
+                push_event({server_event_type::error, {},
+                            "stop failed: " + get_last_error()});
+            break;
+
+        case cmd::disconnect:
+            do_disconnect_post();
+            // Stop SSE thread after /disconnect is confirmed.
+            stop_flag_.store(true);
+            {
+                std::lock_guard lock(sse_cli_mtx_);
+                if (sse_cli_ptr_) sse_cli_ptr_->stop();
+            }
+            return; // cmd_thread exits
+        }
     }
 }
 
 // ---------------------------------------------------------------------------
-// HTTP helpers — called from worker thread only
+// HTTP helpers
 // ---------------------------------------------------------------------------
 
 bool capture_client::do_connect_post() {
@@ -208,7 +212,8 @@ bool capture_client::do_connect_post() {
         }
         const std::string content((std::istreambuf_iterator<char>(f)), {});
         const auto sep   = file_path.find_last_of("/\\");
-        const auto fname = sep == std::string::npos ? file_path : file_path.substr(sep + 1);
+        const auto fname = sep == std::string::npos ? file_path
+                                                    : file_path.substr(sep + 1);
         body += "--" + boundary + "\r\n";
         body += "Content-Disposition: form-data; name=\"camera_config\""
                 "; filename=\"" + fname + "\"\r\n";
@@ -220,38 +225,56 @@ bool capture_client::do_connect_post() {
 
     const std::string ct = "multipart/form-data; boundary=" + boundary;
     auto res = cli.Put(cfg_.connect_path, body, ct.c_str());
-    if (!res)                                        { set_error("connect: PUT failed"); return false; }
-    if (res->status < 200 || res->status >= 300) { set_error("connect: HTTP " + std::to_string(res->status)); return false; }
+    if (!res) { set_error("connect: PUT failed"); return false; }
+    if (res->status < 200 || res->status >= 300) {
+        set_error("connect: HTTP " + std::to_string(res->status));
+        return false;
+    }
     return true;
 }
 
 bool capture_client::do_disconnect_post() {
     httplib::Client cli(cfg_.host, cfg_.port);
-    cli.set_connection_timeout(cfg_.timeout_ms / 1000, (cfg_.timeout_ms % 1000) * 1000);
-    cli.set_read_timeout(cfg_.timeout_ms / 1000, (cfg_.timeout_ms % 1000) * 1000);
+    cli.set_connection_timeout(cfg_.timeout_ms / 1000,
+                               (cfg_.timeout_ms % 1000) * 1000);
+    cli.set_read_timeout(cfg_.timeout_ms / 1000,
+                         (cfg_.timeout_ms % 1000) * 1000);
     auto res = cli.Post(cfg_.disconnect_path);
-    if (!res)                                        { set_error("disconnect: failed"); return false; }
-    if (res->status < 200 || res->status >= 300) { set_error("disconnect: HTTP " + std::to_string(res->status)); return false; }
+    if (!res) { set_error("disconnect: failed"); return false; }
+    if (res->status < 200 || res->status >= 300) {
+        set_error("disconnect: HTTP " + std::to_string(res->status));
+        return false;
+    }
     return true;
 }
 
 bool capture_client::do_start_post() {
     httplib::Client cli(cfg_.host, cfg_.port);
-    cli.set_connection_timeout(cfg_.timeout_ms / 1000, (cfg_.timeout_ms % 1000) * 1000);
-    cli.set_read_timeout(cfg_.timeout_ms / 1000, (cfg_.timeout_ms % 1000) * 1000);
+    cli.set_connection_timeout(cfg_.timeout_ms / 1000,
+                               (cfg_.timeout_ms % 1000) * 1000);
+    cli.set_read_timeout(cfg_.timeout_ms / 1000,
+                         (cfg_.timeout_ms % 1000) * 1000);
     auto res = cli.Post(cfg_.start_path);
-    if (!res)                                        { set_error("start: failed"); return false; }
-    if (res->status < 200 || res->status >= 300) { set_error("start: HTTP " + std::to_string(res->status)); return false; }
+    if (!res) { set_error("start: failed"); return false; }
+    if (res->status < 200 || res->status >= 300) {
+        set_error("start: HTTP " + std::to_string(res->status));
+        return false;
+    }
     return true;
 }
 
 bool capture_client::do_stop_post() {
     httplib::Client cli(cfg_.host, cfg_.port);
-    cli.set_connection_timeout(cfg_.timeout_ms / 1000, (cfg_.timeout_ms % 1000) * 1000);
-    cli.set_read_timeout(cfg_.timeout_ms / 1000, (cfg_.timeout_ms % 1000) * 1000);
+    cli.set_connection_timeout(cfg_.timeout_ms / 1000,
+                               (cfg_.timeout_ms % 1000) * 1000);
+    cli.set_read_timeout(cfg_.timeout_ms / 1000,
+                         (cfg_.timeout_ms % 1000) * 1000);
     auto res = cli.Post(cfg_.stop_path);
-    if (!res)                                        { set_error("stop: failed"); return false; }
-    if (res->status < 200 || res->status >= 300) { set_error("stop: HTTP " + std::to_string(res->status)); return false; }
+    if (!res) { set_error("stop: failed"); return false; }
+    if (res->status < 200 || res->status >= 300) {
+        set_error("stop: HTTP " + std::to_string(res->status));
+        return false;
+    }
     return true;
 }
 
@@ -268,7 +291,7 @@ void capture_client::dispatch_event(const std::string& event_type,
     } else if (event_type == "error") {
         std::string msg;
         try {
-            const auto j = nlohmann::json::parse(data);
+            auto j = nlohmann::json::parse(data);
             if (j.contains("message") && j["message"].is_string())
                 msg = j["message"].get<std::string>();
         } catch (...) {}
@@ -276,7 +299,7 @@ void capture_client::dispatch_event(const std::string& event_type,
     } else if (event_type == "capture_done") {
         std::string path;
         try {
-            const auto j = nlohmann::json::parse(data);
+            auto j = nlohmann::json::parse(data);
             if (j.contains("path") && j["path"].is_string())
                 path = j["path"].get<std::string>();
         } catch (...) {}
@@ -292,14 +315,6 @@ void capture_client::dispatch_event(const std::string& event_type,
 void capture_client::push_cmd(cmd c) {
     std::lock_guard lock(cmd_mtx_);
     cmd_queue_.push_back(c);
-}
-
-bool capture_client::pop_cmd(cmd& out) {
-    std::lock_guard lock(cmd_mtx_);
-    if (cmd_queue_.empty()) return false;
-    out = cmd_queue_.front();
-    cmd_queue_.pop_front();
-    return true;
 }
 
 void capture_client::push_event(server_event ev) {
