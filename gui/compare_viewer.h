@@ -27,6 +27,9 @@ public:
     const image_data& get_left_image_data()  const;
     const image_data& get_right_image_data() const;
 
+    // View state access for visible-range profiles.
+    const view_state& get_view_state() const { return shared_state_; }
+
     // Combined hover info for the pixel panel (same data as the tooltip).
     struct combined_hover_info {
         bool                   valid      = false;

@@ -677,7 +677,7 @@ int main(int argc, char** argv) {
 
         // ----- Viewer area -----
         const float status_h        = ImGui::GetFrameHeightWithSpacing();
-        const float profile_panel_h = show_profile_panel ? 180.0f : 0.0f;
+        const float profile_panel_h = show_profile_panel ? 340.0f : 0.0f;
         const float viewer_h        = ImGui::GetContentRegionAvail().y - status_h - profile_panel_h;
         constexpr float panel_w = 240.0f;
         const float spacing_x = ImGui::GetStyle().ItemSpacing.x;
@@ -706,12 +706,15 @@ int main(int argc, char** argv) {
         struct series_entry { const image_data* img; ImU32 color; int cursor; };
 
         // draw_profile: renders a luminance profile using ImPlot.
-        //   plot_id : unique ImPlot ID string (use "##..." to hide title)
-        //   is_x    : true = horizontal scan at row `fixed`, false = vertical at col `fixed`
-        //   compact : true = suppress axis labels / Y tick labels (for small pixel panel)
+        //   plot_id   : unique ImPlot ID string (use "##..." to hide title)
+        //   is_x      : true = horizontal scan at row `fixed`, false = vertical at col `fixed`
+        //   compact   : true = suppress axis labels / Y tick labels (for small pixel panel)
+        //   range_min : first pixel to display (-1 = start of image)
+        //   range_max : last pixel to display  (-1 = end of image)
         auto draw_profile = [&](const char* plot_id, bool is_x, int fixed,
                                 std::initializer_list<series_entry> series,
-                                float gw, float gh, bool compact) {
+                                float gw, float gh, bool compact,
+                                int range_min = -1, int range_max = -1) {
             // Determine total number of pixels along the profile axis.
             int total = 0;
             for (const auto& s : series) {
@@ -721,6 +724,9 @@ int main(int argc, char** argv) {
                 }
             }
 
+            const double x_min = range_min >= 0 ? range_min : 0;
+            const double x_max = range_max >= 0 ? range_max : (total > 1 ? total - 1 : 1);
+
             const ImPlotFlags plot_flags =
                 ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect | ImPlotFlags_NoMouseText;
             // Always hide tick labels to maximise plot area; grid lines are kept.
@@ -729,8 +735,7 @@ int main(int argc, char** argv) {
 
             if (ImPlot::BeginPlot(plot_id, {gw, gh}, plot_flags)) {
                 ImPlot::SetupAxes(nullptr, nullptr, kAxFlags, kAxFlags);
-                ImPlot::SetupAxisLimits(ImAxis_X1, 0, total > 1 ? total - 1 : 1,
-                                        ImGuiCond_Always);
+                ImPlot::SetupAxisLimits(ImAxis_X1, x_min, x_max, ImGuiCond_Always);
                 ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 255, ImGuiCond_Always);
 
                 int sidx = 0;
@@ -802,20 +807,54 @@ int main(int argc, char** argv) {
             ImGui::SetCursorScreenPos({viewer_origin.x, viewer_origin.y + viewer_h});
             const float avail_w = ImGui::GetContentRegionAvail().x;
             ImGui::BeginChild("##profile_bottom", {avail_w, profile_panel_h}, ImGuiChildFlags_Borders);
-            const float graph_h = ImGui::GetContentRegionAvail().y;
-            const float graph_w = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+            const float row_h   = (ImGui::GetContentRegionAvail().y
+                                   - ImGui::GetStyle().ItemSpacing.y) * 0.5f;
+            const float graph_w = (ImGui::GetContentRegionAvail().x
+                                   - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+
+            // Compute visible image range from current view state.
+            int vis_x0 = 0, vis_x1 = -1, vis_y0 = 0, vis_y1 = -1;
+            {
+                const view_state* vs = nullptr;
+                const image_data* ref_img = nullptr;
+                if (mode == app_mode::single || mode == app_mode::capture) {
+                    vs      = &single_viewer.get_view_state();
+                    ref_img = &single_viewer.get_image_data();
+                } else {
+                    vs      = &compare.get_view_state();
+                    ref_img = &compare.get_left_image_data();
+                }
+                if (vs && ref_img && !ref_img->empty() && vs->zoom > 0.0f) {
+                    const float z = vs->zoom;
+                    vis_x0 = std::max(0, (int)(-vs->pan_x / z));
+                    vis_y0 = std::max(0, (int)(-vs->pan_y / z));
+                    vis_x1 = std::min(ref_img->width  - 1, (int)((-vs->pan_x + viewer_w) / z));
+                    vis_y1 = std::min(ref_img->height - 1, (int)((-vs->pan_y + viewer_h) / z));
+                }
+            }
 
             if (mode == app_mode::single || mode == app_mode::capture) {
                 const auto& hi    = single_viewer.get_hover_info();
                 const image_data* img = &single_viewer.get_image_data();
                 const int cx = hi.valid ? hi.img_x : -1;
                 const int cy = hi.valid ? hi.img_y : -1;
+
+                // Row 1: full-image profiles
                 ImGui::BeginGroup();
-                draw_profile("X Profile##xprof_btm", true,  cy, {{img, IM_COL32(80, 200, 255, 220), cx}}, graph_w, graph_h, false);
+                draw_profile("X Profile (Full)##xprof_full", true,  cy, {{img, IM_COL32(80, 200, 255, 220), cx}}, graph_w, row_h, false);
                 ImGui::EndGroup();
                 ImGui::SameLine();
                 ImGui::BeginGroup();
-                draw_profile("Y Profile##yprof_btm", false, cx, {{img, IM_COL32(80, 200, 255, 220), cy}}, graph_w, graph_h, false);
+                draw_profile("Y Profile (Full)##yprof_full", false, cx, {{img, IM_COL32(80, 200, 255, 220), cy}}, graph_w, row_h, false);
+                ImGui::EndGroup();
+
+                // Row 2: visible-range profiles
+                ImGui::BeginGroup();
+                draw_profile("X Profile (Visible)##xprof_vis", true,  cy, {{img, IM_COL32(80, 200, 255, 220), cx}}, graph_w, row_h, false, vis_x0, vis_x1);
+                ImGui::EndGroup();
+                ImGui::SameLine();
+                ImGui::BeginGroup();
+                draw_profile("Y Profile (Visible)##yprof_vis", false, cx, {{img, IM_COL32(80, 200, 255, 220), cy}}, graph_w, row_h, false, vis_y0, vis_y1);
                 ImGui::EndGroup();
             } else {
                 const auto& hi    = compare.get_hover_info();
@@ -823,16 +862,31 @@ int main(int argc, char** argv) {
                 const image_data* ri = &compare.get_right_image_data();
                 const int cx = hi.valid ? hi.img_x : -1;
                 const int cy = hi.valid ? hi.img_y : -1;
+
+                // Row 1: full-image profiles
                 ImGui::BeginGroup();
-                draw_profile("X Profile##xprof_btm", true,  cy,
+                draw_profile("X Profile (Full)##xprof_full", true,  cy,
                     {{li, IM_COL32(80, 200, 255, 220), cx},
-                     {ri, IM_COL32(255, 160,  60, 220), cx}}, graph_w, graph_h, false);
+                     {ri, IM_COL32(255, 160,  60, 220), cx}}, graph_w, row_h, false);
                 ImGui::EndGroup();
                 ImGui::SameLine();
                 ImGui::BeginGroup();
-                draw_profile("Y Profile##yprof_btm", false, cx,
+                draw_profile("Y Profile (Full)##yprof_full", false, cx,
                     {{li, IM_COL32(80, 200, 255, 220), cy},
-                     {ri, IM_COL32(255, 160,  60, 220), cy}}, graph_w, graph_h, false);
+                     {ri, IM_COL32(255, 160,  60, 220), cy}}, graph_w, row_h, false);
+                ImGui::EndGroup();
+
+                // Row 2: visible-range profiles
+                ImGui::BeginGroup();
+                draw_profile("X Profile (Visible)##xprof_vis", true,  cy,
+                    {{li, IM_COL32(80, 200, 255, 220), cx},
+                     {ri, IM_COL32(255, 160,  60, 220), cx}}, graph_w, row_h, false, vis_x0, vis_x1);
+                ImGui::EndGroup();
+                ImGui::SameLine();
+                ImGui::BeginGroup();
+                draw_profile("Y Profile (Visible)##yprof_vis", false, cx,
+                    {{li, IM_COL32(80, 200, 255, 220), cy},
+                     {ri, IM_COL32(255, 160,  60, 220), cy}}, graph_w, row_h, false, vis_y0, vis_y1);
                 ImGui::EndGroup();
             }
 
