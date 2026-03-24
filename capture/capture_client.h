@@ -1,11 +1,13 @@
 #pragma once
 #include <atomic>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
 #include <vector>
+#include <httplib.h>
 #include "capture/capture_config.h"
 
 enum class sse_state { disconnected, connecting, connected, error };
@@ -73,6 +75,12 @@ private:
     std::thread               worker_thread_;
     std::atomic<bool>         stop_flag_{false};
     std::atomic<sse_state>    sse_state_{sse_state::disconnected};
+
+    // Raw pointer to the SSE client — set once before Get(), cleared after.
+    // disconnect() calls stop() on it to interrupt the blocking Get()
+    // from the UI thread. httplib::Client::stop() is thread-safe.
+    std::mutex                sse_cli_mtx_;
+    httplib::Client*          sse_cli_ptr_{nullptr};
 
     mutable std::mutex        cmd_mtx_;
     std::deque<cmd>           cmd_queue_;

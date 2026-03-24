@@ -42,7 +42,11 @@ void capture_client::connect() {
 
 void capture_client::disconnect() {
     push_cmd(cmd::disconnect);
-    stop_flag_.store(true); // interrupt SSE read if no data is flowing
+    // Interrupt the blocking GET /events immediately so the worker thread
+    // drains the command queue and posts /disconnect without waiting for
+    // the next SSE data chunk.  httplib::Client::stop() is thread-safe.
+    std::lock_guard lock(sse_cli_mtx_);
+    if (sse_cli_ptr_) sse_cli_ptr_->stop();
 }
 
 void capture_client::start_capture() { push_cmd(cmd::start_capture); }
@@ -62,6 +66,11 @@ void capture_client::stop_capture()  { push_cmd(cmd::stop_capture);  }
 void capture_client::worker_thread_func() {
     httplib::Client sse_cli(cfg_.host, cfg_.port);
     sse_cli.set_read_timeout(0, 0); // no timeout — streaming
+
+    {
+        std::lock_guard lock(sse_cli_mtx_);
+        sse_cli_ptr_ = &sse_cli;
+    }
 
     std::string buf;
     std::string cur_event;
@@ -135,7 +144,19 @@ void capture_client::worker_thread_func() {
             return !disconnect_requested && !stop_flag_.load();
         });
 
-    // POST /disconnect after the SSE loop ends (normal disconnect path).
+    {
+        std::lock_guard lock(sse_cli_mtx_);
+        sse_cli_ptr_ = nullptr;
+    }
+
+    // Drain any commands that arrived while GET was interrupted
+    // (e.g. disconnect() called when server was silent).
+    cmd c;
+    while (pop_cmd(c)) {
+        if (c == cmd::disconnect) disconnect_requested = true;
+        // start/stop commands after disconnect are ignored
+    }
+
     if (disconnect_requested)
         do_disconnect_post();
 
