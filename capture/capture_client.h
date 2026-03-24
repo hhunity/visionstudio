@@ -55,8 +55,6 @@ private:
     void push_cmd(cmd c);
     void interrupt_sse();
     void dispatch_event(const std::string& event_type, const std::string& data);
-    // Download TIFF from url to a temp file. Returns local path, or empty on failure.
-    std::string download_capture(const std::string& url);
     void push_event(server_event ev);
     void set_error(std::string msg);
     void log(const std::string& msg) const;

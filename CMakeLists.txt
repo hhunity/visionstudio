@@ -87,7 +87,8 @@ configure_file(
 add_executable(visionstudio
     api/main.cpp
 )
-target_link_libraries(visionstudio PRIVATE vs_gui vs_io vs_capture CLI11::CLI11 implot::implot)
+target_include_directories(visionstudio PRIVATE ${CMAKE_BINARY_DIR})
+target_link_libraries(visionstudio PRIVATE vs_gui vs_io vs_capture CLI11::CLI11 implot::implot nfd::nfd)
 
 # ----- capture_cli: debug sandbox (opt-in, cmake -DBUILD_CAPTURE_CLI=ON) -----
 option(BUILD_CAPTURE_CLI "Build capture_cli debug sandbox" OFF)

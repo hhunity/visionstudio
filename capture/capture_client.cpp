@@ -142,7 +142,7 @@ void capture_client::worker_thread_func() {
 
 void capture_client::run_sse() {
     httplib::Client sse_cli(cfg_.host, cfg_.port);
-    sse_cli.set_read_timeout(0, 0);
+    sse_cli.set_read_timeout(3600, 0); // no timeout for SSE stream
 
     {
         std::lock_guard lock(sse_cli_mtx_);
@@ -258,7 +258,7 @@ bool capture_client::do_connect_post() {
     body += meta.dump();
     body += "\r\n";
 
-    for (const auto& file_path : cfg_.config_files) {
+    for (const auto& file_path : cfg_.connect_config_files) {
         std::ifstream f(file_path, std::ios::binary);
         if (!f.is_open()) {
             set_error("connect: cannot open config file: " + file_path);
@@ -331,9 +331,7 @@ void capture_client::dispatch_event(const std::string& event_type,
         return {};
     };
 
-    if (event_type == "connected") {
-        push_event({server_event_type::connected, {}, {}});
-    } else if (event_type == "disconnected") {
+    if (event_type == "disconnected") {
         push_event({server_event_type::disconnected, {}, {}});
     } else if (event_type == "error") {
         push_event({server_event_type::error, {}, get_field("message")});

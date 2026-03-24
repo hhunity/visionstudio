@@ -56,13 +56,12 @@ class Handler(BaseHTTPRequestHandler):
 
         elif self.path == "/stop":
             self._send_json(200, {"status": "ok"})
-            url = f"http://127.0.0.1:{server_port}/capture/latest"
             threading.Timer(
                 0.5,
                 broadcast_event,
-                args=("capture_done", {"url": url}),
+                args=("capture_done", {"path": capture_tiff_path}),
             ).start()
-            print(f"[Server] Capture stopped. Will send capture_done url={url}")
+            print(f"[Server] Capture stopped. Will send capture_done path={capture_tiff_path}")
 
         elif self.path == "/disconnect":
             self._send_json(200, {"status": "ok"})

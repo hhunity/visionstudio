@@ -214,8 +214,8 @@ void compare_viewer::render(float width, float height) {
     if (width  < 2.0f)  width  = 2.0f;
     if (height < 1.0f)  height = 1.0f;
 
-    // Re-slice if split position changed.
-    if (is_split_ && split_x != split_x_applied_) {
+    // Re-slice if split position changed and not currently dragging.
+    if (is_split_ && split_x != split_x_applied_ && !split_dragging) {
         apply_split();
     }
 

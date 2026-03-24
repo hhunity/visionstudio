@@ -48,6 +48,7 @@ public:
     bool        show_grid             = false;
     int         grid_spacing          = 100;
     bool        show_coordinates      = false;
+    bool        split_dragging        = false;  // true when split slider is being dragged
     bool        show_minimap          = true;
     bool        show_overlays         = true;
     bool        show_crosshair        = false;
