@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 // ---------------------------------------------------------------------------
 // Lifecycle
@@ -43,9 +44,39 @@ void image_viewer::create_texture(const image_data& img) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-                 img.width, img.height, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE, img.pixels.data());
+
+    GLint max_tex = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex);
+
+    if (img.width <= max_tex && img.height <= max_tex) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+                     img.width, img.height, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, img.pixels.data());
+    } else {
+        // Image exceeds GL_MAX_TEXTURE_SIZE; downsample for display only.
+        // CPU image (cpu_image_) keeps full resolution for pixel queries.
+        const float scale = static_cast<float>(max_tex) / static_cast<float>(std::max(img.width, img.height));
+        const int tw = std::max(1, static_cast<int>(img.width  * scale));
+        const int th = std::max(1, static_cast<int>(img.height * scale));
+        fprintf(stderr, "[image_viewer] texture downscaled %dx%d -> %dx%d (GL_MAX_TEXTURE_SIZE=%d)\n",
+                img.width, img.height, tw, th, max_tex);
+
+        std::vector<uint8_t> buf(static_cast<size_t>(tw) * th * 4);
+        const float sx = static_cast<float>(img.width)  / tw;
+        const float sy = static_cast<float>(img.height) / th;
+        for (int y = 0; y < th; ++y) {
+            for (int x = 0; x < tw; ++x) {
+                const int src_x = std::min(static_cast<int>(x * sx), img.width  - 1);
+                const int src_y = std::min(static_cast<int>(y * sy), img.height - 1);
+                const uint8_t* src = img.pixels.data() + (static_cast<size_t>(src_y) * img.width + src_x) * 4;
+                uint8_t*       dst = buf.data()        + (static_cast<size_t>(y)     * tw          + x)     * 4;
+                dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = src[3];
+            }
+        }
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tw, th, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+    }
+
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4); // restore default
     glBindTexture(GL_TEXTURE_2D, 0);
     texture_id_ = static_cast<uint32_t>(tex);
