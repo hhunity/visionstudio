@@ -158,8 +158,9 @@ void capture_client::run_sse(bool& disconnect_requested) {
 
     sse_cli.Get(
         cfg_.sse_path,
-        httplib::Headers{{"Accept", "text/event-stream"},
-                         {"Cache-Control", "no-cache"}},
+        httplib::Headers{{"Accept",        "text/event-stream"},
+                         {"Cache-Control", "no-cache"},
+                         {"Connection",    "keep-alive"}},
 
         [&](const httplib::Response& r) -> bool {
             if (r.status < 200 || r.status >= 300) {
