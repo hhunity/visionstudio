@@ -467,8 +467,8 @@ void image_viewer::draw_minimap(ImDrawList* dl, const ImVec2& canvas_pos,
     const float rx1 = mx + std::max(0.0f, std::min(mw, vis_x1 * sx));
     const float ry1 = my + std::max(0.0f, std::min(mh, vis_y1 * sy));
 
-    // Red viewport rectangle.
-    dl->AddRect({rx0, ry0}, {rx1, ry1}, IM_COL32(255, 50, 50, 230), 0.0f, 0, 1.5f);
+    // Yellow viewport rectangle (visible region).
+    dl->AddRect({rx0, ry0}, {rx1, ry1}, IM_COL32(255, 220, 0, 230), 0.0f, 0, 1.5f);
 
     // Minimap border.
     dl->AddRect({mx - 1.0f, my - 1.0f}, {mx + mw + 1.0f, my + mh + 1.0f},
