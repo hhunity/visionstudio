@@ -25,64 +25,130 @@ capture_client::capture_client(capture_config cfg)
     : cfg_(std::move(cfg)) {}
 
 capture_client::~capture_client() {
-    stop_sse();
+    stop_flag_.store(true);
+    if (worker_thread_.joinable()) worker_thread_.join();
 }
 
 // ---------------------------------------------------------------------------
-// Public control
+// Public API  (called from UI thread — only enqueue, never block on HTTP)
 // ---------------------------------------------------------------------------
 
 void capture_client::connect() {
-    if (sse_thread_.joinable()) return; // already running
+    if (worker_thread_.joinable()) return; // already running
     stop_flag_.store(false);
     sse_state_.store(sse_state::connecting);
-    sse_thread_ = std::thread(&capture_client::sse_thread_func, this);
+    worker_thread_ = std::thread(&capture_client::worker_thread_func, this);
 }
 
-bool capture_client::disconnect() {
-    const bool ok = do_disconnect_post();
-    stop_sse();
-    return ok;
+void capture_client::disconnect() {
+    push_cmd(cmd::disconnect);
+    stop_flag_.store(true); // interrupt SSE read if no data is flowing
 }
 
-bool capture_client::start_capture() {
-    httplib::Client cli(cfg_.host, cfg_.port);
-    cli.set_connection_timeout(cfg_.timeout_ms / 1000,
-                               (cfg_.timeout_ms % 1000) * 1000);
-    cli.set_read_timeout(cfg_.timeout_ms / 1000,
-                         (cfg_.timeout_ms % 1000) * 1000);
-    auto res = cli.Post(cfg_.start_path);
-    if (!res) {
-        set_error("start_capture: connection failed");
-        return false;
-    }
-    if (res->status < 200 || res->status >= 300) {
-        set_error("start_capture: HTTP " + std::to_string(res->status));
-        return false;
-    }
-    return true;
-}
+void capture_client::start_capture() { push_cmd(cmd::start_capture); }
+void capture_client::stop_capture()  { push_cmd(cmd::stop_capture);  }
 
-bool capture_client::stop_capture() {
-    httplib::Client cli(cfg_.host, cfg_.port);
-    cli.set_connection_timeout(cfg_.timeout_ms / 1000,
-                               (cfg_.timeout_ms % 1000) * 1000);
-    cli.set_read_timeout(cfg_.timeout_ms / 1000,
-                         (cfg_.timeout_ms % 1000) * 1000);
-    auto res = cli.Post(cfg_.stop_path);
-    if (!res) {
-        set_error("stop_capture: connection failed");
-        return false;
+// ---------------------------------------------------------------------------
+// Worker thread
+//
+// All HTTP calls happen here, in this order:
+//   1. GET /events  (open SSE stream)
+//   2. PUT /connect (once SSE headers are confirmed)
+//   3. Loop: parse SSE events + drain command queue (start / stop)
+//   4. On disconnect command (or stop_flag_): exit content loop
+//   5. POST /disconnect
+// ---------------------------------------------------------------------------
+
+void capture_client::worker_thread_func() {
+    httplib::Client sse_cli(cfg_.host, cfg_.port);
+    sse_cli.set_read_timeout(0, 0); // no timeout — streaming
+
+    std::string buf;
+    std::string cur_event;
+    std::string cur_data;
+    bool        disconnect_requested = false;
+
+    auto res = sse_cli.Get(
+        cfg_.sse_path,
+        httplib::Headers{{"Accept", "text/event-stream"},
+                         {"Cache-Control", "no-cache"}},
+
+        // ---- response-header callback: called once when server replies ----
+        [&](const httplib::Response& response) -> bool {
+            if (response.status < 200 || response.status >= 300) {
+                set_error("SSE: HTTP " + std::to_string(response.status));
+                sse_state_.store(sse_state::error);
+                return false;
+            }
+            // SSE stream confirmed; POST /connect on the same thread.
+            if (!do_connect_post()) {
+                sse_state_.store(sse_state::error);
+                return false;
+            }
+            sse_state_.store(sse_state::connected);
+            return true;
+        },
+
+        // ---- content callback: called for every incoming SSE chunk --------
+        [&](const char* data, size_t len) -> bool {
+            // Parse SSE lines.
+            buf.append(data, len);
+            size_t pos;
+            while ((pos = buf.find('\n')) != std::string::npos) {
+                std::string line = buf.substr(0, pos);
+                buf.erase(0, pos + 1);
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+
+                if (line.empty()) {
+                    if (!cur_event.empty() || !cur_data.empty()) {
+                        dispatch_event(cur_event, cur_data);
+                        cur_event.clear();
+                        cur_data.clear();
+                    }
+                } else if (line.rfind("event:", 0) == 0) {
+                    cur_event = trim(line.substr(6));
+                } else if (line.rfind("data:", 0) == 0) {
+                    cur_data = trim(line.substr(5));
+                }
+            }
+
+            // Drain command queue — all HTTP calls stay on this thread.
+            cmd c;
+            while (pop_cmd(c)) {
+                switch (c) {
+                case cmd::start_capture:
+                    if (!do_start_post())
+                        push_event({server_event_type::error, {},
+                                    "start failed: " + get_last_error()});
+                    break;
+                case cmd::stop_capture:
+                    if (!do_stop_post())
+                        push_event({server_event_type::error, {},
+                                    "stop failed: " + get_last_error()});
+                    break;
+                case cmd::disconnect:
+                    disconnect_requested = true;
+                    break;
+                }
+            }
+
+            return !disconnect_requested && !stop_flag_.load();
+        });
+
+    // POST /disconnect after the SSE loop ends (normal disconnect path).
+    if (disconnect_requested)
+        do_disconnect_post();
+
+    if (!res && sse_state_.load() != sse_state::error) {
+        set_error("SSE: connection failed");
+        sse_state_.store(sse_state::error);
+    } else if (sse_state_.load() == sse_state::connected) {
+        sse_state_.store(sse_state::disconnected);
     }
-    if (res->status < 200 || res->status >= 300) {
-        set_error("stop_capture: HTTP " + std::to_string(res->status));
-        return false;
-    }
-    return true;
 }
 
 // ---------------------------------------------------------------------------
-// Private helpers
+// HTTP helpers — called from worker thread only
 // ---------------------------------------------------------------------------
 
 bool capture_client::do_connect_post() {
@@ -129,112 +195,48 @@ bool capture_client::do_connect_post() {
         body += content;
         body += "\r\n";
     }
-
     body += "--" + boundary + "--\r\n";
 
-    const std::string content_type = "multipart/form-data; boundary=" + boundary;
-    auto res = cli.Put(cfg_.connect_path, body, content_type.c_str());
-    if (!res) {
-        set_error("connect: PUT failed");
-        return false;
-    }
-    if (res->status < 200 || res->status >= 300) {
-        set_error("connect: HTTP " + std::to_string(res->status));
-        return false;
-    }
+    const std::string ct = "multipart/form-data; boundary=" + boundary;
+    auto res = cli.Put(cfg_.connect_path, body, ct.c_str());
+    if (!res)                                        { set_error("connect: PUT failed"); return false; }
+    if (res->status < 200 || res->status >= 300) { set_error("connect: HTTP " + std::to_string(res->status)); return false; }
     return true;
 }
 
 bool capture_client::do_disconnect_post() {
     httplib::Client cli(cfg_.host, cfg_.port);
-    cli.set_connection_timeout(cfg_.timeout_ms / 1000,
-                               (cfg_.timeout_ms % 1000) * 1000);
-    cli.set_read_timeout(cfg_.timeout_ms / 1000,
-                         (cfg_.timeout_ms % 1000) * 1000);
+    cli.set_connection_timeout(cfg_.timeout_ms / 1000, (cfg_.timeout_ms % 1000) * 1000);
+    cli.set_read_timeout(cfg_.timeout_ms / 1000, (cfg_.timeout_ms % 1000) * 1000);
     auto res = cli.Post(cfg_.disconnect_path);
-    if (!res) {
-        set_error("disconnect: connection failed");
-        return false;
-    }
-    if (res->status < 200 || res->status >= 300) {
-        set_error("disconnect: HTTP " + std::to_string(res->status));
-        return false;
-    }
+    if (!res)                                        { set_error("disconnect: failed"); return false; }
+    if (res->status < 200 || res->status >= 300) { set_error("disconnect: HTTP " + std::to_string(res->status)); return false; }
     return true;
 }
 
-void capture_client::stop_sse() {
-    stop_flag_.store(true);
-    if (sse_thread_.joinable()) sse_thread_.join();
-    if (sse_state_.load() != sse_state::error)
-        sse_state_.store(sse_state::disconnected);
+bool capture_client::do_start_post() {
+    httplib::Client cli(cfg_.host, cfg_.port);
+    cli.set_connection_timeout(cfg_.timeout_ms / 1000, (cfg_.timeout_ms % 1000) * 1000);
+    cli.set_read_timeout(cfg_.timeout_ms / 1000, (cfg_.timeout_ms % 1000) * 1000);
+    auto res = cli.Post(cfg_.start_path);
+    if (!res)                                        { set_error("start: failed"); return false; }
+    if (res->status < 200 || res->status >= 300) { set_error("start: HTTP " + std::to_string(res->status)); return false; }
+    return true;
+}
+
+bool capture_client::do_stop_post() {
+    httplib::Client cli(cfg_.host, cfg_.port);
+    cli.set_connection_timeout(cfg_.timeout_ms / 1000, (cfg_.timeout_ms % 1000) * 1000);
+    cli.set_read_timeout(cfg_.timeout_ms / 1000, (cfg_.timeout_ms % 1000) * 1000);
+    auto res = cli.Post(cfg_.stop_path);
+    if (!res)                                        { set_error("stop: failed"); return false; }
+    if (res->status < 200 || res->status >= 300) { set_error("stop: HTTP " + std::to_string(res->status)); return false; }
+    return true;
 }
 
 // ---------------------------------------------------------------------------
-// SSE thread
-// Opens GET /events first, then PUTs /connect on the same thread once
-// the stream is confirmed up (HTTP 200 headers received).
+// SSE event dispatch
 // ---------------------------------------------------------------------------
-
-void capture_client::sse_thread_func() {
-    httplib::Client sse_cli(cfg_.host, cfg_.port);
-    sse_cli.set_read_timeout(0, 0); // no timeout for streaming
-
-    std::string buf;
-    std::string current_event;
-    std::string current_data;
-
-    auto res = sse_cli.Get(
-        cfg_.sse_path,
-        httplib::Headers{{"Accept", "text/event-stream"},
-                         {"Cache-Control", "no-cache"}},
-        // Response-header callback: called once when the server sends headers.
-        [&](const httplib::Response& response) -> bool {
-            if (response.status < 200 || response.status >= 300) {
-                set_error("SSE: HTTP " + std::to_string(response.status));
-                sse_state_.store(sse_state::error);
-                return false;
-            }
-            // SSE stream is up; POST /connect on this same thread.
-            if (!do_connect_post()) {
-                sse_state_.store(sse_state::error);
-                return false;
-            }
-            sse_state_.store(sse_state::connected);
-            return true;
-        },
-        // Content callback: called repeatedly as SSE data arrives.
-        [&](const char* data, size_t len) -> bool {
-            buf.append(data, len);
-            size_t pos;
-            while ((pos = buf.find('\n')) != std::string::npos) {
-                std::string line = buf.substr(0, pos);
-                buf.erase(0, pos + 1);
-                if (!line.empty() && line.back() == '\r')
-                    line.pop_back();
-
-                if (line.empty()) {
-                    if (!current_event.empty() || !current_data.empty()) {
-                        dispatch_event(current_event, current_data);
-                        current_event.clear();
-                        current_data.clear();
-                    }
-                } else if (line.rfind("event:", 0) == 0) {
-                    current_event = trim(line.substr(6));
-                } else if (line.rfind("data:", 0) == 0) {
-                    current_data = trim(line.substr(5));
-                }
-            }
-            return !stop_flag_.load();
-        });
-
-    if (!res && sse_state_.load() != sse_state::error) {
-        set_error("SSE: connection failed");
-        sse_state_.store(sse_state::error);
-    } else if (sse_state_.load() == sse_state::connected) {
-        sse_state_.store(sse_state::disconnected);
-    }
-}
 
 void capture_client::dispatch_event(const std::string& event_type,
                                     const std::string& data) {
@@ -263,8 +265,21 @@ void capture_client::dispatch_event(const std::string& event_type,
 }
 
 // ---------------------------------------------------------------------------
-// Thread-safe event queue / error helpers
+// Thread-safe helpers
 // ---------------------------------------------------------------------------
+
+void capture_client::push_cmd(cmd c) {
+    std::lock_guard lock(cmd_mtx_);
+    cmd_queue_.push_back(c);
+}
+
+bool capture_client::pop_cmd(cmd& out) {
+    std::lock_guard lock(cmd_mtx_);
+    if (cmd_queue_.empty()) return false;
+    out = cmd_queue_.front();
+    cmd_queue_.pop_front();
+    return true;
+}
 
 void capture_client::push_event(server_event ev) {
     std::lock_guard lock(event_mtx_);

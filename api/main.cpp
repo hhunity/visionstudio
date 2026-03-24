@@ -437,7 +437,6 @@ int main(int argc, char** argv) {
                     break;
                 case server_event_type::disconnected:
                     server_connected = false;
-                    cap_cli.stop_sse();
                     status_msg = "Server disconnected";
                     break;
                 case server_event_type::error:
@@ -452,7 +451,6 @@ int main(int argc, char** argv) {
             // Detect unexpected SSE drop (server crash etc.)
             if (server_connected && cap_cli.get_sse_state() == sse_state::error) {
                 server_connected = false;
-                cap_cli.stop_sse();
                 status_msg = "Connection lost: " + cap_cli.get_last_error();
             }
         }
@@ -622,28 +620,21 @@ int main(int argc, char** argv) {
             ImGui::SameLine();
             ImGui::BeginDisabled(!server_connected);
             if (ImGui::Button("Disconnect")) {
-                if (!cap_cli.disconnect())
-                    status_msg = "Disconnect failed: " + cap_cli.get_last_error();
-                else {
-                    server_connected = false;
-                    status_msg = "Server disconnected";
-                }
+                cap_cli.disconnect();
+                server_connected = false;
+                status_msg = "Disconnecting...";
             }
             ImGui::SameLine();
             ImGui::Text("|");
             ImGui::SameLine();
             if (ImGui::Button("Start Capture")) {
-                if (!cap_cli.start_capture())
-                    status_msg = "Start failed: " + cap_cli.get_last_error();
-                else
-                    status_msg = "Capture started";
+                cap_cli.start_capture();
+                status_msg = "Starting capture...";
             }
             ImGui::SameLine();
             if (ImGui::Button("Stop Capture")) {
-                if (!cap_cli.stop_capture())
-                    status_msg = "Stop failed: " + cap_cli.get_last_error();
-                else
-                    status_msg = "Capture stopped";
+                cap_cli.stop_capture();
+                status_msg = "Stopping capture...";
             }
             ImGui::EndDisabled();
             if (!config_tabs.empty()) {
