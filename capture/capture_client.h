@@ -25,19 +25,16 @@ public:
     capture_client(const capture_client&)            = delete;
     capture_client& operator=(const capture_client&) = delete;
 
-    // Send PUT (multipart/form-data) to connect endpoint with JSON config and
-    // camera config files, or POST to disconnect endpoint. Returns true on HTTP 2xx.
-    bool connect_server();
-    bool disconnect_server();
+    // Open SSE stream, then POST /connect on the same thread once the stream
+    // is confirmed up.  Non-blocking: spawns background thread and returns.
+    void connect();
+
+    // POST /disconnect, then join the SSE thread.  Returns true on HTTP 2xx.
+    bool disconnect();
 
     // Send POST to start / stop endpoint. Returns true on HTTP 2xx.
     bool start_capture();
     bool stop_capture();
-
-    // Start the SSE listener thread. No-op if already running.
-    void start_sse();
-    // Stop the SSE listener thread. Safe to call multiple times.
-    void stop_sse();
 
     // Call from the main thread every frame.
     // Returns the next server event if one is queued, or nullopt.
@@ -48,6 +45,9 @@ public:
 
 private:
     void sse_thread_func();
+    bool do_connect_post();
+    bool do_disconnect_post();
+    void stop_sse();
     void dispatch_event(const std::string& event_type, const std::string& data);
     void push_event(server_event ev);
     void set_error(std::string msg);

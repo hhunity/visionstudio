@@ -73,8 +73,11 @@ VisionStudio (GUI)
 
 ```
 1. Connect ボタン押下
-   → POST /connect        (HTTP 2xx で成功)
-   → start_sse()          (SSE リスナースレッド開始)
+   → connect() 呼び出し (SSE スレッド起動)
+   → スレッド内: GET /events (SSE ストリーム開始)
+   → SSE レスポンスヘッダ確認 (HTTP 200)
+   → 同じスレッドで PUT /connect (HTTP 2xx で成功)
+   → sse_state = connected
 
 2. SSE で "connected" イベント受信
    → server_connected = true (UI のボタン状態が切り替わる)
@@ -86,8 +89,9 @@ VisionStudio (GUI)
    → async_loader で TIFF を自動ロード
 
 5. Disconnect ボタン押下
+   → disconnect() 呼び出し
    → POST /disconnect
-   → stop_sse()           (SSE スレッドを join)
+   → SSE スレッドを join
    → server_connected = false
 
 ---（サーバ側が落ちた場合）---
