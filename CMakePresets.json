@@ -55,12 +55,21 @@
       "inherits": "base-vs",
       "displayName": "Visual Studio 2022",
       "binaryDir": "${sourceDir}/build/vs"
+    },
+    {
+      "name": "capture-cli",
+      "inherits": "debug",
+      "displayName": "capture_cli sandbox (debug)",
+      "cacheVariables": {
+        "BUILD_CAPTURE_CLI": "ON"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "debug",       "configurePreset": "debug" },
-    { "name": "release",     "configurePreset": "release" },
-    { "name": "debug-vs",    "configurePreset": "vs", "configuration": "Debug" },
-    { "name": "release-vs",  "configurePreset": "vs", "configuration": "Release" }
+    { "name": "debug",              "configurePreset": "debug" },
+    { "name": "release",            "configurePreset": "release" },
+    { "name": "debug-vs",           "configurePreset": "vs", "configuration": "Debug" },
+    { "name": "release-vs",         "configurePreset": "vs", "configuration": "Release" },
+    { "name": "capture-cli-debug",  "configurePreset": "capture-cli", "targets": ["capture_cli"] }
   ]
 }
