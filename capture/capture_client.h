@@ -36,8 +36,7 @@ public:
 
     std::optional<server_event> poll_server_event();
 
-    sse_state   get_sse_state()  const { return sse_state_.load(); }
-    std::string get_last_error() const;
+    sse_state get_sse_state() const { return sse_state_.load(); }
 
 private:
     enum class cmd { connect, start_capture, stop_capture, disconnect };
@@ -53,7 +52,6 @@ private:
     void interrupt_sse();
     void dispatch_event(const std::string& event_type, const std::string& data);
     void push_event(server_event ev);
-    void set_error(std::string msg);
     void log(const std::string& msg) const;
 
     capture_config cfg_;
@@ -74,9 +72,6 @@ private:
 
     mutable std::mutex  event_mtx_;
     std::deque<server_event> event_queue_;
-
-    mutable std::mutex error_mtx_;
-    std::string        last_error_;
 
     mutable std::mutex logger_mtx_;
     logger_fn          logger_;

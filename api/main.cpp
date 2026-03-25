@@ -506,10 +506,7 @@ int main(int argc, char** argv) {
                     status_msg = "Connected";
                 else if (prev_sse == sse_state::connected) {
                     capturing = false;
-                    if (cur_sse == sse_state::error)
-                        status_msg = "Connection lost: " + cap_cli.get_last_error();
-                    else
-                        status_msg = "Server disconnected";
+                    status_msg = "Server disconnected";
                 }
                 prev_sse = cur_sse;
             }
@@ -815,11 +812,6 @@ int main(int argc, char** argv) {
                     sse_label = "Error";        sse_col = {1, 0.3f, 0.3f, 1};   break;
                 }
                 ImGui::TextColored(sse_col, "SSE: %s", sse_label);
-                if (cap_cli.get_sse_state() == sse_state::error) {
-                    const auto err = cap_cli.get_last_error();
-                    if (!err.empty())
-                        ImGui::TextDisabled("  %s", err.c_str());
-                }
                 ImGui::Separator();
 
                 // Connection settings (collapsible)

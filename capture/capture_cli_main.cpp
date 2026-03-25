@@ -72,7 +72,6 @@ static bool wait_connected(capture_client& client, int timeout_ms = 10000) {
         const auto state = client.get_sse_state();
         if (state == sse_state::connected) return true;
         if (state == sse_state::error) {
-            std::cerr << "error: " << client.get_last_error() << "\n";
             return false;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -131,8 +130,6 @@ static bool exec_cmd(const std::vector<std::string>& tokens, size_t& i,
 
     } else if (cmd == "status") {
         std::cout << "SSE state: " << sse_state_str(client.get_sse_state()) << "\n";
-        const auto err = client.get_last_error();
-        if (!err.empty()) std::cout << "last error: " << err << "\n";
 
     } else {
         std::cerr << "unknown command: " << cmd

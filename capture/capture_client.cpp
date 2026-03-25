@@ -95,14 +95,12 @@ void capture_client::worker_thread_func() {
 
         case cmd::start_capture:
             if (state != sse_state::connected) break;
-            if (!do_simple_post(cfg_.start_path, "start"))
-                push_event(evt_error{get_last_error()});
+            do_simple_post(cfg_.start_path, "start");
             break;
 
         case cmd::stop_capture:
             if (state != sse_state::connected) break;
-            if (!do_simple_post(cfg_.stop_path, "stop"))
-                push_event(evt_error{get_last_error()});
+            do_simple_post(cfg_.stop_path, "stop");
             break;
 
         case cmd::disconnect:
@@ -147,7 +145,7 @@ void capture_client::run_sse() {
         [&](const httplib::Response& r) -> bool {
             log("[sse] GET " + url + " -> " + std::to_string(r.status));
             if (r.status < 200 || r.status >= 300) {
-                set_error("SSE: HTTP " + std::to_string(r.status));
+                push_event(evt_error{"SSE: HTTP " + std::to_string(r.status)});
                 sse_state_.store(sse_state::error);
                 return false;
             }
@@ -229,7 +227,7 @@ bool capture_client::do_connect_post() {
     for (const auto& file_path : cfg_.connect_config_files) {
         std::ifstream f(file_path, std::ios::binary);
         if (!f.is_open()) {
-            set_error("connect: cannot open config file: " + file_path);
+            push_event(evt_error{"connect: cannot open config file: " + file_path});
             return false;
         }
         const std::string content((std::istreambuf_iterator<char>(f)), {});
@@ -250,15 +248,14 @@ bool capture_client::do_connect_post() {
     const std::string ct = "multipart/form-data; boundary=" + boundary;
     auto res = cli.Put(cfg_.connect_path, body, ct.c_str());
     if (!res) {
-        const std::string msg = "connect: PUT failed";
         log("[http] PUT " + url + " -> (no response)");
-        set_error(msg);
+        push_event(evt_error{"connect: PUT failed"});
         return false;
     }
     log("[http] PUT " + url + " -> " + std::to_string(res->status) +
         (res->body.empty() ? "" : "  body=" + res->body));
     if (res->status < 200 || res->status >= 300) {
-        set_error("connect: HTTP " + std::to_string(res->status));
+        push_event(evt_error{"connect: HTTP " + std::to_string(res->status)});
         return false;
     }
     return true;
@@ -272,13 +269,13 @@ bool capture_client::do_simple_post(const std::string& path,
     auto res = cli.Post(path);
     if (!res) {
         log("[http] POST " + url + " -> (no response)");
-        set_error(label + ": POST failed");
+        push_event(evt_error{label + ": POST failed"});
         return false;
     }
     log("[http] POST " + url + " -> " + std::to_string(res->status) +
         (res->body.empty() ? "" : "  body=" + res->body));
     if (res->status < 200 || res->status >= 300) {
-        set_error(label + ": HTTP " + std::to_string(res->status));
+        push_event(evt_error{label + ": HTTP " + std::to_string(res->status)});
         return false;
     }
     return true;
@@ -335,16 +332,6 @@ std::optional<server_event> capture_client::poll_server_event() {
     server_event ev = std::move(event_queue_.front());
     event_queue_.pop_front();
     return ev;
-}
-
-void capture_client::set_error(std::string msg) {
-    std::lock_guard lock(error_mtx_);
-    last_error_ = std::move(msg);
-}
-
-std::string capture_client::get_last_error() const {
-    std::lock_guard lock(error_mtx_);
-    return last_error_;
 }
 
 void capture_client::log(const std::string& msg) const {
