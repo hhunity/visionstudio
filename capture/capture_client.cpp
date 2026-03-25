@@ -17,7 +17,11 @@ static std::string trim(const std::string& s) {
 // capture_client
 // ---------------------------------------------------------------------------
 
-capture_client::capture_client(capture_config cfg) : cfg_(std::move(cfg)) {
+capture_client::capture_client(capture_config cfg)
+    : cfg_(std::move(cfg))
+    , sse_cli_(cfg_.host, cfg_.port)
+{
+    sse_cli_.set_read_timeout(3600, 0);
     worker_thread_ = std::thread(&capture_client::worker_thread_func, this);
 }
 
@@ -62,10 +66,8 @@ void capture_client::stop_capture() {
 }
 
 void capture_client::interrupt_sse() {
-    sse_interrupted_ = true; // set before acquiring lock to avoid race with run_sse()
-    cmd_cv_.notify_one();
-    std::lock_guard lock(sse_cli_mtx_);
-    if (sse_cli_ptr_) sse_cli_ptr_->stop();
+    sse_interrupted_ = true;
+    sse_cli_.stop();
 }
 
 // ---------------------------------------------------------------------------
@@ -120,23 +122,12 @@ void capture_client::worker_thread_func() {
 // ---------------------------------------------------------------------------
 
 void capture_client::run_sse() {
-    httplib::Client sse_cli(cfg_.host, cfg_.port);
-    sse_cli.set_read_timeout(3600, 0); // no timeout for SSE stream
-
-    {
-        std::lock_guard lock(sse_cli_mtx_);
-        sse_cli_ptr_ = &sse_cli;
-        // interrupt_sse() may have been called before sse_cli_ptr_ was set;
-        // the flag ensures we don't enter Get() in that case
-        if (sse_interrupted_) sse_cli.stop();
-    }
-
     const std::string url = cfg_.host + ":" + std::to_string(cfg_.port) + cfg_.sse_path;
     log("[sse] GET " + url);
 
     std::string buf, cur_event, cur_data;
 
-    sse_cli.Get(
+    sse_cli_.Get(
         cfg_.sse_path,
         httplib::Headers{{"Accept",        "text/event-stream"},
                          {"Cache-Control", "no-cache"},
@@ -176,11 +167,6 @@ void capture_client::run_sse() {
             }
             return !shutdown_ && !sse_interrupted_;
         });
-
-    {
-        std::lock_guard lock(sse_cli_mtx_);
-        sse_cli_ptr_ = nullptr;
-    }
 
     log("[sse] GET " + url + " closed");
     const auto s = sse_state_.load();

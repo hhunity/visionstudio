@@ -59,8 +59,7 @@ private:
     std::thread worker_thread_;
     std::thread sse_thread_;
 
-    std::mutex       sse_cli_mtx_;
-    httplib::Client* sse_cli_ptr_{nullptr};
+    httplib::Client   sse_cli_;
     std::atomic<bool> sse_interrupted_{false};
 
     std::mutex              cmd_mtx_;
