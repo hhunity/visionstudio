@@ -259,7 +259,7 @@ int main(int argc, char** argv) {
     bool        show_camera_config    = false;
     bool        show_connect_config   = false;
     bool        show_about            = false;
-    bool        server_connected      = false;
+    sse_state   prev_sse              = sse_state::disconnected;
     bool        capturing             = false;
 
     // Capture settings
@@ -485,7 +485,6 @@ int main(int argc, char** argv) {
             while (auto ev = cap_cli.poll_server_event()) {
                 switch (ev->type) {
                 case server_event_type::disconnected:
-                    server_connected = false;
                     status_msg = "Server disconnected";
                     break;
                 case server_event_type::error:
@@ -509,16 +508,16 @@ int main(int argc, char** argv) {
                     break;
                 }
             }
-            // Sync server_connected with sse_state
             const auto cur_sse = cap_cli.get_sse_state();
-            if (!server_connected && cur_sse == sse_state::connected) {
-                server_connected = true;
-                status_msg = "Connected";
-            } else if (server_connected && cur_sse != sse_state::connected) {
-                server_connected = false;
-                capturing        = false;
-                if (cur_sse == sse_state::error)
-                    status_msg = "Connection lost: " + cap_cli.get_last_error();
+            if (prev_sse != cur_sse) {
+                if (cur_sse == sse_state::connected)
+                    status_msg = "Connected";
+                else if (prev_sse == sse_state::connected) {
+                    capturing = false;
+                    if (cur_sse == sse_state::error)
+                        status_msg = "Connection lost: " + cap_cli.get_last_error();
+                }
+                prev_sse = cur_sse;
             }
         }
 
@@ -836,7 +835,7 @@ int main(int argc, char** argv) {
                 const bool conn_open = ImGui::CollapsingHeader("Connect Settings");
                 ImGui::PopStyleColor(3);
                 if (conn_open) {
-                    ImGui::BeginDisabled(server_connected);
+                    ImGui::BeginDisabled(cap_cli.get_sse_state() == sse_state::connected);
                     const float fw = ImGui::GetContentRegionAvail().x;
                     bool conn_changed = false;
                     auto labeled = [&](const char* label, auto fn) {
@@ -895,11 +894,10 @@ int main(int argc, char** argv) {
                 }
                 ImGui::EndDisabled();
 
-                ImGui::BeginDisabled(!server_connected);
+                ImGui::BeginDisabled(cap_cli.get_sse_state() != sse_state::connected);
                 if (ImGui::Button("Disconnect", {-1, 0})) {
                     cap_cli.disconnect();
-                    server_connected = false;
-                    capturing        = false;
+                    capturing  = false;
                     status_msg = "Disconnecting...";
                 }
                 ImGui::EndDisabled();
@@ -911,7 +909,7 @@ int main(int argc, char** argv) {
 #ifndef NDEBUG
                 constexpr bool cap_settings_disabled = false;
 #else
-                const bool cap_settings_disabled = !server_connected;
+                const bool cap_settings_disabled = cap_cli.get_sse_state() != sse_state::connected;
 #endif
                 ImGui::BeginDisabled(cap_settings_disabled);
                 ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4{0.35f, 0.35f, 0.35f, 1.0f});
@@ -988,7 +986,7 @@ int main(int argc, char** argv) {
                 ImGui::Separator();
 
                 // Capture buttons
-                ImGui::BeginDisabled(!server_connected || capturing);
+                ImGui::BeginDisabled(cap_cli.get_sse_state() != sse_state::connected || capturing);
                 ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.18f, 0.55f, 0.18f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.25f, 0.70f, 0.25f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.12f, 0.40f, 0.12f, 1.0f});
@@ -1000,7 +998,7 @@ int main(int argc, char** argv) {
                 ImGui::PopStyleColor(3);
                 ImGui::EndDisabled();
 
-                ImGui::BeginDisabled(!server_connected || !capturing);
+                ImGui::BeginDisabled(cap_cli.get_sse_state() != sse_state::connected || !capturing);
                 ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.60f, 0.15f, 0.15f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.78f, 0.20f, 0.20f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.45f, 0.10f, 0.10f, 1.0f});
