@@ -65,11 +65,6 @@ private:
     httplib::Client* sse_cli_ptr_{nullptr};
     std::atomic<bool> sse_interrupted_{false};
 
-    std::mutex              sse_ready_mtx_;
-    std::condition_variable sse_ready_cv_;
-    bool                    sse_ready_{false};
-    bool                    sse_ready_ok_{false};
-
     std::mutex              cmd_mtx_;
     std::condition_variable cmd_cv_;
     std::deque<cmd>         cmd_queue_;

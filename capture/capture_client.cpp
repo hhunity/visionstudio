@@ -27,13 +27,6 @@ capture_client::~capture_client() {
         shutdown_ = true;
     }
     cmd_cv_.notify_all();
-    // unblock worker if it is waiting for SSE ready
-    {
-        std::lock_guard lock(sse_ready_mtx_);
-        sse_ready_ = true;
-        sse_ready_ok_ = false;
-    }
-    sse_ready_cv_.notify_all();
     interrupt_sse();
     if (sse_thread_.joinable())  sse_thread_.join();
     if (worker_thread_.joinable()) worker_thread_.join();
@@ -93,27 +86,11 @@ void capture_client::worker_thread_func() {
 
         switch (c) {
         case cmd::connect:
-            if (state != sse_state::disconnected) break;
-            {
-                std::lock_guard rlock(sse_ready_mtx_);
-                sse_ready_    = false;
-                sse_ready_ok_ = false;
-            }
+            if (state != sse_state::disconnected && state != sse_state::error) break;
             sse_state_.store(sse_state::connecting);
             sse_interrupted_ = false;
             if (sse_thread_.joinable()) sse_thread_.join();
             sse_thread_ = std::thread([this] { run_sse(); });
-            {
-                // wait until SSE GET response headers arrive
-                std::unique_lock rlock(sse_ready_mtx_);
-                sse_ready_cv_.wait(rlock, [this] { return sse_ready_ || shutdown_; });
-                if (shutdown_ || !sse_ready_ok_) break;
-            }
-            // SSE confirmed 200 OK — now POST /connect on worker thread
-            if (!do_connect_post())
-                sse_state_.store(sse_state::error);
-            else
-                sse_state_.store(sse_state::connected);
             break;
 
         case cmd::start_capture:
@@ -159,18 +136,6 @@ void capture_client::run_sse() {
     const std::string url = cfg_.host + ":" + std::to_string(cfg_.port) + cfg_.sse_path;
     log("[sse] GET " + url);
 
-    bool signaled = false;
-    auto signal_ready = [&](bool ok) {
-        if (signaled) return;
-        signaled = true;
-        {
-            std::lock_guard lock(sse_ready_mtx_);
-            sse_ready_    = true;
-            sse_ready_ok_ = ok;
-        }
-        sse_ready_cv_.notify_one();
-    };
-
     std::string buf, cur_event, cur_data;
 
     sse_cli.Get(
@@ -184,10 +149,14 @@ void capture_client::run_sse() {
             if (r.status < 200 || r.status >= 300) {
                 set_error("SSE: HTTP " + std::to_string(r.status));
                 sse_state_.store(sse_state::error);
-                signal_ready(false);
                 return false;
             }
-            signal_ready(true); // notify worker: SSE is up, proceed with connect POST
+            // SSE stream established; fire POST /connect.
+            // sse_state transitions to connected on receiving the "connected" SSE event.
+            if (!do_connect_post()) {
+                sse_state_.store(sse_state::error);
+                return false;
+            }
             return true;
         },
 
@@ -215,8 +184,6 @@ void capture_client::run_sse() {
             }
             return !shutdown_ && !sse_interrupted_;
         });
-
-    signal_ready(false); // ensure worker is unblocked if Get() returned without response handler
 
     {
         std::lock_guard lock(sse_cli_mtx_);
@@ -338,14 +305,17 @@ void capture_client::dispatch_event(const std::string& event_type,
         return {};
     };
 
-    if (event_type == "error") {
+    if (event_type == "connected") {
+        sse_state_.store(sse_state::connected);
+    } else if (event_type == "disconnected") {
+        sse_state_.store(sse_state::disconnected);
+    } else if (event_type == "error") {
         push_event(evt_error{get_field("message")});
     } else if (event_type == "capture_done") {
         const auto path = get_field("path");
         if (!path.empty())
             push_event(evt_capture_done{path});
     }
-    // "disconnected" SSE event: sse_state transition detection handles it
 }
 
 // ---------------------------------------------------------------------------
