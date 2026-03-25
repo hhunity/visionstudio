@@ -131,8 +131,10 @@ void capture_client::worker_thread_func() {
         case cmd::disconnect:
             if (state == sse_state::disconnected) break;
             interrupt_sse();
-            if (sse_thread_.joinable()) sse_thread_.join();
+            // Do not join here; httplib stop() may take time to unblock Get().
+            // sse_thread_ is joined on the next connect() or in the destructor.
             do_simple_post(cfg_.disconnect_path, "disconnect");
+            sse_state_.store(sse_state::disconnected);
             break;
         }
     }
