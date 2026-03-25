@@ -7,18 +7,15 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <variant>
 #include <httplib.h>
 #include "capture/capture_config.h"
 
 enum class sse_state { disconnected, connecting, connected, error };
 
-enum class server_event_type { disconnected, error, capture_done };
-
-struct server_event {
-    server_event_type type;
-    std::string       path;    // capture_done only
-    std::string       message; // error only
-};
+struct evt_error        { std::string message; };
+struct evt_capture_done { std::string path; };
+using server_event = std::variant<evt_error, evt_capture_done>;
 
 class capture_client {
 public:

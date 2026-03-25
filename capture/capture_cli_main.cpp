@@ -53,18 +53,11 @@ static const char* sse_state_str(sse_state s) {
 static bool drain_events(capture_client& client) {
     bool done = false;
     while (auto ev = client.poll_server_event()) {
-        switch (ev->type) {
-        case server_event_type::disconnected:
-            std::cout << "[event] disconnected\n";
+        if (auto* e = std::get_if<evt_error>(&*ev)) {
+            std::cout << "[event] error: " << e->message << "\n";
             done = true;
-            break;
-        case server_event_type::error:
-            std::cout << "[event] error: " << ev->message << "\n";
-            done = true;
-            break;
-        case server_event_type::capture_done:
-            std::cout << "[event] capture_done  path=" << ev->path << "\n";
-            break;
+        } else if (auto* e = std::get_if<evt_capture_done>(&*ev)) {
+            std::cout << "[event] capture_done  path=" << e->path << "\n";
         }
     }
     return done;

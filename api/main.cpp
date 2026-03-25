@@ -483,29 +483,21 @@ int main(int argc, char** argv) {
         // ----- Poll capture events (SSE) -----
         if (mode == app_mode::capture) {
             while (auto ev = cap_cli.poll_server_event()) {
-                switch (ev->type) {
-                case server_event_type::disconnected:
-                    status_msg = "Server disconnected";
-                    break;
-                case server_event_type::error:
-                    status_msg = "Server error: " + ev->message;
-                    break;
-                case server_event_type::capture_done:
+                if (auto* e = std::get_if<evt_error>(&*ev)) {
+                    status_msg = "Server error: " + e->message;
+                } else if (auto* e = std::get_if<evt_capture_done>(&*ev)) {
                     capturing = false;
                     if (capture_mode == 0) {
-                        left_loader.start(ev->path);
+                        left_loader.start(e->path);
                     } else if (capture_mode == 1) {
-                        // Split: load same image into compare as split source
-                        left_loader.start(ev->path);
+                        left_loader.start(e->path);
                     } else {
-                        // Compare: alternate left/right each capture
                         if (left_image.empty())
-                            left_loader.start(ev->path);
+                            left_loader.start(e->path);
                         else
-                            right_loader.start(ev->path);
+                            right_loader.start(e->path);
                     }
-                    status_msg = "Capture complete: " + ev->path;
-                    break;
+                    status_msg = "Capture complete: " + e->path;
                 }
             }
             const auto cur_sse = cap_cli.get_sse_state();
@@ -516,6 +508,8 @@ int main(int argc, char** argv) {
                     capturing = false;
                     if (cur_sse == sse_state::error)
                         status_msg = "Connection lost: " + cap_cli.get_last_error();
+                    else
+                        status_msg = "Server disconnected";
                 }
                 prev_sse = cur_sse;
             }

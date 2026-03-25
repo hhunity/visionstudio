@@ -119,13 +119,13 @@ void capture_client::worker_thread_func() {
         case cmd::start_capture:
             if (state != sse_state::connected) break;
             if (!do_simple_post(cfg_.start_path, "start"))
-                push_event({server_event_type::error, {}, get_last_error()});
+                push_event(evt_error{get_last_error()});
             break;
 
         case cmd::stop_capture:
             if (state != sse_state::connected) break;
             if (!do_simple_post(cfg_.stop_path, "stop"))
-                push_event({server_event_type::error, {}, get_last_error()});
+                push_event(evt_error{get_last_error()});
             break;
 
         case cmd::disconnect:
@@ -338,15 +338,14 @@ void capture_client::dispatch_event(const std::string& event_type,
         return {};
     };
 
-    if (event_type == "disconnected") {
-        push_event({server_event_type::disconnected, {}, {}});
-    } else if (event_type == "error") {
-        push_event({server_event_type::error, {}, get_field("message")});
+    if (event_type == "error") {
+        push_event(evt_error{get_field("message")});
     } else if (event_type == "capture_done") {
         const auto path = get_field("path");
         if (!path.empty())
-            push_event({server_event_type::capture_done, path, {}});
+            push_event(evt_capture_done{path});
     }
+    // "disconnected" SSE event: sse_state transition detection handles it
 }
 
 // ---------------------------------------------------------------------------
