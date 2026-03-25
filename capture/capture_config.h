@@ -10,6 +10,7 @@ struct capture_config {
     std::string              stop_path       = "/stop";
     std::string              disconnect_path = "/disconnect";
     std::string              sse_path        = "/events";
+    std::string              preview_path    = "/preview";
     int                      timeout_ms      = 5000;
     std::vector<std::string> connect_config_files; // paths to connection config files (any format)
     std::vector<std::string> capture_config_files; // paths to capture config files (JSON)

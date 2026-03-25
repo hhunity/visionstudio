@@ -262,6 +262,11 @@ int main(int argc, char** argv) {
     sse_state   prev_sse              = sse_state::disconnected;
     bool        capturing             = false;
 
+    // Preview texture (MJPEG live preview)
+    GLuint preview_tex   = 0;
+    int    preview_tex_w = 0;
+    int    preview_tex_h = 0;
+
     // Capture settings
     int  capture_mode          = 0;     // 0=Capture, 1=Mode1, 2=Mode2
     bool image_acquisition     = true;
@@ -509,6 +514,30 @@ int main(int argc, char** argv) {
                     status_msg = "Server disconnected";
                 }
                 prev_sse = cur_sse;
+            }
+
+            // ----- Upload preview frame to GPU -----
+            preview_frame pf;
+            if (cap_cli.poll_preview_frame(pf)) {
+                if (preview_tex == 0 || preview_tex_w != pf.w || preview_tex_h != pf.h) {
+                    if (preview_tex == 0) glGenTextures(1, &preview_tex);
+                    glBindTexture(GL_TEXTURE_2D, preview_tex);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                    const GLint swizzle[] = {GL_RED, GL_RED, GL_RED, GL_ONE};
+                    glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
+                    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, pf.w, pf.h, 0,
+                                 GL_RED, GL_UNSIGNED_BYTE, pf.pixels.data());
+                    preview_tex_w = pf.w;
+                    preview_tex_h = pf.h;
+                } else {
+                    glBindTexture(GL_TEXTURE_2D, preview_tex);
+                    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, pf.w, pf.h,
+                                    GL_RED, GL_UNSIGNED_BYTE, pf.pixels.data());
+                }
+                glBindTexture(GL_TEXTURE_2D, 0);
             }
         }
 
@@ -995,6 +1024,23 @@ int main(int argc, char** argv) {
                 }
                 ImGui::PopStyleColor(3);
                 ImGui::EndDisabled();
+
+                // Preview
+                ImGui::Separator();
+                const bool preview_on = cap_cli.is_preview_active();
+                ImGui::BeginDisabled(cap_cli.get_sse_state() != sse_state::connected);
+                if (!preview_on) {
+                    if (ImGui::Button("Start Preview", {-1, 0})) {
+                        cap_cli.start_preview();
+                        status_msg = "Preview started";
+                    }
+                } else {
+                    if (ImGui::Button("Stop Preview", {-1, 0})) {
+                        cap_cli.stop_preview();
+                        status_msg = "Preview stopped";
+                    }
+                }
+                ImGui::EndDisabled();
             }
             ImGui::EndChild();
             ImGui::SameLine();
@@ -1002,7 +1048,17 @@ int main(int argc, char** argv) {
 
         const ImVec2 viewer_origin = ImGui::GetCursorScreenPos();
 
-        if (use_single) {
+        if (mode == app_mode::capture && cap_cli.is_preview_active() && preview_tex != 0) {
+            // Scale to fit preserving aspect ratio
+            const float aspect = static_cast<float>(preview_tex_w) / static_cast<float>(preview_tex_h);
+            float dw = viewer_w, dh = viewer_w / aspect;
+            if (dh > viewer_h) { dh = viewer_h; dw = viewer_h * aspect; }
+            const auto orig = ImGui::GetCursorPos();
+            ImGui::SetCursorPos({orig.x + (viewer_w - dw) * 0.5f,
+                                  orig.y + (viewer_h - dh) * 0.5f});
+            ImGui::Image(reinterpret_cast<ImTextureID>(static_cast<intptr_t>(preview_tex)),
+                         {dw, dh});
+        } else if (use_single) {
             single_viewer.render("single_canvas", viewer_w, viewer_h);
         } else {
             compare.render(viewer_w, viewer_h);

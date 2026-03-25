@@ -17,6 +17,11 @@ struct evt_error        { std::string message; };
 struct evt_capture_done { std::string path; };
 using server_event = std::variant<evt_error, evt_capture_done>;
 
+struct preview_frame {
+    std::vector<uint8_t> pixels; // grayscale, w*h bytes
+    int w = 0, h = 0;
+};
+
 class capture_client {
 public:
     using logger_fn = std::function<void(const std::string&)>;
@@ -36,6 +41,11 @@ public:
 
     std::optional<server_event> poll_server_event();
 
+    void start_preview();
+    void stop_preview();
+    bool poll_preview_frame(preview_frame& out);
+    bool is_preview_active() const { return preview_active_.load(); }
+
     sse_state get_sse_state() const { return sse_state_.load(); }
 
 private:
@@ -52,6 +62,7 @@ private:
     void interrupt_sse();
     void dispatch_event(const std::string& event_type, const std::string& data);
     void push_event(server_event ev);
+    void run_preview();
     void log(const std::string& msg) const;
 
     capture_config cfg_;
@@ -61,6 +72,15 @@ private:
 
     httplib::Client   sse_cli_;
     std::atomic<bool> sse_interrupted_{false};
+
+    httplib::Client   preview_cli_;
+    std::thread       preview_thread_;
+    std::atomic<bool> preview_interrupted_{false};
+    std::atomic<bool> preview_active_{false};
+
+    std::mutex     preview_mtx_;
+    preview_frame  latest_frame_;
+    bool           preview_ready_{false};
 
     std::mutex              cmd_mtx_;
     std::condition_variable cmd_cv_;

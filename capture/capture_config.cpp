@@ -32,6 +32,7 @@ capture_config capture_config::load(const std::string& json_path) {
     if (c.contains("stop_path")       && c["stop_path"].is_string())       cfg.stop_path       = c["stop_path"];
     if (c.contains("disconnect_path") && c["disconnect_path"].is_string()) cfg.disconnect_path = c["disconnect_path"];
     if (c.contains("sse_path")        && c["sse_path"].is_string())        cfg.sse_path        = c["sse_path"];
+    if (c.contains("preview_path")    && c["preview_path"].is_string())    cfg.preview_path    = c["preview_path"];
     if (c.contains("port")            && c["port"].is_number_integer())    cfg.port            = c["port"];
     if (c.contains("timeout_ms")      && c["timeout_ms"].is_number_integer()) cfg.timeout_ms   = c["timeout_ms"];
     if (c.contains("connect_config_files") && c["connect_config_files"].is_array()) {
@@ -59,6 +60,7 @@ void capture_config::save(const std::string& json_path,
         {"stop_path",       cfg.stop_path},
         {"disconnect_path", cfg.disconnect_path},
         {"sse_path",        cfg.sse_path},
+        {"preview_path",    cfg.preview_path},
         {"timeout_ms",      cfg.timeout_ms},
         {"connect_config_files", cfg.connect_config_files},
         {"capture_config_files", cfg.capture_config_files},

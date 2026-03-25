@@ -1,6 +1,8 @@
 #include "capture/capture_client.h"
 #include <httplib.h>
 #include <nlohmann/json.hpp>
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
 #include <algorithm>
 #include <fstream>
 
@@ -20,8 +22,10 @@ static std::string trim(const std::string& s) {
 capture_client::capture_client(capture_config cfg)
     : cfg_(std::move(cfg))
     , sse_cli_(cfg_.host, cfg_.port)
+    , preview_cli_(cfg_.host, cfg_.port)
 {
     sse_cli_.set_read_timeout(3600, 0);
+    preview_cli_.set_read_timeout(3600, 0);
     worker_thread_ = std::thread(&capture_client::worker_thread_func, this);
 }
 
@@ -32,8 +36,10 @@ capture_client::~capture_client() {
     }
     cmd_cv_.notify_all();
     interrupt_sse();
-    if (sse_thread_.joinable())  sse_thread_.join();
-    if (worker_thread_.joinable()) worker_thread_.join();
+    stop_preview();
+    if (sse_thread_.joinable())     sse_thread_.join();
+    if (preview_thread_.joinable()) preview_thread_.join();
+    if (worker_thread_.joinable())  worker_thread_.join();
 }
 
 // ---------------------------------------------------------------------------
@@ -318,6 +324,124 @@ std::optional<server_event> capture_client::poll_server_event() {
     server_event ev = std::move(event_queue_.front());
     event_queue_.pop_front();
     return ev;
+}
+
+// ---------------------------------------------------------------------------
+// MJPEG preview
+// ---------------------------------------------------------------------------
+
+void capture_client::start_preview() {
+    if (preview_active_.load()) return;
+    preview_interrupted_ = false;
+    preview_active_      = true;
+    if (preview_thread_.joinable()) preview_thread_.join();
+    preview_thread_ = std::thread([this] { run_preview(); });
+}
+
+void capture_client::stop_preview() {
+    if (!preview_active_.load()) return;
+    preview_interrupted_ = true;
+    preview_cli_.stop();
+    // join happens in the next start_preview() or destructor
+}
+
+bool capture_client::poll_preview_frame(preview_frame& out) {
+    std::lock_guard lock(preview_mtx_);
+    if (!preview_ready_) return false;
+    out           = std::move(latest_frame_);
+    preview_ready_ = false;
+    return true;
+}
+
+void capture_client::run_preview() {
+    const std::string url = cfg_.host + ":" + std::to_string(cfg_.port) + cfg_.preview_path;
+    log("[preview] GET " + url);
+
+    std::string         boundary;
+    std::vector<uint8_t> buf;
+
+    preview_cli_.Get(
+        cfg_.preview_path,
+        httplib::Headers{{"Accept", "multipart/x-mixed-replace, image/jpeg"}},
+
+        [&](const httplib::Response& r) -> bool {
+            log("[preview] GET " + url + " -> " + std::to_string(r.status));
+            if (r.status < 200 || r.status >= 300) {
+                push_event(evt_error{"preview: HTTP " + std::to_string(r.status)});
+                return false;
+            }
+            // Extract boundary from Content-Type header
+            const auto ct  = r.get_header_value("Content-Type");
+            const auto pos = ct.find("boundary=");
+            if (pos != std::string::npos) {
+                boundary = ct.substr(pos + 9);
+                // Strip optional quotes
+                if (!boundary.empty() && boundary.front() == '"') boundary = boundary.substr(1);
+                if (!boundary.empty() && boundary.back()  == '"') boundary.pop_back();
+            }
+            return true;
+        },
+
+        [&](const char* data, size_t len) -> bool {
+            buf.insert(buf.end(), data, data + len);
+
+            const std::string bnd     = "--" + boundary + "\r\n";
+            const std::string hdr_end = "\r\n\r\n";
+
+            while (true) {
+                // Find boundary marker
+                auto it = std::search(buf.begin(), buf.end(), bnd.begin(), bnd.end());
+                if (it == buf.end()) break;
+
+                auto after_bnd = it + static_cast<std::ptrdiff_t>(bnd.size());
+
+                // Find end of part headers
+                auto hdr_it = std::search(after_bnd, buf.end(),
+                                          hdr_end.begin(), hdr_end.end());
+                if (hdr_it == buf.end()) break;
+
+                // Parse Content-Length
+                const std::string headers(after_bnd, hdr_it);
+                int content_length = 0;
+                for (const char* key : {"Content-Length:", "content-length:"}) {
+                    const auto cl = headers.find(key);
+                    if (cl != std::string::npos) {
+                        content_length = std::stoi(headers.substr(cl + std::strlen(key)));
+                        break;
+                    }
+                }
+
+                if (content_length <= 0) {
+                    buf.erase(buf.begin(), hdr_it + static_cast<std::ptrdiff_t>(hdr_end.size()));
+                    continue;
+                }
+
+                auto data_start = hdr_it + static_cast<std::ptrdiff_t>(hdr_end.size());
+                if (static_cast<int>(buf.end() - data_start) < content_length) break;
+
+                // Decode JPEG → grayscale
+                int w = 0, h = 0, ch = 0;
+                stbi_uc* pixels = stbi_load_from_memory(
+                    reinterpret_cast<const stbi_uc*>(&*data_start),
+                    content_length, &w, &h, &ch, STBI_grey);
+
+                if (pixels) {
+                    std::lock_guard lock(preview_mtx_);
+                    latest_frame_.pixels.assign(pixels, pixels + w * h);
+                    latest_frame_.w  = w;
+                    latest_frame_.h  = h;
+                    preview_ready_   = true;
+                    stbi_image_free(pixels);
+                }
+
+                buf.erase(buf.begin(), data_start + content_length);
+            }
+
+            return !preview_interrupted_;
+        });
+
+    preview_active_ = false;
+    log("[preview] GET " + url + " closed");
 }
 
 void capture_client::log(const std::string& msg) const {
