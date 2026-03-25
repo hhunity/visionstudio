@@ -66,6 +66,7 @@ private:
 
     std::mutex       sse_cli_mtx_;
     httplib::Client* sse_cli_ptr_{nullptr};
+    std::atomic<bool> sse_interrupted_{false};
 
     std::mutex              sse_ready_mtx_;
     std::condition_variable sse_ready_cv_;

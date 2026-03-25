@@ -69,6 +69,7 @@ void capture_client::stop_capture() {
 }
 
 void capture_client::interrupt_sse() {
+    sse_interrupted_ = true; // set before acquiring lock to avoid race with run_sse()
     cmd_cv_.notify_one();
     std::lock_guard lock(sse_cli_mtx_);
     if (sse_cli_ptr_) sse_cli_ptr_->stop();
@@ -99,6 +100,7 @@ void capture_client::worker_thread_func() {
                 sse_ready_ok_ = false;
             }
             sse_state_.store(sse_state::connecting);
+            sse_interrupted_ = false;
             if (sse_thread_.joinable()) sse_thread_.join();
             sse_thread_ = std::thread([this] { run_sse(); });
             {
@@ -147,6 +149,9 @@ void capture_client::run_sse() {
     {
         std::lock_guard lock(sse_cli_mtx_);
         sse_cli_ptr_ = &sse_cli;
+        // interrupt_sse() may have been called before sse_cli_ptr_ was set;
+        // the flag ensures we don't enter Get() in that case
+        if (sse_interrupted_) sse_cli.stop();
     }
 
     const std::string url = cfg_.host + ":" + std::to_string(cfg_.port) + cfg_.sse_path;
@@ -206,7 +211,7 @@ void capture_client::run_sse() {
                     cur_data = trim(line.substr(5));
                 }
             }
-            return !shutdown_;
+            return !shutdown_ && !sse_interrupted_;
         });
 
     signal_ready(false); // ensure worker is unblocked if Get() returned without response handler
