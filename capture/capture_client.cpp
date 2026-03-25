@@ -151,12 +151,6 @@ void capture_client::run_sse() {
                 sse_state_.store(sse_state::error);
                 return false;
             }
-            // SSE stream established; fire POST /connect.
-            // sse_state transitions to connected on receiving the "connected" SSE event.
-            if (!do_connect_post()) {
-                sse_state_.store(sse_state::error);
-                return false;
-            }
             return true;
         },
 
@@ -306,7 +300,10 @@ void capture_client::dispatch_event(const std::string& event_type,
     };
 
     if (event_type == "connected") {
-        sse_state_.store(sse_state::connected);
+        if (!do_connect_post())
+            sse_state_.store(sse_state::error);
+        else
+            sse_state_.store(sse_state::connected);
     } else if (event_type == "disconnected") {
         sse_state_.store(sse_state::disconnected);
     } else if (event_type == "error") {
