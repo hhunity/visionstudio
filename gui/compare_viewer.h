@@ -51,6 +51,8 @@ public:
     bool        split_dragging        = false;  // true when split slider is being dragged
     bool        show_minimap          = true;
     bool        show_overlays         = true;
+    bool        show_left_overlays    = true;  // compare mode left panel
+    bool        show_right_overlays   = true;  // compare mode right panel
     bool        show_crosshair        = false;
     float       minimap_force_aspect  = 0.0f;
     bool        sync_views            = true;

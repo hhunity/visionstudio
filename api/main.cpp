@@ -89,6 +89,9 @@ struct app_state {
     std::vector<roi_entry>*  overlays       = nullptr; // single mode
     std::vector<roi_entry>*  left_overlays  = nullptr; // compare / split mode (left panel)
     std::vector<roi_entry>*  right_overlays = nullptr; // compare mode (right panel)
+    std::string*             overlay_file       = nullptr; // single / split
+    std::string*             left_overlay_file  = nullptr; // compare left
+    std::string*             right_overlay_file = nullptr; // compare right
 };
 
 // Returns true if path ends with the given (lower-case) extension including dot.
@@ -116,6 +119,7 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
             if (has_ext(paths[i], ".jsonl")) {
                 if (jsonl_io::load(paths[i], *app->overlays)) {
                     app->single_viewer->set_overlays(*app->overlays);
+                    if (app->overlay_file) *app->overlay_file = paths[i];
                     *app->status_msg = std::string("Overlay loaded: ") + paths[i];
                 }
             } else {
@@ -134,10 +138,12 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
         if (!jsonl_files.empty()) {
             jsonl_io::load(jsonl_files[0], *app->left_overlays);
             app->compare->set_left_overlays(*app->left_overlays);
+            if (app->left_overlay_file) *app->left_overlay_file = jsonl_files[0];
         }
         if (jsonl_files.size() >= 2) {
             jsonl_io::load(jsonl_files[1], *app->right_overlays);
             app->compare->set_right_overlays(*app->right_overlays);
+            if (app->right_overlay_file) *app->right_overlay_file = jsonl_files[1];
         }
         *app->status_msg = "Loading...";
         return;
@@ -147,6 +153,7 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
             if (has_ext(paths[i], ".jsonl")) {
                 jsonl_io::load(paths[i], *app->left_overlays);
                 app->compare->set_split_overlays(*app->left_overlays);
+                if (app->overlay_file) *app->overlay_file = paths[i];
                 *app->status_msg = std::string("Overlay loaded: ") + paths[i];
             } else {
                 app->left_loader->start(paths[i]);
@@ -337,13 +344,17 @@ int main(int argc, char** argv) {
     std::vector<roi_entry> overlays;
     std::vector<roi_entry> left_overlays;
     std::vector<roi_entry> right_overlays;
+    std::string            overlay_file;
+    std::string            left_overlay_file;
+    std::string            right_overlay_file;
 
     app_state drop_state{&mode,
                          &single_viewer, &compare,
                          &left_image, &right_image,
                          &status_msg,
                          &left_loader, &right_loader,
-                         &overlays, &left_overlays, &right_overlays};
+                         &overlays, &left_overlays, &right_overlays,
+                         &overlay_file, &left_overlay_file, &right_overlay_file};
     glfwSetWindowUserPointer(window, &drop_state);
 
     // In capture mode launched via CLI, connect automatically.
@@ -367,16 +378,24 @@ int main(int argc, char** argv) {
     // Load overlay JSONL from CLI args
     if (!arg_overlays.empty()) {
         if (mode == app_mode::single) {
-            if (jsonl_io::load(arg_overlays[0], overlays))
+            if (jsonl_io::load(arg_overlays[0], overlays)) {
                 single_viewer.set_overlays(overlays);
+                overlay_file = arg_overlays[0];
+            }
         } else if (mode == app_mode::split) {
-            if (jsonl_io::load(arg_overlays[0], left_overlays))
+            if (jsonl_io::load(arg_overlays[0], left_overlays)) {
                 compare.set_split_overlays(left_overlays);
+                overlay_file = arg_overlays[0];
+            }
         } else if (mode == app_mode::compare) {
-            if (jsonl_io::load(arg_overlays[0], left_overlays))
+            if (jsonl_io::load(arg_overlays[0], left_overlays)) {
                 compare.set_left_overlays(left_overlays);
-            if (arg_overlays.size() >= 2 && jsonl_io::load(arg_overlays[1], right_overlays))
+                left_overlay_file = arg_overlays[0];
+            }
+            if (arg_overlays.size() >= 2 && jsonl_io::load(arg_overlays[1], right_overlays)) {
                 compare.set_right_overlays(right_overlays);
+                right_overlay_file = arg_overlays[1];
+            }
         }
     }
 
@@ -1167,6 +1186,61 @@ int main(int argc, char** argv) {
                     ImGui::Spacing();
                     ImGui::TextDisabled(compare.diff_mode ? "Diff" : "Right");
                     draw_rgba("##rswatch", hi.right_rgba);
+                }
+            }
+
+            // ----- Overlay file selector -----
+            if (mode != app_mode::capture) {
+                ImGui::Separator();
+                ImGui::TextDisabled("Overlay");
+
+                const float load_w = 45.0f;
+                const float path_w = ImGui::GetContentRegionAvail().x
+                                     - load_w - ImGui::GetStyle().ItemSpacing.x;
+
+                if (mode == app_mode::compare) {
+                    // Left
+                    ImGui::Checkbox("L##ov_show_l", &compare.show_left_overlays);
+                    ImGui::SetNextItemWidth(path_w);
+                    ImGui::InputText("##ov_path_l", &left_overlay_file);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Load##ovl", {load_w, 0})) {
+                        if (jsonl_io::load(left_overlay_file, left_overlays)) {
+                            compare.set_left_overlays(left_overlays);
+                            status_msg = "Overlay L loaded: " + left_overlay_file;
+                        }
+                    }
+                    // Right
+                    ImGui::Checkbox("R##ov_show_r", &compare.show_right_overlays);
+                    ImGui::SetNextItemWidth(path_w);
+                    ImGui::InputText("##ov_path_r", &right_overlay_file);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Load##ovr", {load_w, 0})) {
+                        if (jsonl_io::load(right_overlay_file, right_overlays)) {
+                            compare.set_right_overlays(right_overlays);
+                            status_msg = "Overlay R loaded: " + right_overlay_file;
+                        }
+                    }
+                } else {
+                    bool& show_ov = use_single ? single_viewer.show_overlays
+                                               : compare.show_overlays;
+                    ImGui::Checkbox("Show##ov_show", &show_ov);
+                    ImGui::SetNextItemWidth(path_w);
+                    ImGui::InputText("##ov_path", &overlay_file);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Load##ov", {load_w, 0})) {
+                        if (use_single) {
+                            if (jsonl_io::load(overlay_file, overlays)) {
+                                single_viewer.set_overlays(overlays);
+                                status_msg = "Overlay loaded: " + overlay_file;
+                            }
+                        } else { // split
+                            if (jsonl_io::load(overlay_file, left_overlays)) {
+                                compare.set_split_overlays(left_overlays);
+                                status_msg = "Overlay loaded: " + overlay_file;
+                            }
+                        }
+                    }
                 }
             }
 
