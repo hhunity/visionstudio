@@ -1016,7 +1016,7 @@ int main(int argc, char** argv) {
 
         const ImVec2 viewer_origin = ImGui::GetCursorScreenPos();
 
-        if (mode == app_mode::capture && cap_cli.is_preview_active() && preview_tex != 0) {
+        if (mode == app_mode::capture && preview_tex != 0) {
             // Scale to fit preserving aspect ratio
             const float aspect = static_cast<float>(preview_tex_w) / static_cast<float>(preview_tex_h);
             float dw = viewer_w, dh = viewer_w / aspect;
