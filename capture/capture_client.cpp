@@ -415,6 +415,7 @@ void capture_client::run_preview() {
 
                 // Parse Content-Length
                 const std::string headers(after_bnd, hdr_it);
+                fprintf(stderr, "[dbg] part headers: %s\n", headers.c_str());
                 int content_length = 0;
                 for (const char* key : {"Content-Length:", "content-length:"}) {
                     const auto cl = headers.find(key);
