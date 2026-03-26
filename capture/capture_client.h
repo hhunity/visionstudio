@@ -63,6 +63,8 @@ private:
     void dispatch_event(const std::string& event_type, const std::string& data);
     void push_event(server_event ev);
     void run_preview();
+    void run_preview_mjpeg(httplib::Client& cli);
+    void run_preview_raw(httplib::Client& cli);
     void log(const std::string& msg) const;
 
     capture_config cfg_;

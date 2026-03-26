@@ -10,6 +10,8 @@ struct capture_config {
     std::string disconnect_path = "/disconnect";
     std::string sse_path        = "/events";
     std::string preview_path    = "/preview";
+    std::string preview_raw_path = "/preview_raw";
+    bool        preview_raw     = false;  // true = raw pixel stream, false = MJPEG
     int         timeout_ms      = 5000;
     std::string connect_config_file; // path to connection config file (any format)
     std::string capture_config_file; // path to capture config file (JSON)

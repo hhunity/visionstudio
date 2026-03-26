@@ -996,6 +996,11 @@ int main(int argc, char** argv) {
                 // Preview
                 ImGui::Separator();
                 const bool preview_on = cap_cli.is_preview_active();
+                ImGui::BeginDisabled(preview_on);
+                if (ImGui::Checkbox("Raw", &cap_cfg.preview_raw)) {
+                    capture_config::save("visionstudio.json", cap_cfg);
+                }
+                ImGui::EndDisabled();
                 ImGui::BeginDisabled(cur_sse != sse_state::connected);
                 if (!preview_on) {
                     if (ImGui::Button("Start Preview", {-1, 0})) {

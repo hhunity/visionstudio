@@ -359,21 +359,33 @@ bool capture_client::poll_preview_frame(preview_frame& out) {
 }
 
 void capture_client::run_preview() {
+    httplib::Client cli(cfg_.host, cfg_.port);
+    cli.set_read_timeout(3600, 0);
+    {
+        std::lock_guard lock(preview_cli_mtx_);
+        preview_cli_ptr_ = &cli;
+    }
+
+    if (cfg_.preview_raw)
+        run_preview_raw(cli);
+    else
+        run_preview_mjpeg(cli);
+
+    {
+        std::lock_guard lock(preview_cli_mtx_);
+        preview_cli_ptr_ = nullptr;
+    }
+    preview_active_ = false;
+}
+
+void capture_client::run_preview_mjpeg(httplib::Client& cli) {
     const std::string url = cfg_.host + ":" + std::to_string(cfg_.port) + cfg_.preview_path;
     log("[preview] GET " + url);
 
     tjhandle tj = tjInitDecompress();
     if (!tj) {
         push_event(evt_error{"preview: tjInitDecompress failed"});
-        preview_active_ = false;
         return;
-    }
-
-    httplib::Client cli(cfg_.host, cfg_.port);
-    cli.set_read_timeout(3600, 0);
-    {
-        std::lock_guard lock(preview_cli_mtx_);
-        preview_cli_ptr_ = &cli;
     }
 
     std::string         boundary;
@@ -466,12 +478,54 @@ void capture_client::run_preview() {
         });
 
     tjDestroy(tj);
-    {
-        std::lock_guard lock(preview_cli_mtx_);
-        preview_cli_ptr_ = nullptr;
-    }
-    preview_active_ = false;
     log("[preview] GET " + url + " closed");
+}
+
+void capture_client::run_preview_raw(httplib::Client& cli) {
+    const std::string url = cfg_.host + ":" + std::to_string(cfg_.port) + cfg_.preview_raw_path;
+    log("[preview_raw] GET " + url);
+
+    std::vector<uint8_t> buf;
+
+    cli.Get(
+        cfg_.preview_raw_path,
+        httplib::Headers{{"Accept", "application/octet-stream"}},
+
+        [&](const httplib::Response& r) -> bool {
+            log("[preview_raw] GET " + url + " -> " + std::to_string(r.status));
+            if (r.status < 200 || r.status >= 300) {
+                push_event(evt_error{"preview_raw: HTTP " + std::to_string(r.status)});
+                return false;
+            }
+            return true;
+        },
+
+        [&](const char* data, size_t len) -> bool {
+            buf.insert(buf.end(), data, data + len);
+
+            // Frame format: [uint32 width][uint32 height][w*h bytes gray]
+            while (buf.size() >= 8) {
+                uint32_t w = 0, h = 0;
+                std::memcpy(&w, buf.data(),     4);
+                std::memcpy(&h, buf.data() + 4, 4);
+                const size_t frame_size = 8 + static_cast<size_t>(w) * h;
+                if (buf.size() < frame_size) break;
+
+                std::vector<uint8_t> pixels(buf.begin() + 8,
+                                            buf.begin() + static_cast<ptrdiff_t>(frame_size));
+                {
+                    std::lock_guard lock(preview_mtx_);
+                    latest_frame_.pixels = std::move(pixels);
+                    latest_frame_.w      = static_cast<int>(w);
+                    latest_frame_.h      = static_cast<int>(h);
+                    preview_ready_       = true;
+                }
+                buf.erase(buf.begin(), buf.begin() + static_cast<ptrdiff_t>(frame_size));
+            }
+            return !preview_interrupted_;
+        });
+
+    log("[preview_raw] GET " + url + " closed");
 }
 
 void capture_client::log(const std::string& msg) const {
