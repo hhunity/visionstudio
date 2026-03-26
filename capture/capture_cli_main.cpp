@@ -8,19 +8,22 @@
 // Batch mode (commands as arguments):
 //   capture_cli connect start wait 3000 stop disconnect
 //   capture_cli --port 9090 connect
+//   capture_cli connect preview_start wait 5000 preview_stop disconnect
 //
 // Interactive mode (no commands given):
 //   capture_cli
 //   capture_cli --host 192.168.1.10 --port 9090
 //
 // Commands:
-//   connect      - connect() + wait for SSE connected
-//   start        - start_capture()
-//   stop         - stop_capture()
-//   disconnect   - disconnect()
-//   wait <ms>    - sleep for N milliseconds (polling events during wait)
-//   status       - print current SSE state
-//   quit / exit  - exit (interactive mode only)
+//   connect        - connect() + wait for SSE connected
+//   start          - start_capture()
+//   stop           - stop_capture()
+//   disconnect     - disconnect()
+//   wait <ms>      - sleep for N milliseconds (polling events + preview frames during wait)
+//   status         - print current SSE state and preview active flag
+//   preview_start  - start MJPEG preview stream
+//   preview_stop   - stop MJPEG preview stream
+//   quit / exit    - exit (interactive mode only)
 
 #include <CLI/CLI.hpp>
 #include <atomic>
@@ -123,17 +126,37 @@ static bool exec_cmd(const std::vector<std::string>& tokens, size_t& i,
         std::cout << ">> wait " << ms << "ms\n";
         const auto deadline =
             std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+        int frame_count = 0;
         while (std::chrono::steady_clock::now() < deadline) {
             drain_events(client);
+            preview_frame frame;
+            while (client.poll_preview_frame(frame)) {
+                ++frame_count;
+                std::cout << "[preview] frame #" << frame_count
+                          << "  " << frame.w << "x" << frame.h
+                          << "  (" << frame.pixels.size() << " bytes)\n";
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
+        if (frame_count > 0)
+            std::cout << "[preview] total frames received: " << frame_count << "\n";
 
     } else if (cmd == "status") {
-        std::cout << "SSE state: " << sse_state_str(client.get_sse_state()) << "\n";
+        std::cout << "SSE state:      " << sse_state_str(client.get_sse_state()) << "\n";
+        std::cout << "preview active: " << (client.is_preview_active() ? "yes" : "no") << "\n";
+
+    } else if (cmd == "preview_start") {
+        std::cout << ">> preview_start\n";
+        client.start_preview();
+
+    } else if (cmd == "preview_stop") {
+        std::cout << ">> preview_stop\n";
+        client.stop_preview();
 
     } else {
         std::cerr << "unknown command: " << cmd
-                  << "  (connect / start / stop / disconnect / wait <ms> / status / quit)\n";
+                  << "  (connect / start / stop / disconnect / wait <ms> / status"
+                     " / preview_start / preview_stop / quit)\n";
     }
     return true;
 }
@@ -144,13 +167,22 @@ static bool exec_cmd(const std::vector<std::string>& tokens, size_t& i,
 
 static void run_interactive(capture_client& client) {
     std::cout << "capture_cli interactive mode\n"
-              << "commands: connect  start  stop  disconnect  wait <ms>  status  quit\n\n";
+              << "commands: connect  start  stop  disconnect  wait <ms>  status"
+                 "  preview_start  preview_stop  quit\n\n";
 
-    // Background thread: poll events while user is typing
+    // Background thread: poll events + preview frames while user is typing
     std::atomic<bool> stop_poller{false};
+    std::atomic<int>  total_preview_frames{0};
     std::thread poller([&] {
         while (!stop_poller.load()) {
             drain_events(client);
+            preview_frame frame;
+            while (client.poll_preview_frame(frame)) {
+                const int n = ++total_preview_frames;
+                std::cout << "\n[preview] frame #" << n
+                          << "  " << frame.w << "x" << frame.h
+                          << "  (" << frame.pixels.size() << " bytes)\n> " << std::flush;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     });
@@ -182,6 +214,13 @@ static void run_interactive(capture_client& client) {
         poller = std::thread([&] {
             while (!stop_poller.load()) {
                 drain_events(client);
+                preview_frame frame;
+                while (client.poll_preview_frame(frame)) {
+                    const int n = ++total_preview_frames;
+                    std::cout << "\n[preview] frame #" << n
+                              << "  " << frame.w << "x" << frame.h
+                              << "  (" << frame.pixels.size() << " bytes)\n> " << std::flush;
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
         });
