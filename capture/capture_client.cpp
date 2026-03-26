@@ -379,66 +379,35 @@ void capture_client::run_preview() {
 }
 
 // ---------------------------------------------------------------------------
-// Shared preview stream helper
+// MJPEG / raw preview
 // ---------------------------------------------------------------------------
-
-void capture_client::run_preview_stream(
-        httplib::Client& cli,
-        const std::string& path,
-        const httplib::Headers& headers,
-        const std::string& log_tag,
-        std::function<void(const httplib::Response&)> on_response,
-        std::function<void(std::vector<uint8_t>&)>    parse_frames) {
-    const std::string url = cfg_.host + ":" + std::to_string(cfg_.port) + path;
-    log("[" + log_tag + "] GET " + url);
-
-    std::vector<uint8_t> buf;
-
-    cli.Get(
-        path, headers,
-
-        [&](const httplib::Response& r) -> bool {
-            log("[" + log_tag + "] GET " + url + " -> " + std::to_string(r.status));
-            if (r.status < 200 || r.status >= 300) {
-                push_event(evt_error{log_tag + ": HTTP " + std::to_string(r.status)});
-                return false;
-            }
-            on_response(r);
-            return true;
-        },
-
-        [&](const char* data, size_t len) -> bool {
-            buf.insert(buf.end(), data, data + len);
-            parse_frames(buf);
-            return !preview_interrupted_;
-        });
-
-    log("[" + log_tag + "] GET " + url + " closed");
-}
 
 void capture_client::store_preview_frame(int w, int h, std::vector<uint8_t> pixels) {
     std::lock_guard lock(preview_mtx_);
-    latest_frame_.pixels = std::move(pixels);
-    latest_frame_.w      = w;
-    latest_frame_.h      = h;
-    preview_ready_       = true;
+    latest_frame_ = {std::move(pixels), w, h};
+    preview_ready_ = true;
 }
 
 void capture_client::run_preview_mjpeg(httplib::Client& cli) {
+    const std::string url = cfg_.host + ":" + std::to_string(cfg_.port) + cfg_.preview_path;
+    log("[preview] GET " + url);
+
     tjhandle tj = tjInitDecompress();
-    if (!tj) {
-        push_event(evt_error{"preview: tjInitDecompress failed"});
-        return;
-    }
+    if (!tj) { push_event(evt_error{"preview: tjInitDecompress failed"}); return; }
 
-    std::string boundary;
+    std::string          boundary;
+    std::vector<uint8_t> buf;
 
-    run_preview_stream(cli, cfg_.preview_path,
+    cli.Get(
+        cfg_.preview_path,
         httplib::Headers{{"Accept", "multipart/x-mixed-replace, image/jpeg"}},
-        "preview",
 
-        [&](const httplib::Response& r) {
-            // Extract boundary from Content-Type header
+        [&](const httplib::Response& r) -> bool {
+            log("[preview] GET " + url + " -> " + std::to_string(r.status));
+            if (r.status < 200 || r.status >= 300) {
+                push_event(evt_error{"preview: HTTP " + std::to_string(r.status)});
+                return false;
+            }
             const auto ct  = r.get_header_value("Content-Type");
             const auto pos = ct.find("boundary=");
             if (pos != std::string::npos) {
@@ -446,16 +415,18 @@ void capture_client::run_preview_mjpeg(httplib::Client& cli) {
                 if (!boundary.empty() && boundary.front() == '"') boundary = boundary.substr(1);
                 if (!boundary.empty() && boundary.back()  == '"') boundary.pop_back();
             }
+            return true;
         },
 
-        [&](std::vector<uint8_t>& buf) {
+        [&](const char* data, size_t len) -> bool {
+            buf.insert(buf.end(), data, data + len);
+
             const std::string bnd     = "--" + boundary + "\r\n";
             const std::string hdr_end = "\r\n\r\n";
 
             while (true) {
                 auto it = std::search(buf.begin(), buf.end(), bnd.begin(), bnd.end());
                 if (it == buf.end()) break;
-
                 auto after_bnd = it + static_cast<std::ptrdiff_t>(bnd.size());
                 auto hdr_it    = std::search(after_bnd, buf.end(),
                                              hdr_end.begin(), hdr_end.end());
@@ -470,16 +441,13 @@ void capture_client::run_preview_mjpeg(httplib::Client& cli) {
                         break;
                     }
                 }
-
                 if (content_length <= 0) {
                     buf.erase(buf.begin(), hdr_it + static_cast<std::ptrdiff_t>(hdr_end.size()));
                     continue;
                 }
-
                 auto data_start = hdr_it + static_cast<std::ptrdiff_t>(hdr_end.size());
                 if (static_cast<int>(buf.end() - data_start) < content_length) break;
 
-                // Decode JPEG → grayscale with libjpeg-turbo
                 int w = 0, h = 0, jpeg_sub = 0, jpeg_cs = 0;
                 if (tjDecompressHeader3(tj,
                         reinterpret_cast<const unsigned char*>(&*data_start),
@@ -490,26 +458,39 @@ void capture_client::run_preview_mjpeg(httplib::Client& cli) {
                             reinterpret_cast<const unsigned char*>(&*data_start),
                             static_cast<unsigned long>(content_length),
                             pixels.data(), w, w, h,
-                            TJPF_GRAY, TJFLAG_FASTDCT) == 0) {
+                            TJPF_GRAY, TJFLAG_FASTDCT) == 0)
                         store_preview_frame(w, h, std::move(pixels));
-                    }
                 }
-
                 buf.erase(buf.begin(), data_start + content_length);
             }
+            return !preview_interrupted_;
         });
 
     tjDestroy(tj);
+    log("[preview] GET " + url + " closed");
 }
 
 void capture_client::run_preview_raw(httplib::Client& cli) {
-    run_preview_stream(cli, cfg_.preview_raw_path,
+    const std::string url = cfg_.host + ":" + std::to_string(cfg_.port) + cfg_.preview_raw_path;
+    log("[preview_raw] GET " + url);
+
+    std::vector<uint8_t> buf;
+
+    cli.Get(
+        cfg_.preview_raw_path,
         httplib::Headers{{"Accept", "application/octet-stream"}},
-        "preview_raw",
 
-        [](const httplib::Response&) {},
+        [&](const httplib::Response& r) -> bool {
+            log("[preview_raw] GET " + url + " -> " + std::to_string(r.status));
+            if (r.status < 200 || r.status >= 300) {
+                push_event(evt_error{"preview_raw: HTTP " + std::to_string(r.status)});
+                return false;
+            }
+            return true;
+        },
 
-        [&](std::vector<uint8_t>& buf) {
+        [&](const char* data, size_t len) -> bool {
+            buf.insert(buf.end(), data, data + len);
             // Frame format: [uint32 width][uint32 height][w*h bytes gray]
             while (buf.size() >= 8) {
                 uint32_t w = 0, h = 0;
@@ -517,13 +498,15 @@ void capture_client::run_preview_raw(httplib::Client& cli) {
                 std::memcpy(&h, buf.data() + 4, 4);
                 const size_t frame_size = 8 + static_cast<size_t>(w) * h;
                 if (buf.size() < frame_size) break;
-
                 std::vector<uint8_t> pixels(buf.begin() + 8,
                                             buf.begin() + static_cast<ptrdiff_t>(frame_size));
                 store_preview_frame(static_cast<int>(w), static_cast<int>(h), std::move(pixels));
                 buf.erase(buf.begin(), buf.begin() + static_cast<ptrdiff_t>(frame_size));
             }
+            return !preview_interrupted_;
         });
+
+    log("[preview_raw] GET " + url + " closed");
 }
 
 void capture_client::log(const std::string& msg) const {
