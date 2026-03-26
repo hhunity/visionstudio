@@ -1016,8 +1016,8 @@ int main(int argc, char** argv) {
 
         const ImVec2 viewer_origin = ImGui::GetCursorScreenPos();
 
-        if (mode == app_mode::capture && preview_tex != 0) {
-            // Scale to fit preserving aspect ratio
+        if (mode == app_mode::capture && capture_mode == 0 && preview_tex != 0) {
+            // Full-viewer live preview (single mode)
             const float aspect = static_cast<float>(preview_tex_w) / static_cast<float>(preview_tex_h);
             float dw = viewer_w, dh = viewer_w / aspect;
             if (dh > viewer_h) { dh = viewer_h; dw = viewer_h * aspect; }
@@ -1029,6 +1029,24 @@ int main(int argc, char** argv) {
             single_viewer.render("single_canvas", viewer_w, viewer_h);
         } else {
             compare.render(viewer_w, viewer_h);
+        }
+
+        // For capture_mode 1/2: overlay live preview on the right panel
+        if (mode == app_mode::capture && capture_mode != 0 && preview_tex != 0) {
+            const float spacing  = ImGui::GetStyle().ItemSpacing.x;
+            const float half_w   = std::floor((viewer_w - spacing) * 0.5f);
+            const ImVec2 rmin    = {viewer_origin.x + half_w + spacing, viewer_origin.y};
+            const ImVec2 rmax    = {viewer_origin.x + viewer_w,         viewer_origin.y + viewer_h};
+            const float  rw      = rmax.x - rmin.x;
+            const float  rh      = rmax.y - rmin.y;
+            const float  aspect  = static_cast<float>(preview_tex_w) / static_cast<float>(preview_tex_h);
+            float dw = rw, dh = rw / aspect;
+            if (dh > rh) { dh = rh; dw = rh * aspect; }
+            const ImVec2 imin = {rmin.x + (rw - dw) * 0.5f, rmin.y + (rh - dh) * 0.5f};
+            const ImVec2 imax = {imin.x + dw,                imin.y + dh};
+            auto* dl = ImGui::GetWindowDrawList();
+            dl->AddRectFilled(rmin, rmax, IM_COL32(20, 20, 20, 255));
+            dl->AddImage(static_cast<ImTextureID>(preview_tex), imin, imax);
         }
 
         // ----- Shared helpers for profile panels -----
