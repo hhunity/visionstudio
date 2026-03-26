@@ -30,11 +30,11 @@ capture_client::~capture_client() {
         shutdown_ = true;
     }
     cmd_cv_.notify_all();
+    if (worker_thread_.joinable())  worker_thread_.join();
     interrupt_sse();
     stop_preview();
     if (sse_thread_.joinable())     sse_thread_.join();
     if (preview_thread_.joinable()) preview_thread_.join();
-    if (worker_thread_.joinable())  worker_thread_.join();
 }
 
 // ---------------------------------------------------------------------------
