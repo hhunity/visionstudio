@@ -63,8 +63,15 @@ private:
     void dispatch_event(const std::string& event_type, const std::string& data);
     void push_event(server_event ev);
     void run_preview();
+    void run_preview_stream(httplib::Client& cli,
+                            const std::string& path,
+                            const httplib::Headers& headers,
+                            const std::string& log_tag,
+                            std::function<void(const httplib::Response&)> on_response,
+                            std::function<void(std::vector<uint8_t>&)>    parse_frames);
     void run_preview_mjpeg(httplib::Client& cli);
     void run_preview_raw(httplib::Client& cli);
+    void store_preview_frame(int w, int h, std::vector<uint8_t> pixels);
     void log(const std::string& msg) const;
 
     capture_config cfg_;

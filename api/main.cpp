@@ -513,8 +513,6 @@ int main(int argc, char** argv) {
             // ----- Upload preview frame to GPU -----
             preview_frame pf;
             if (cap_cli.poll_preview_frame(pf)) {
-                fprintf(stderr, "[dbg] frame %dx%d tex=%u active=%d\n",
-                        pf.w, pf.h, preview_tex, cap_cli.is_preview_active());
                 if (preview_tex == 0 || preview_tex_w != pf.w || preview_tex_h != pf.h) {
                     if (preview_tex == 0) glGenTextures(1, &preview_tex);
                     glBindTexture(GL_TEXTURE_2D, preview_tex);
