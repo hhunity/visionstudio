@@ -43,6 +43,7 @@ enum class app_mode { none, single, compare, split, capture };
 struct async_loader {
     std::future<image_data> future;
     std::atomic<float>      progress{0.0f};
+    std::atomic<bool>       cancel{false};
     bool                    active = false;
     std::string             path;
 
@@ -50,14 +51,21 @@ struct async_loader {
     async_loader(const async_loader&)            = delete;
     async_loader& operator=(const async_loader&) = delete;
 
+    ~async_loader() {
+        cancel.store(true);          // signal tiff_io::read to exit early
+        if (future.valid()) future.wait(); // now completes quickly
+    }
+
     void start(std::string p) {
         path = p;
         progress.store(0.0f);
+        cancel.store(false);
         active = true;
         auto* prog = &progress;
-        future = std::async(std::launch::async, [p = std::move(p), prog]() {
+        auto* can  = &cancel;
+        future = std::async(std::launch::async, [p = std::move(p), prog, can]() {
             image_data img;
-            if (!tiff_io::read(p, img, prog))
+            if (!tiff_io::read(p, img, prog, can))
                 img.pixels.clear(); // ensure empty() == true so caller knows load failed
             return img;
         });

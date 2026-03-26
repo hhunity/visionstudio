@@ -51,7 +51,8 @@ static bool read_strips_8bit(const std::string& /*path*/, TIFF* tif,
                               uint32_t w, uint32_t h,
                               uint16_t photometric, uint16_t spp,
                               image_data& out,
-                              std::atomic<float>* progress) {
+                              std::atomic<float>* progress,
+                              const std::atomic<bool>* cancel) {
     uint32_t rows_per_strip = h;
     TIFFGetFieldDefaulted(tif, TIFFTAG_ROWSPERSTRIP, &rows_per_strip);
     if (rows_per_strip == 0) rows_per_strip = h;
@@ -61,6 +62,7 @@ static bool read_strips_8bit(const std::string& /*path*/, TIFF* tif,
     std::vector<uint8_t> buf(static_cast<size_t>(strip_bytes));
 
     for (uint32_t s = 0; s < num_strips; ++s) {
+        if (cancel && cancel->load()) return false;
         if (TIFFReadEncodedStrip(tif, s, buf.data(), strip_bytes) < 0)
             return false;
 
@@ -112,7 +114,8 @@ static bool read_tiles_8bit(const std::string& /*path*/, TIFF* tif,
                              uint32_t w, uint32_t h,
                              uint16_t photometric, uint16_t spp,
                              image_data& out,
-                             std::atomic<float>* progress) {
+                             std::atomic<float>* progress,
+                             const std::atomic<bool>* cancel) {
     uint32_t tile_w = 0, tile_h = 0;
     TIFFGetField(tif, TIFFTAG_TILEWIDTH,  &tile_w);
     TIFFGetField(tif, TIFFTAG_TILELENGTH, &tile_h);
@@ -124,6 +127,7 @@ static bool read_tiles_8bit(const std::string& /*path*/, TIFF* tif,
     std::vector<uint8_t> buf(static_cast<size_t>(tile_bytes));
 
     for (uint32_t t = 0; t < ntiles; ++t) {
+        if (cancel && cancel->load()) return false;
         if (TIFFReadEncodedTile(tif, t, buf.data(), tile_bytes) < 0)
             return false;
 
@@ -146,7 +150,8 @@ static bool read_tiles_8bit(const std::string& /*path*/, TIFF* tif,
 static bool read_strips_generic(const std::string& /*path*/, TIFF* tif,
                                  uint32_t w, uint32_t h,
                                  image_data& out,
-                                 std::atomic<float>* progress) {
+                                 std::atomic<float>* progress,
+                                 const std::atomic<bool>* cancel) {
     uint32_t rows_per_strip = h;
     TIFFGetFieldDefaulted(tif, TIFFTAG_ROWSPERSTRIP, &rows_per_strip);
     if (rows_per_strip == 0) rows_per_strip = h;
@@ -155,6 +160,7 @@ static bool read_strips_generic(const std::string& /*path*/, TIFF* tif,
     std::vector<uint32_t> rgba(static_cast<size_t>(w) * rows_per_strip);
 
     for (uint32_t s = 0; s < num_strips; ++s) {
+        if (cancel && cancel->load()) return false;
         const uint32_t row0 = s * rows_per_strip;
         if (!TIFFReadRGBAStrip(tif, row0, rgba.data()))
             return false;
@@ -182,7 +188,8 @@ static bool read_strips_generic(const std::string& /*path*/, TIFF* tif,
 static bool read_tiles_generic(const std::string& path, TIFF* tif,
                                 uint32_t w, uint32_t h,
                                 image_data& out,
-                                std::atomic<float>* progress) {
+                                std::atomic<float>* progress,
+                                const std::atomic<bool>* cancel) {
     uint32_t tile_w = 0, tile_h = 0;
     TIFFGetField(tif, TIFFTAG_TILEWIDTH,  &tile_w);
     TIFFGetField(tif, TIFFTAG_TILELENGTH, &tile_h);
@@ -193,6 +200,7 @@ static bool read_tiles_generic(const std::string& path, TIFF* tif,
     std::vector<uint32_t> rgba(static_cast<size_t>(tile_w) * tile_h);
 
     for (uint32_t t = 0; t < ntiles; ++t) {
+        if (cancel && cancel->load()) return false;
         const uint32_t tx = (t % tiles_x) * tile_w;
         const uint32_t ty = (t / tiles_x) * tile_h;
 
@@ -229,7 +237,8 @@ static bool read_strips_gray16(const std::string& path, TIFF* tif,
                                 uint32_t w, uint32_t h,
                                 uint16_t photometric,
                                 image_data& out,
-                                std::atomic<float>* progress) {
+                                std::atomic<float>* progress,
+                                const std::atomic<bool>* cancel) {
     (void)path; // uses the already-open tif handle
     uint32_t rps = h;
     TIFFGetFieldDefaulted(tif, TIFFTAG_ROWSPERSTRIP, &rps);
@@ -241,6 +250,7 @@ static bool read_strips_gray16(const std::string& path, TIFF* tif,
     std::vector<uint16_t> raw(static_cast<size_t>(w) * h, 0);
     std::vector<uint8_t>  buf(static_cast<size_t>(sbytes));
     for (uint32_t s = 0; s < num_strips; ++s) {
+        if (cancel && cancel->load()) return false;
         if (TIFFReadEncodedStrip(tif, s, buf.data(), sbytes) < 0) return false;
         const uint32_t row0 = s * rps;
         const uint32_t row1 = std::min(row0 + rps, h);
@@ -273,7 +283,8 @@ static bool read_tiles_gray16(const std::string& path, TIFF* tif,
                                uint32_t w, uint32_t h,
                                uint16_t photometric,
                                image_data& out,
-                               std::atomic<float>* progress) {
+                               std::atomic<float>* progress,
+                               const std::atomic<bool>* cancel) {
     (void)path;
     uint32_t tile_w = 0, tile_h = 0;
     TIFFGetField(tif, TIFFTAG_TILEWIDTH,  &tile_w);
@@ -287,6 +298,7 @@ static bool read_tiles_gray16(const std::string& path, TIFF* tif,
     std::vector<uint16_t> raw(static_cast<size_t>(w) * h, 0);
     std::vector<uint8_t>  buf(static_cast<size_t>(tile_bytes));
     for (uint32_t t = 0; t < ntiles; ++t) {
+        if (cancel && cancel->load()) return false;
         if (TIFFReadEncodedTile(tif, t, buf.data(), tile_bytes) < 0) return false;
         const uint32_t tx     = (t % tiles_x) * tile_w;
         const uint32_t ty     = (t / tiles_x) * tile_h;
@@ -321,7 +333,8 @@ static bool read_tiles_gray16(const std::string& path, TIFF* tif,
 // Public API
 // ---------------------------------------------------------------------------
 
-bool read(const std::string& path, image_data& out, std::atomic<float>* progress) {
+bool read(const std::string& path, image_data& out,
+          std::atomic<float>* progress, const std::atomic<bool>* cancel) {
     TIFF* tif = TIFFOpen(path.c_str(), "r");
     if (!tif) {
         fprintf(stderr, "tiff_io::read: cannot open '%s'\n", path.c_str());
@@ -365,8 +378,8 @@ bool read(const std::string& path, image_data& out, std::atomic<float>* progress
     bool ok = false;
     if (fast_path) {
         ok = is_tiled
-            ? read_tiles_8bit(path, tif, w, h, photometric, samples_per_pixel, out, progress)
-            : read_strips_8bit(path, tif, w, h, photometric, samples_per_pixel, out, progress);
+            ? read_tiles_8bit(path, tif, w, h, photometric, samples_per_pixel, out, progress, cancel)
+            : read_strips_8bit(path, tif, w, h, photometric, samples_per_pixel, out, progress, cancel);
     }
 
     // 16-bit grayscale: read raw uint16 and auto-scale to 8-bit.
@@ -374,15 +387,15 @@ bool read(const std::string& path, image_data& out, std::atomic<float>* progress
     // values with v*255/65535, turning 12-bit camera data (0-4095) into 0-15 (near black).
     if (!ok && bits_per_sample == 16 && is_gray && samples_per_pixel == 1 && is_contig) {
         ok = is_tiled
-            ? read_tiles_gray16(path, tif, w, h, photometric, out, progress)
-            : read_strips_gray16(path, tif, w, h, photometric, out, progress);
+            ? read_tiles_gray16(path, tif, w, h, photometric, out, progress, cancel)
+            : read_strips_gray16(path, tif, w, h, photometric, out, progress, cancel);
     }
 
     // Generic fallback: any format, any bit depth (1/2/4/16-bit, palette, CMYK, …)
-    if (!ok) {
+    if (!ok && !(cancel && cancel->load())) {
         ok = is_tiled
-            ? read_tiles_generic(path, tif, w, h, out, progress)
-            : read_strips_generic(path, tif, w, h, out, progress);
+            ? read_tiles_generic(path, tif, w, h, out, progress, cancel)
+            : read_strips_generic(path, tif, w, h, out, progress, cancel);
     }
 
     if (!ok) {

@@ -19,8 +19,9 @@ struct ReadOptions {
 };
 
 IO_API bool read(const std::string& path, image_data& out,
-                 std::atomic<float>* progress = nullptr,
-                 const ReadOptions& opts = {});
+                 std::atomic<float>*  progress = nullptr,
+                 const std::atomic<bool>* cancel  = nullptr,
+                 const ReadOptions&   opts     = {});
 
 IO_API bool write(const std::string& path, const image_data& img,
                   const WriteOptions& opts = {});
