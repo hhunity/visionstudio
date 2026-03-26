@@ -1,8 +1,7 @@
 #include "capture/capture_client.h"
 #include <httplib.h>
 #include <nlohmann/json.hpp>
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
+#include <turbojpeg.h>
 #include <algorithm>
 #include <fstream>
 
@@ -363,6 +362,13 @@ void capture_client::run_preview() {
     const std::string url = cfg_.host + ":" + std::to_string(cfg_.port) + cfg_.preview_path;
     log("[preview] GET " + url);
 
+    tjhandle tj = tjInitDecompress();
+    if (!tj) {
+        push_event(evt_error{"preview: tjInitDecompress failed"});
+        preview_active_ = false;
+        return;
+    }
+
     httplib::Client cli(cfg_.host, cfg_.port);
     cli.set_read_timeout(3600, 0);
     {
@@ -433,19 +439,24 @@ void capture_client::run_preview() {
                 auto data_start = hdr_it + static_cast<std::ptrdiff_t>(hdr_end.size());
                 if (static_cast<int>(buf.end() - data_start) < content_length) break;
 
-                // Decode JPEG → grayscale
-                int w = 0, h = 0, ch = 0;
-                stbi_uc* pixels = stbi_load_from_memory(
-                    reinterpret_cast<const stbi_uc*>(&*data_start),
-                    content_length, &w, &h, &ch, STBI_grey);
-
-                if (pixels) {
-                    std::lock_guard lock(preview_mtx_);
-                    latest_frame_.pixels.assign(pixels, pixels + w * h);
-                    latest_frame_.w  = w;
-                    latest_frame_.h  = h;
-                    preview_ready_   = true;
-                    stbi_image_free(pixels);
+                // Decode JPEG → grayscale with libjpeg-turbo
+                int w = 0, h = 0, jpeg_sub = 0, jpeg_cs = 0;
+                if (tjDecompressHeader3(tj,
+                        reinterpret_cast<const unsigned char*>(&*data_start),
+                        static_cast<unsigned long>(content_length),
+                        &w, &h, &jpeg_sub, &jpeg_cs) == 0 && w > 0 && h > 0) {
+                    std::vector<uint8_t> pixels(static_cast<size_t>(w) * h);
+                    if (tjDecompress2(tj,
+                            reinterpret_cast<const unsigned char*>(&*data_start),
+                            static_cast<unsigned long>(content_length),
+                            pixels.data(), w, w, h,
+                            TJPF_GRAY, TJFLAG_FASTDCT) == 0) {
+                        std::lock_guard lock(preview_mtx_);
+                        latest_frame_.pixels = std::move(pixels);
+                        latest_frame_.w      = w;
+                        latest_frame_.h      = h;
+                        preview_ready_       = true;
+                    }
                 }
 
                 buf.erase(buf.begin(), data_start + content_length);
@@ -454,6 +465,7 @@ void capture_client::run_preview() {
             return !preview_interrupted_;
         });
 
+    tjDestroy(tj);
     {
         std::lock_guard lock(preview_cli_mtx_);
         preview_cli_ptr_ = nullptr;
