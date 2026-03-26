@@ -334,9 +334,11 @@ int main(int argc, char** argv) {
     config_tab capture_cfg_tab;   // capture_config_file
     config_tab connect_cfg_tab;   // connect_config_file
 
-    capture_config cap_cfg  = capture_config::load("visionstudio.json");
-    capture_client cap_cli(cap_cfg);
-    conn_edit      conn_buf = make_conn_edit(cap_cfg);
+    capture_config                cap_cfg  = capture_config::load("visionstudio.json");
+    std::optional<capture_client> cap_cli_opt;
+    if (mode == app_mode::capture) cap_cli_opt.emplace(cap_cfg);
+    capture_client* cap_cli = cap_cli_opt ? &*cap_cli_opt : nullptr;
+    conn_edit       conn_buf = make_conn_edit(cap_cfg);
 
     if (!cap_cfg.capture_config_file.empty()) {
         capture_cfg_tab.path = cap_cfg.capture_config_file;
@@ -367,7 +369,7 @@ int main(int argc, char** argv) {
 
     // In capture mode launched via CLI, connect automatically.
     if (mode == app_mode::capture)
-        cap_cli.connect();
+        cap_cli->connect();
 
     // Apply diff flags from args (compare / split mode)
     if (mode == app_mode::compare || mode == app_mode::split) {
@@ -510,7 +512,7 @@ int main(int argc, char** argv) {
 
         // ----- Poll capture events (SSE) -----
         if (mode == app_mode::capture) {
-            while (auto ev = cap_cli.poll_server_event()) {
+            while (auto ev = cap_cli->poll_server_event()) {
                 if (std::get_if<evt_connected>(&*ev)) {
                     cur_sse    = sse_state::connected;
                     status_msg = "Connected";
@@ -539,7 +541,7 @@ int main(int argc, char** argv) {
 
             // ----- Upload preview frame to GPU -----
             preview_frame pf;
-            if (cap_cli.poll_preview_frame(pf)) {
+            if (cap_cli->poll_preview_frame(pf)) {
                 if (preview_tex == 0 || preview_tex_w != pf.w || preview_tex_h != pf.h) {
                     if (preview_tex == 0) glGenTextures(1, &preview_tex);
                     glBindTexture(GL_TEXTURE_2D, preview_tex);
@@ -902,14 +904,14 @@ int main(int argc, char** argv) {
                 ImGui::BeginDisabled(cur_sse != sse_state::disconnected &&
                                      cur_sse != sse_state::error);
                 if (ImGui::Button("Connect", {-1, 0})) {
-                    cap_cli.connect();
+                    cap_cli->connect();
                     status_msg = "Connecting...";
                 }
                 ImGui::EndDisabled();
 
                 ImGui::BeginDisabled(cur_sse != sse_state::connected);
                 if (ImGui::Button("Disconnect", {-1, 0})) {
-                    cap_cli.disconnect();
+                    cap_cli->disconnect();
                     capturing  = false;
                     status_msg = "Disconnecting...";
                 }
@@ -999,7 +1001,7 @@ int main(int argc, char** argv) {
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.25f, 0.70f, 0.25f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.12f, 0.40f, 0.12f, 1.0f});
                 if (ImGui::Button("Start Capture", {-1, 0})) {
-                    cap_cli.start_capture();
+                    cap_cli->start_capture();
                     capturing  = true;
                     status_msg = "Capture started";
                 }
@@ -1011,7 +1013,7 @@ int main(int argc, char** argv) {
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.78f, 0.20f, 0.20f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.45f, 0.10f, 0.10f, 1.0f});
                 if (ImGui::Button("Stop Capture", {-1, 0})) {
-                    cap_cli.stop_capture();
+                    cap_cli->stop_capture();
                     capturing  = false;
                     status_msg = "Capture stopped";
                 }
@@ -1020,7 +1022,7 @@ int main(int argc, char** argv) {
 
                 // Preview
                 ImGui::Separator();
-                const bool preview_on = cap_cli.is_preview_active();
+                const bool preview_on = cap_cli->is_preview_active();
                 ImGui::BeginDisabled(preview_on);
                 if (ImGui::Checkbox("Raw", &cap_cfg.preview_raw)) {
                     capture_config::save("visionstudio.json", cap_cfg);
@@ -1029,12 +1031,12 @@ int main(int argc, char** argv) {
                 ImGui::BeginDisabled(cur_sse != sse_state::connected);
                 if (!preview_on) {
                     if (ImGui::Button("Start Preview", {-1, 0})) {
-                        cap_cli.start_preview();
+                        cap_cli->start_preview();
                         status_msg = "Preview started";
                     }
                 } else {
                     if (ImGui::Button("Stop Preview", {-1, 0})) {
-                        cap_cli.stop_preview();
+                        cap_cli->stop_preview();
                         status_msg = "Preview stopped";
                     }
                 }
