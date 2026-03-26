@@ -297,7 +297,7 @@ int main(int argc, char** argv) {
         e.timeout_ms = c.timeout_ms;
         return e;
     };
-    // Camera config editor state: one entry per file in cap_cfg.capture_config_files.
+    // Camera config editor state.
     struct config_tab {
         std::string path;
         std::string text;
@@ -316,24 +316,20 @@ int main(int argc, char** argv) {
             modified = false;
         }
     };
-    std::vector<config_tab> config_tabs;         // capture_config_files
-    int                     selected_config_tab  = 0;
-    std::vector<config_tab> connect_tabs;        // connect_config_files
-    int                     selected_connect_tab = 0;
+    config_tab capture_cfg_tab;   // capture_config_file
+    config_tab connect_cfg_tab;   // connect_config_file
 
     capture_config cap_cfg  = capture_config::load("visionstudio.json");
     capture_client cap_cli(cap_cfg);
     conn_edit      conn_buf = make_conn_edit(cap_cfg);
 
-    // Build config editor tabs from capture_config_files.
-    for (const auto& p : cap_cfg.capture_config_files) {
-        config_tab t; t.path = p; t.load();
-        config_tabs.push_back(std::move(t));
+    if (!cap_cfg.capture_config_file.empty()) {
+        capture_cfg_tab.path = cap_cfg.capture_config_file;
+        capture_cfg_tab.load();
     }
-    // Build connect editor tabs from connect_config_files.
-    for (const auto& p : cap_cfg.connect_config_files) {
-        config_tab t; t.path = p; t.load();
-        connect_tabs.push_back(std::move(t));
+    if (!cap_cfg.connect_config_file.empty()) {
+        connect_cfg_tab.path = cap_cfg.connect_config_file;
+        connect_cfg_tab.load();
     }
 
     async_loader           left_loader;
@@ -655,17 +651,8 @@ int main(int argc, char** argv) {
         ImGui::SetNextWindowSize({700, 540}, ImGuiCond_Always);
         if (ImGui::BeginPopupModal("Camera Config##modal", &show_camera_config,
                                     ImGuiWindowFlags_NoResize)) {
-            if (!config_tabs.empty()) {
-                // File selector
-                if (config_tabs.size() > 1) {
-                    std::vector<const char*> names;
-                    for (const auto& t : config_tabs) names.push_back(t.path.c_str());
-                    ImGui::SetNextItemWidth(-1);
-                    ImGui::Combo("##cfg_sel", &selected_config_tab, names.data(),
-                                 static_cast<int>(names.size()));
-                }
-
-                auto& tab = config_tabs[selected_config_tab];
+            {
+                auto& tab = capture_cfg_tab;
 
                 // Path row
                 ImGui::SetNextItemWidth(-180.0f);
@@ -701,16 +688,8 @@ int main(int argc, char** argv) {
         ImGui::SetNextWindowSize({700, 540}, ImGuiCond_Always);
         if (ImGui::BeginPopupModal("Connect Config##modal", &show_connect_config,
                                     ImGuiWindowFlags_NoResize)) {
-            if (!connect_tabs.empty()) {
-                if (connect_tabs.size() > 1) {
-                    std::vector<const char*> names;
-                    for (const auto& t : connect_tabs) names.push_back(t.path.c_str());
-                    ImGui::SetNextItemWidth(-1);
-                    ImGui::Combo("##conn_sel", &selected_connect_tab, names.data(),
-                                 static_cast<int>(names.size()));
-                }
-
-                auto& tab = connect_tabs[selected_connect_tab];
+            {
+                auto& tab = connect_cfg_tab;
 
                 ImGui::SetNextItemWidth(-180.0f);
                 if (ImGui::InputText("##path", &tab.path)) tab.modified = true;
@@ -878,20 +857,14 @@ int main(int argc, char** argv) {
                         cap_cfg.timeout_ms      = conn_buf.timeout_ms;
                         capture_config::save("visionstudio.json", cap_cfg);
                     }
-                    if (!connect_tabs.empty()) {
+                    if (!connect_cfg_tab.path.empty()) {
                         ImGui::Separator();
                         ImGui::TextDisabled("Connect Config File");
-                        for (int i = 0; i < static_cast<int>(connect_tabs.size()); ++i) {
-                            const auto& p   = connect_tabs[i].path;
-                            const auto  pos = p.find_last_of("/\\");
-                            const std::string fname = (pos == std::string::npos) ? p : p.substr(pos + 1);
-                            ImGui::PushID(i);
-                            if (ImGui::Button(fname.empty() ? "(no file)" : fname.c_str(), {-1, 0})) {
-                                selected_connect_tab = i;
-                                show_connect_config = true;
-                            }
-                            ImGui::PopID();
-                        }
+                        const auto& p   = connect_cfg_tab.path;
+                        const auto  pos = p.find_last_of("/\\");
+                        const std::string fname = (pos == std::string::npos) ? p : p.substr(pos + 1);
+                        if (ImGui::Button(fname.c_str(), {-1, 0}))
+                            show_connect_config = true;
                     }
                     ImGui::EndDisabled();
                 }
@@ -984,17 +957,12 @@ int main(int argc, char** argv) {
                     ImGui::Separator();
                     ImGui::TextDisabled("Capture Config Files");
                     const float fw = ImGui::GetContentRegionAvail().x;
-                    for (int i = 0; i < static_cast<int>(cap_cfg.capture_config_files.size()); ++i) {
-                        ImGui::PushID(i);
-                        // Filename label
-                        const auto& fpath = cap_cfg.capture_config_files[i];
+                    if (!capture_cfg_tab.path.empty()) {
+                        const auto& fpath = capture_cfg_tab.path;
                         const auto  pos   = fpath.find_last_of("/\\");
                         const std::string fname = (pos == std::string::npos) ? fpath : fpath.substr(pos + 1);
-                        if (ImGui::Button(fname.empty() ? "(no file)" : fname.c_str(), {-1, 0})) {
-                            selected_config_tab = i;
+                        if (ImGui::Button(fname.c_str(), {-1, 0}))
                             show_camera_config = true;
-                        }
-                        ImGui::PopID();
                     }
                 }
                 ImGui::EndDisabled();

@@ -216,7 +216,8 @@ bool capture_client::do_connect_post() {
     body += meta.dump();
     body += "\r\n";
 
-    for (const auto& file_path : cfg_.connect_config_files) {
+    if (!cfg_.connect_config_file.empty()) {
+        const auto& file_path = cfg_.connect_config_file;
         std::ifstream f(file_path, std::ios::binary);
         if (!f.is_open()) {
             push_event(evt_error{"connect: cannot open config file: " + file_path});

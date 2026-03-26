@@ -1,19 +1,18 @@
 #pragma once
 #include <string>
-#include <vector>
 
 struct capture_config {
-    std::string              host            = "localhost";
-    int                      port            = 8080;
-    std::string              connect_path    = "/connect";
-    std::string              start_path      = "/start";
-    std::string              stop_path       = "/stop";
-    std::string              disconnect_path = "/disconnect";
-    std::string              sse_path        = "/events";
-    std::string              preview_path    = "/preview";
-    int                      timeout_ms      = 5000;
-    std::vector<std::string> connect_config_files; // paths to connection config files (any format)
-    std::vector<std::string> capture_config_files; // paths to capture config files (JSON)
+    std::string host            = "localhost";
+    int         port            = 8080;
+    std::string connect_path    = "/connect";
+    std::string start_path      = "/start";
+    std::string stop_path       = "/stop";
+    std::string disconnect_path = "/disconnect";
+    std::string sse_path        = "/events";
+    std::string preview_path    = "/preview";
+    int         timeout_ms      = 5000;
+    std::string connect_config_file; // path to connection config file (any format)
+    std::string capture_config_file; // path to capture config file (JSON)
 
     // Load capture settings from visionstudio.json.
     // Returns defaults if the file is not found or the "capture" key is missing.
