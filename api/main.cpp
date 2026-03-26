@@ -335,9 +335,8 @@ int main(int argc, char** argv) {
     config_tab connect_cfg_tab;   // connect_config_file
 
     capture_config                cap_cfg  = capture_config::load("visionstudio.json");
-    std::optional<capture_client> cap_cli_opt;
-    if (mode == app_mode::capture) cap_cli_opt.emplace(cap_cfg);
-    capture_client* cap_cli = cap_cli_opt ? &*cap_cli_opt : nullptr;
+    std::optional<capture_client> cap_cli;
+    if (mode == app_mode::capture) cap_cli.emplace(cap_cfg);
     conn_edit       conn_buf = make_conn_edit(cap_cfg);
 
     if (!cap_cfg.capture_config_file.empty()) {
