@@ -20,9 +20,7 @@ static std::string trim(const std::string& s) {
 
 capture_client::capture_client(capture_config cfg)
     : cfg_(std::move(cfg))
-    , sse_cli_(cfg_.host, cfg_.port)
 {
-    sse_cli_.set_read_timeout(3600, 0);
     worker_thread_ = std::thread(&capture_client::worker_thread_func, this);
 }
 
@@ -70,7 +68,8 @@ void capture_client::stop_capture() {
 
 void capture_client::interrupt_sse() {
     sse_interrupted_ = true;
-    sse_cli_.stop();
+    std::lock_guard lock(sse_cli_mtx_);
+    if (sse_cli_ptr_) sse_cli_ptr_->stop();
 }
 
 // ---------------------------------------------------------------------------
@@ -125,12 +124,24 @@ void capture_client::worker_thread_func() {
 // ---------------------------------------------------------------------------
 
 void capture_client::run_sse() {
+    httplib::Client cli(cfg_.host, cfg_.port);
+    {
+        const int sec  = cfg_.timeout_ms / 1000;
+        const int usec = (cfg_.timeout_ms % 1000) * 1000;
+        cli.set_connection_timeout(sec, usec);
+        cli.set_read_timeout(3600, 0);
+    }
+    {
+        std::lock_guard lock(sse_cli_mtx_);
+        sse_cli_ptr_ = &cli;
+    }
+
     const std::string url = cfg_.host + ":" + std::to_string(cfg_.port) + cfg_.sse_path;
     log("[sse] GET " + url);
 
     std::string buf, cur_event, cur_data;
 
-    sse_cli_.Get(
+    cli.Get(
         cfg_.sse_path,
         httplib::Headers{{"Accept",        "text/event-stream"},
                          {"Cache-Control", "no-cache"},
@@ -171,6 +182,10 @@ void capture_client::run_sse() {
             return !shutdown_ && !sse_interrupted_;
         });
 
+    {
+        std::lock_guard lock(sse_cli_mtx_);
+        sse_cli_ptr_ = nullptr;
+    }
     log("[sse] GET " + url + " closed");
     const auto s = sse_state_.load();
     if (s != sse_state::error && s != sse_state::disconnected) {
