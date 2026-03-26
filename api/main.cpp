@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <fstream>
 #include <future>
+#include <optional>
 #include <string>
 
 static void glfw_error_cb(int error, const char* desc) {
