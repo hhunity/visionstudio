@@ -51,12 +51,20 @@ static const char* sse_state_str(sse_state s) {
     return "?";
 }
 
-// Drain all queued events and print them.  Returns true if a terminal event
-// (disconnected / error) arrived.
-static bool drain_events(capture_client& client) {
+// Drain all queued events, update local state, and print them.
+// Returns true if a terminal event (disconnected / error) arrived.
+static bool drain_events(capture_client& client, sse_state& state) {
     bool done = false;
     while (auto ev = client.poll_server_event()) {
-        if (auto* e = std::get_if<evt_error>(&*ev)) {
+        if (std::get_if<evt_connected>(&*ev)) {
+            state = sse_state::connected;
+            std::cout << "[event] connected\n";
+        } else if (std::get_if<evt_disconnected>(&*ev)) {
+            state = sse_state::disconnected;
+            std::cout << "[event] disconnected\n";
+            done = true;
+        } else if (auto* e = std::get_if<evt_error>(&*ev)) {
+            state = sse_state::error;
             std::cout << "[event] error: " << e->message << "\n";
             done = true;
         } else if (auto* e = std::get_if<evt_capture_done>(&*ev)) {
@@ -66,17 +74,15 @@ static bool drain_events(capture_client& client) {
     return done;
 }
 
-// Wait until sse_state reaches connected (or error/timeout).
-static bool wait_connected(capture_client& client, int timeout_ms = 10000) {
+// Wait until connected event arrives (or error/timeout).
+static bool wait_connected(capture_client& client, sse_state& state,
+                           int timeout_ms = 10000) {
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     while (std::chrono::steady_clock::now() < deadline) {
-        drain_events(client);
-        const auto state = client.get_sse_state();
+        drain_events(client, state);
         if (state == sse_state::connected) return true;
-        if (state == sse_state::error) {
-            return false;
-        }
+        if (state == sse_state::error)     return false;
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     std::cerr << "timeout waiting for connected\n";
@@ -85,7 +91,7 @@ static bool wait_connected(capture_client& client, int timeout_ms = 10000) {
 
 // Execute a single parsed command.  Returns false if the caller should exit.
 static bool exec_cmd(const std::vector<std::string>& tokens, size_t& i,
-                     capture_client& client) {
+                     capture_client& client, sse_state& state) {
     if (tokens.empty()) return true;
     const auto& cmd = tokens[i];
 
@@ -95,25 +101,24 @@ static bool exec_cmd(const std::vector<std::string>& tokens, size_t& i,
     } else if (cmd == "connect") {
         std::cout << ">> connect\n";
         client.connect();
-        wait_connected(client);
+        wait_connected(client, state);
 
     } else if (cmd == "start") {
         std::cout << ">> start_capture\n";
         client.start_capture();
-        drain_events(client);
+        drain_events(client, state);
 
     } else if (cmd == "stop") {
         std::cout << ">> stop_capture\n";
         client.stop_capture();
-        drain_events(client);
+        drain_events(client, state);
 
     } else if (cmd == "disconnect") {
         std::cout << ">> disconnect\n";
         client.disconnect();
         for (int t = 0; t < 100; ++t) {
-            if (drain_events(client)) break;
-            const auto s = client.get_sse_state();
-            if (s == sse_state::disconnected || s == sse_state::error) break;
+            if (drain_events(client, state)) break;
+            if (state == sse_state::disconnected || state == sse_state::error) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
 
@@ -128,7 +133,7 @@ static bool exec_cmd(const std::vector<std::string>& tokens, size_t& i,
             std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
         int frame_count = 0;
         while (std::chrono::steady_clock::now() < deadline) {
-            drain_events(client);
+            drain_events(client, state);
             preview_frame frame;
             while (client.poll_preview_frame(frame)) {
                 ++frame_count;
@@ -142,7 +147,7 @@ static bool exec_cmd(const std::vector<std::string>& tokens, size_t& i,
             std::cout << "[preview] total frames received: " << frame_count << "\n";
 
     } else if (cmd == "status") {
-        std::cout << "SSE state:      " << sse_state_str(client.get_sse_state()) << "\n";
+        std::cout << "SSE state:      " << sse_state_str(state) << "\n";
         std::cout << "preview active: " << (client.is_preview_active() ? "yes" : "no") << "\n";
 
     } else if (cmd == "preview_start") {
@@ -165,7 +170,7 @@ static bool exec_cmd(const std::vector<std::string>& tokens, size_t& i,
 // Interactive REPL
 // ---------------------------------------------------------------------------
 
-static void run_interactive(capture_client& client) {
+static void run_interactive(capture_client& client, sse_state& state) {
     std::cout << "capture_cli interactive mode\n"
               << "commands: connect  start  stop  disconnect  wait <ms>  status"
                  "  preview_start  preview_stop  quit\n\n";
@@ -173,9 +178,10 @@ static void run_interactive(capture_client& client) {
     // Background thread: poll events + preview frames while user is typing
     std::atomic<bool> stop_poller{false};
     std::atomic<int>  total_preview_frames{0};
-    std::thread poller([&] {
+    std::mutex        state_mtx;
+    auto poll_fn = [&] {
         while (!stop_poller.load()) {
-            drain_events(client);
+            { std::lock_guard lock(state_mtx); drain_events(client, state); }
             preview_frame frame;
             while (client.poll_preview_frame(frame)) {
                 const int n = ++total_preview_frames;
@@ -185,7 +191,8 @@ static void run_interactive(capture_client& client) {
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-    });
+    };
+    std::thread poller(poll_fn);
 
     std::string line;
     while (true) {
@@ -205,25 +212,13 @@ static void run_interactive(capture_client& client) {
         size_t i = 0;
         bool keep_going = true;
         for (i = 0; i < tokens.size() && keep_going; ++i)
-            keep_going = exec_cmd(tokens, i, client);
+            keep_going = exec_cmd(tokens, i, client, state);
 
         if (!keep_going) break;
 
         // Restart background poller
         stop_poller.store(false);
-        poller = std::thread([&] {
-            while (!stop_poller.load()) {
-                drain_events(client);
-                preview_frame frame;
-                while (client.poll_preview_frame(frame)) {
-                    const int n = ++total_preview_frames;
-                    std::cout << "\n[preview] frame #" << n
-                              << "  " << frame.w << "x" << frame.h
-                              << "  (" << frame.pixels.size() << " bytes)\n> " << std::flush;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-        });
+        poller = std::thread(poll_fn);
     }
 
     stop_poller.store(true);
@@ -258,11 +253,13 @@ int main(int argc, char** argv) {
         std::cout << msg << "\n";
     });
 
+    sse_state state = sse_state::disconnected;
+
     if (cmds.empty()) {
-        run_interactive(client);
+        run_interactive(client, state);
     } else {
         for (size_t i = 0; i < cmds.size(); ++i)
-            exec_cmd(cmds, i, client);
+            exec_cmd(cmds, i, client, state);
     }
 
     return 0;

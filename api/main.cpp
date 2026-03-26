@@ -259,7 +259,7 @@ int main(int argc, char** argv) {
     bool        show_camera_config    = false;
     bool        show_connect_config   = false;
     bool        show_about            = false;
-    sse_state   prev_sse              = sse_state::disconnected;
+    sse_state   cur_sse               = sse_state::disconnected;
     bool        capturing             = false;
 
     // Preview texture (MJPEG live preview)
@@ -484,7 +484,15 @@ int main(int argc, char** argv) {
         // ----- Poll capture events (SSE) -----
         if (mode == app_mode::capture) {
             while (auto ev = cap_cli.poll_server_event()) {
-                if (auto* e = std::get_if<evt_error>(&*ev)) {
+                if (std::get_if<evt_connected>(&*ev)) {
+                    cur_sse    = sse_state::connected;
+                    status_msg = "Connected";
+                } else if (std::get_if<evt_disconnected>(&*ev)) {
+                    cur_sse    = sse_state::disconnected;
+                    capturing  = false;
+                    status_msg = "Server disconnected";
+                } else if (auto* e = std::get_if<evt_error>(&*ev)) {
+                    cur_sse    = sse_state::error;
                     status_msg = "Server error: " + e->message;
                 } else if (auto* e = std::get_if<evt_capture_done>(&*ev)) {
                     capturing = false;
@@ -500,16 +508,6 @@ int main(int argc, char** argv) {
                     }
                     status_msg = "Capture complete: " + e->path;
                 }
-            }
-            const auto cur_sse = cap_cli.get_sse_state();
-            if (prev_sse != cur_sse) {
-                if (cur_sse == sse_state::connected)
-                    status_msg = "Connected";
-                else if (prev_sse == sse_state::connected) {
-                    capturing = false;
-                    status_msg = "Server disconnected";
-                }
-                prev_sse = cur_sse;
             }
 
             // ----- Upload preview frame to GPU -----
@@ -809,7 +807,7 @@ int main(int argc, char** argv) {
                 // SSE status indicator
                 const char* sse_label = "";
                 ImVec4      sse_col   = {1, 1, 1, 1};
-                switch (cap_cli.get_sse_state()) {
+                switch (cur_sse) {
                 case sse_state::disconnected:
                     sse_label = "Disconnected"; sse_col = {0.6f, 0.6f, 0.6f, 1}; break;
                 case sse_state::connecting:
@@ -829,7 +827,7 @@ int main(int argc, char** argv) {
                 const bool conn_open = ImGui::CollapsingHeader("Connect Settings");
                 ImGui::PopStyleColor(3);
                 if (conn_open) {
-                    ImGui::BeginDisabled(cap_cli.get_sse_state() == sse_state::connected);
+                    ImGui::BeginDisabled(cur_sse == sse_state::connected);
                     const float fw = ImGui::GetContentRegionAvail().x;
                     bool conn_changed = false;
                     auto labeled = [&](const char* label, auto fn) {
@@ -874,15 +872,15 @@ int main(int argc, char** argv) {
                 ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.15f, 0.45f, 0.75f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.22f, 0.58f, 0.90f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.10f, 0.32f, 0.55f, 1.0f});
-                ImGui::BeginDisabled(cap_cli.get_sse_state() != sse_state::disconnected &&
-                                     cap_cli.get_sse_state() != sse_state::error);
+                ImGui::BeginDisabled(cur_sse != sse_state::disconnected &&
+                                     cur_sse != sse_state::error);
                 if (ImGui::Button("Connect", {-1, 0})) {
                     cap_cli.connect();
                     status_msg = "Connecting...";
                 }
                 ImGui::EndDisabled();
 
-                ImGui::BeginDisabled(cap_cli.get_sse_state() != sse_state::connected);
+                ImGui::BeginDisabled(cur_sse != sse_state::connected);
                 if (ImGui::Button("Disconnect", {-1, 0})) {
                     cap_cli.disconnect();
                     capturing  = false;
@@ -897,7 +895,7 @@ int main(int argc, char** argv) {
 #ifndef NDEBUG
                 constexpr bool cap_settings_disabled = false;
 #else
-                const bool cap_settings_disabled = cap_cli.get_sse_state() != sse_state::connected;
+                const bool cap_settings_disabled = cur_sse != sse_state::connected;
 #endif
                 ImGui::BeginDisabled(cap_settings_disabled);
                 ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4{0.35f, 0.35f, 0.35f, 1.0f});
@@ -969,7 +967,7 @@ int main(int argc, char** argv) {
                 ImGui::Separator();
 
                 // Capture buttons
-                ImGui::BeginDisabled(cap_cli.get_sse_state() != sse_state::connected || capturing);
+                ImGui::BeginDisabled(cur_sse != sse_state::connected || capturing);
                 ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.18f, 0.55f, 0.18f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.25f, 0.70f, 0.25f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.12f, 0.40f, 0.12f, 1.0f});
@@ -981,7 +979,7 @@ int main(int argc, char** argv) {
                 ImGui::PopStyleColor(3);
                 ImGui::EndDisabled();
 
-                ImGui::BeginDisabled(cap_cli.get_sse_state() != sse_state::connected || !capturing);
+                ImGui::BeginDisabled(cur_sse != sse_state::connected || !capturing);
                 ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.60f, 0.15f, 0.15f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.78f, 0.20f, 0.20f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.45f, 0.10f, 0.10f, 1.0f});
@@ -996,7 +994,7 @@ int main(int argc, char** argv) {
                 // Preview
                 ImGui::Separator();
                 const bool preview_on = cap_cli.is_preview_active();
-                ImGui::BeginDisabled(cap_cli.get_sse_state() != sse_state::connected);
+                ImGui::BeginDisabled(cur_sse != sse_state::connected);
                 if (!preview_on) {
                     if (ImGui::Button("Start Preview", {-1, 0})) {
                         cap_cli.start_preview();

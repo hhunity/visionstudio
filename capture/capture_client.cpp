@@ -176,8 +176,10 @@ void capture_client::run_sse() {
 
     log("[sse] GET " + url + " closed");
     const auto s = sse_state_.load();
-    if (s != sse_state::error && s != sse_state::disconnected)
+    if (s != sse_state::error && s != sse_state::disconnected) {
         sse_state_.store(sse_state::disconnected);
+        push_event(evt_disconnected{});
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -290,12 +292,16 @@ void capture_client::dispatch_event(const std::string& event_type,
     };
 
     if (event_type == "connected") {
-        if (!do_connect_post())
+        if (!do_connect_post()) {
             sse_state_.store(sse_state::error);
-        else
+            push_event(evt_error{"connect POST failed"});
+        } else {
             sse_state_.store(sse_state::connected);
+            push_event(evt_connected{});
+        }
     } else if (event_type == "disconnected") {
         sse_state_.store(sse_state::disconnected);
+        push_event(evt_disconnected{});
     } else if (event_type == "error") {
         push_event(evt_error{get_field("message")});
     } else if (event_type == "capture_done") {

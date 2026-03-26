@@ -13,9 +13,11 @@
 
 enum class sse_state { disconnected, connecting, connected, error };
 
+struct evt_connected    {};
+struct evt_disconnected {};
 struct evt_error        { std::string message; };
 struct evt_capture_done { std::string path; };
-using server_event = std::variant<evt_error, evt_capture_done>;
+using server_event = std::variant<evt_connected, evt_disconnected, evt_error, evt_capture_done>;
 
 struct preview_frame {
     std::vector<uint8_t> pixels; // grayscale, w*h bytes
@@ -45,8 +47,6 @@ public:
     void stop_preview();
     bool poll_preview_frame(preview_frame& out);
     bool is_preview_active() const { return preview_active_.load(); }
-
-    sse_state get_sse_state() const { return sse_state_.load(); }
 
 private:
     enum class cmd { connect, start_capture, stop_capture, disconnect };
