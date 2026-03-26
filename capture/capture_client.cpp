@@ -22,10 +22,8 @@ static std::string trim(const std::string& s) {
 capture_client::capture_client(capture_config cfg)
     : cfg_(std::move(cfg))
     , sse_cli_(cfg_.host, cfg_.port)
-    , preview_cli_(cfg_.host, cfg_.port)
 {
     sse_cli_.set_read_timeout(3600, 0);
-    preview_cli_.set_read_timeout(3600, 0);
     worker_thread_ = std::thread(&capture_client::worker_thread_func, this);
 }
 
@@ -348,7 +346,8 @@ void capture_client::start_preview() {
 void capture_client::stop_preview() {
     if (!preview_active_.load()) return;
     preview_interrupted_ = true;
-    preview_cli_.stop();
+    std::lock_guard lock(preview_cli_mtx_);
+    if (preview_cli_ptr_) preview_cli_ptr_->stop();
     // join happens in the next start_preview() or destructor
 }
 
@@ -364,10 +363,17 @@ void capture_client::run_preview() {
     const std::string url = cfg_.host + ":" + std::to_string(cfg_.port) + cfg_.preview_path;
     log("[preview] GET " + url);
 
+    httplib::Client cli(cfg_.host, cfg_.port);
+    cli.set_read_timeout(3600, 0);
+    {
+        std::lock_guard lock(preview_cli_mtx_);
+        preview_cli_ptr_ = &cli;
+    }
+
     std::string         boundary;
     std::vector<uint8_t> buf;
 
-    preview_cli_.Get(
+    cli.Get(
         cfg_.preview_path,
         httplib::Headers{{"Accept", "multipart/x-mixed-replace, image/jpeg"}},
 
@@ -447,6 +453,10 @@ void capture_client::run_preview() {
             return !preview_interrupted_;
         });
 
+    {
+        std::lock_guard lock(preview_cli_mtx_);
+        preview_cli_ptr_ = nullptr;
+    }
     preview_active_ = false;
     log("[preview] GET " + url + " closed");
 }

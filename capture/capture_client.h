@@ -73,7 +73,8 @@ private:
     httplib::Client   sse_cli_;
     std::atomic<bool> sse_interrupted_{false};
 
-    httplib::Client   preview_cli_;
+    std::mutex        preview_cli_mtx_;
+    httplib::Client*  preview_cli_ptr_{nullptr}; // valid only while run_preview() runs
     std::thread       preview_thread_;
     std::atomic<bool> preview_interrupted_{false};
     std::atomic<bool> preview_active_{false};
