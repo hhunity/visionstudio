@@ -441,8 +441,10 @@ int main(int argc, char** argv) {
             ImGui::SameLine();
             if (ImGui::Button("Split",   {120.0f, 40.0f})) mode = app_mode::split;
             ImGui::SameLine();
-            if (ImGui::Button("Capture", {120.0f, 40.0f}))
+            if (ImGui::Button("Capture", {120.0f, 40.0f})) {
                 mode = app_mode::capture;
+                cap_cli.emplace(cap_cfg);
+            }
             ImGui::End();
 
             ImGui::Render();
