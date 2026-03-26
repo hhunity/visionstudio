@@ -1024,8 +1024,7 @@ int main(int argc, char** argv) {
             const auto orig = ImGui::GetCursorPos();
             ImGui::SetCursorPos({orig.x + (viewer_w - dw) * 0.5f,
                                   orig.y + (viewer_h - dh) * 0.5f});
-            ImGui::Image(reinterpret_cast<ImTextureID>(static_cast<intptr_t>(preview_tex)),
-                         {dw, dh});
+            ImGui::Image(static_cast<ImTextureID>(preview_tex), {dw, dh});
         } else if (use_single) {
             single_viewer.render("single_canvas", viewer_w, viewer_h);
         } else {
