@@ -7,17 +7,21 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <variant>
 #include <httplib.h>
 #include "capture/capture_config.h"
 
 enum class sse_state { disconnected, connecting, connected, error };
 
-enum class server_event_type { disconnected, error, capture_done };
+struct evt_connected    {};
+struct evt_disconnected {};
+struct evt_error        { std::string message; };
+struct evt_capture_done { std::string path; };
+using server_event = std::variant<evt_connected, evt_disconnected, evt_error, evt_capture_done>;
 
-struct server_event {
-    server_event_type type;
-    std::string       path;    // capture_done only
-    std::string       message; // error only
+struct preview_frame {
+    std::vector<uint8_t> pixels; // grayscale, w*h bytes
+    int w = 0, h = 0;
 };
 
 class capture_client {
@@ -39,8 +43,24 @@ public:
 
     std::optional<server_event> poll_server_event();
 
-    sse_state   get_sse_state()  const { return sse_state_.load(); }
-    std::string get_last_error() const;
+    void start_preview();
+    void stop_preview();
+    bool poll_preview_frame(preview_frame& out);
+    bool is_preview_active() const { return preview_active_.load(); }
+
+    // Synchronous GET, returns httplib::Result (has status, headers, body).
+    httplib::Result get(const std::string& url_path);
+
+    // File download (async). is_downloading() goes false on completion or error.
+    void start_download(const std::string& url_path, const std::string& dest_path);
+    bool is_downloading() const { return download_active_.load(); }
+
+    // File upload (async). progress: 0.0 while running, 1.0 on success, -1.0 on error.
+    void  start_upload(const std::string& url_path, const std::string& src_path,
+                       const std::string& field_name   = "file",
+                       const std::string& content_type = "application/octet-stream");
+    float upload_progress() const { return upload_progress_.load(); }
+    bool  is_uploading()    const { return upload_active_.load(); }
 
 private:
     enum class cmd { connect, start_capture, stop_capture, disconnect };
@@ -56,7 +76,10 @@ private:
     void interrupt_sse();
     void dispatch_event(const std::string& event_type, const std::string& data);
     void push_event(server_event ev);
-    void set_error(std::string msg);
+    void run_preview();
+    void run_preview_mjpeg(httplib::Client& cli);
+    void run_preview_raw(httplib::Client& cli);
+    void store_preview_frame(int w, int h, std::vector<uint8_t> pixels);
     void log(const std::string& msg) const;
 
     capture_config cfg_;
@@ -65,12 +88,28 @@ private:
     std::thread sse_thread_;
 
     std::mutex       sse_cli_mtx_;
-    httplib::Client* sse_cli_ptr_{nullptr};
+    httplib::Client* sse_cli_ptr_{nullptr}; // valid only while run_sse() runs
+    std::atomic<bool> sse_interrupted_{false};
 
-    std::mutex              sse_ready_mtx_;
-    std::condition_variable sse_ready_cv_;
-    bool                    sse_ready_{false};
-    bool                    sse_ready_ok_{false};
+    std::mutex        preview_cli_mtx_;
+    httplib::Client*  preview_cli_ptr_{nullptr}; // valid only while run_preview() runs
+    std::thread       preview_thread_;
+    std::atomic<bool> preview_interrupted_{false};
+    std::atomic<bool> preview_active_{false};
+
+    void run_download(std::string url_path, std::string dest_path);
+    std::thread       dl_thread_;
+    std::atomic<bool> download_active_{false};
+
+    void run_upload(std::string url_path, std::string src_path,
+                    std::string field_name, std::string content_type);
+    std::thread        ul_thread_;
+    std::atomic<bool>  upload_active_{false};
+    std::atomic<float> upload_progress_{0.0f};
+
+    std::mutex     preview_mtx_;
+    preview_frame  latest_frame_;
+    bool           preview_ready_{false};
 
     std::mutex              cmd_mtx_;
     std::condition_variable cmd_cv_;
@@ -81,9 +120,6 @@ private:
 
     mutable std::mutex  event_mtx_;
     std::deque<server_event> event_queue_;
-
-    mutable std::mutex error_mtx_;
-    std::string        last_error_;
 
     mutable std::mutex logger_mtx_;
     logger_fn          logger_;

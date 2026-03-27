@@ -22,6 +22,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 find_package(implot CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 find_package(nfd CONFIG REQUIRED)
+find_package(libjpeg-turbo CONFIG REQUIRED)
 
 # ----- cpplib_io: tiff_io from external/cpplib (built as static) -----
 add_library(cpplib_io STATIC
@@ -74,6 +75,7 @@ target_link_libraries(vs_capture PUBLIC
     httplib::httplib
     nlohmann_json::nlohmann_json
     Threads::Threads
+    libjpeg-turbo::turbojpeg
 )
 
 # ----- Embed THIRD_PARTY_LICENSES.txt at build time -----

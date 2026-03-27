@@ -235,14 +235,14 @@ void compare_viewer::render(float width, float height) {
     left_viewer_.grid_spacing           = grid_spacing;
     left_viewer_.show_minimap           = show_minimap;
     left_viewer_.show_coordinates       = false;
-    left_viewer_.show_overlays          = show_overlays;
+    left_viewer_.show_overlays          = is_split_ ? show_overlays : show_left_overlays;
     left_viewer_.show_crosshair         = show_crosshair;
     left_viewer_.minimap_force_aspect   = minimap_force_aspect;
     right_viewer_.show_grid             = show_grid;
     right_viewer_.grid_spacing          = grid_spacing;
     right_viewer_.show_minimap          = show_minimap;
     right_viewer_.show_coordinates      = false;
-    right_viewer_.show_overlays         = show_overlays;
+    right_viewer_.show_overlays         = is_split_ ? show_overlays : show_right_overlays;
     right_viewer_.show_crosshair        = show_crosshair;
     right_viewer_.minimap_force_aspect  = minimap_force_aspect;
 

@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <fstream>
 #include <future>
+#include <optional>
 #include <string>
 
 static void glfw_error_cb(int error, const char* desc) {
@@ -43,6 +44,7 @@ enum class app_mode { none, single, compare, split, capture };
 struct async_loader {
     std::future<image_data> future;
     std::atomic<float>      progress{0.0f};
+    std::atomic<bool>       cancel{false};
     bool                    active = false;
     std::string             path;
 
@@ -50,14 +52,21 @@ struct async_loader {
     async_loader(const async_loader&)            = delete;
     async_loader& operator=(const async_loader&) = delete;
 
+    ~async_loader() {
+        cancel.store(true);          // signal tiff_io::read to exit early
+        if (future.valid()) future.wait(); // now completes quickly
+    }
+
     void start(std::string p) {
         path = p;
         progress.store(0.0f);
+        cancel.store(false);
         active = true;
         auto* prog = &progress;
-        future = std::async(std::launch::async, [p = std::move(p), prog]() {
+        auto* can  = &cancel;
+        future = std::async(std::launch::async, [p = std::move(p), prog, can]() {
             image_data img;
-            if (!tiff_io::read(p, img, prog))
+            if (!tiff_io::read(p, img, prog, can))
                 img.pixels.clear(); // ensure empty() == true so caller knows load failed
             return img;
         });
@@ -89,6 +98,9 @@ struct app_state {
     std::vector<roi_entry>*  overlays       = nullptr; // single mode
     std::vector<roi_entry>*  left_overlays  = nullptr; // compare / split mode (left panel)
     std::vector<roi_entry>*  right_overlays = nullptr; // compare mode (right panel)
+    std::string*             overlay_file       = nullptr; // single / split
+    std::string*             left_overlay_file  = nullptr; // compare left
+    std::string*             right_overlay_file = nullptr; // compare right
 };
 
 // Returns true if path ends with the given (lower-case) extension including dot.
@@ -116,6 +128,7 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
             if (has_ext(paths[i], ".jsonl")) {
                 if (jsonl_io::load(paths[i], *app->overlays)) {
                     app->single_viewer->set_overlays(*app->overlays);
+                    if (app->overlay_file) *app->overlay_file = paths[i];
                     *app->status_msg = std::string("Overlay loaded: ") + paths[i];
                 }
             } else {
@@ -134,10 +147,12 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
         if (!jsonl_files.empty()) {
             jsonl_io::load(jsonl_files[0], *app->left_overlays);
             app->compare->set_left_overlays(*app->left_overlays);
+            if (app->left_overlay_file) *app->left_overlay_file = jsonl_files[0];
         }
         if (jsonl_files.size() >= 2) {
             jsonl_io::load(jsonl_files[1], *app->right_overlays);
             app->compare->set_right_overlays(*app->right_overlays);
+            if (app->right_overlay_file) *app->right_overlay_file = jsonl_files[1];
         }
         *app->status_msg = "Loading...";
         return;
@@ -147,6 +162,7 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
             if (has_ext(paths[i], ".jsonl")) {
                 jsonl_io::load(paths[i], *app->left_overlays);
                 app->compare->set_split_overlays(*app->left_overlays);
+                if (app->overlay_file) *app->overlay_file = paths[i];
                 *app->status_msg = std::string("Overlay loaded: ") + paths[i];
             } else {
                 app->left_loader->start(paths[i]);
@@ -259,8 +275,13 @@ int main(int argc, char** argv) {
     bool        show_camera_config    = false;
     bool        show_connect_config   = false;
     bool        show_about            = false;
-    bool        server_connected      = false;
+    sse_state   cur_sse               = sse_state::disconnected;
     bool        capturing             = false;
+
+    // Preview texture (MJPEG live preview)
+    GLuint preview_tex   = 0;
+    int    preview_tex_w = 0;
+    int    preview_tex_h = 0;
 
     // Capture settings
     int  capture_mode          = 0;     // 0=Capture, 1=Mode1, 2=Mode2
@@ -292,7 +313,7 @@ int main(int argc, char** argv) {
         e.timeout_ms = c.timeout_ms;
         return e;
     };
-    // Camera config editor state: one entry per file in cap_cfg.capture_config_files.
+    // Camera config editor state.
     struct config_tab {
         std::string path;
         std::string text;
@@ -311,24 +332,21 @@ int main(int argc, char** argv) {
             modified = false;
         }
     };
-    std::vector<config_tab> config_tabs;         // capture_config_files
-    int                     selected_config_tab  = 0;
-    std::vector<config_tab> connect_tabs;        // connect_config_files
-    int                     selected_connect_tab = 0;
+    config_tab capture_cfg_tab;   // capture_config_file
+    config_tab connect_cfg_tab;   // connect_config_file
 
-    capture_config cap_cfg  = capture_config::load("visionstudio.json");
-    capture_client cap_cli(cap_cfg);
-    conn_edit      conn_buf = make_conn_edit(cap_cfg);
+    capture_config                cap_cfg  = capture_config::load("visionstudio.json");
+    std::optional<capture_client> cap_cli;
+    if (mode == app_mode::capture) cap_cli.emplace(cap_cfg);
+    conn_edit       conn_buf = make_conn_edit(cap_cfg);
 
-    // Build config editor tabs from capture_config_files.
-    for (const auto& p : cap_cfg.capture_config_files) {
-        config_tab t; t.path = p; t.load();
-        config_tabs.push_back(std::move(t));
+    if (!cap_cfg.capture_config_file.empty()) {
+        capture_cfg_tab.path = cap_cfg.capture_config_file;
+        capture_cfg_tab.load();
     }
-    // Build connect editor tabs from connect_config_files.
-    for (const auto& p : cap_cfg.connect_config_files) {
-        config_tab t; t.path = p; t.load();
-        connect_tabs.push_back(std::move(t));
+    if (!cap_cfg.connect_config_file.empty()) {
+        connect_cfg_tab.path = cap_cfg.connect_config_file;
+        connect_cfg_tab.load();
     }
 
     async_loader           left_loader;
@@ -336,18 +354,22 @@ int main(int argc, char** argv) {
     std::vector<roi_entry> overlays;
     std::vector<roi_entry> left_overlays;
     std::vector<roi_entry> right_overlays;
+    std::string            overlay_file;
+    std::string            left_overlay_file;
+    std::string            right_overlay_file;
 
     app_state drop_state{&mode,
                          &single_viewer, &compare,
                          &left_image, &right_image,
                          &status_msg,
                          &left_loader, &right_loader,
-                         &overlays, &left_overlays, &right_overlays};
+                         &overlays, &left_overlays, &right_overlays,
+                         &overlay_file, &left_overlay_file, &right_overlay_file};
     glfwSetWindowUserPointer(window, &drop_state);
 
     // In capture mode launched via CLI, connect automatically.
     if (mode == app_mode::capture)
-        cap_cli.connect();
+        cap_cli->connect();
 
     // Apply diff flags from args (compare / split mode)
     if (mode == app_mode::compare || mode == app_mode::split) {
@@ -366,16 +388,24 @@ int main(int argc, char** argv) {
     // Load overlay JSONL from CLI args
     if (!arg_overlays.empty()) {
         if (mode == app_mode::single) {
-            if (jsonl_io::load(arg_overlays[0], overlays))
+            if (jsonl_io::load(arg_overlays[0], overlays)) {
                 single_viewer.set_overlays(overlays);
+                overlay_file = arg_overlays[0];
+            }
         } else if (mode == app_mode::split) {
-            if (jsonl_io::load(arg_overlays[0], left_overlays))
+            if (jsonl_io::load(arg_overlays[0], left_overlays)) {
                 compare.set_split_overlays(left_overlays);
+                overlay_file = arg_overlays[0];
+            }
         } else if (mode == app_mode::compare) {
-            if (jsonl_io::load(arg_overlays[0], left_overlays))
+            if (jsonl_io::load(arg_overlays[0], left_overlays)) {
                 compare.set_left_overlays(left_overlays);
-            if (arg_overlays.size() >= 2 && jsonl_io::load(arg_overlays[1], right_overlays))
+                left_overlay_file = arg_overlays[0];
+            }
+            if (arg_overlays.size() >= 2 && jsonl_io::load(arg_overlays[1], right_overlays)) {
                 compare.set_right_overlays(right_overlays);
+                right_overlay_file = arg_overlays[1];
+            }
         }
     }
 
@@ -411,8 +441,10 @@ int main(int argc, char** argv) {
             ImGui::SameLine();
             if (ImGui::Button("Split",   {120.0f, 40.0f})) mode = app_mode::split;
             ImGui::SameLine();
-            if (ImGui::Button("Capture", {120.0f, 40.0f}))
+            if (ImGui::Button("Capture", {120.0f, 40.0f})) {
                 mode = app_mode::capture;
+                cap_cli.emplace(cap_cfg);
+            }
             ImGui::End();
 
             ImGui::Render();
@@ -482,43 +514,55 @@ int main(int argc, char** argv) {
 
         // ----- Poll capture events (SSE) -----
         if (mode == app_mode::capture) {
-            while (auto ev = cap_cli.poll_server_event()) {
-                switch (ev->type) {
-                case server_event_type::disconnected:
-                    server_connected = false;
+            while (auto ev = cap_cli->poll_server_event()) {
+                if (std::get_if<evt_connected>(&*ev)) {
+                    cur_sse    = sse_state::connected;
+                    status_msg = "Connected";
+                } else if (std::get_if<evt_disconnected>(&*ev)) {
+                    cur_sse    = sse_state::disconnected;
+                    capturing  = false;
                     status_msg = "Server disconnected";
-                    break;
-                case server_event_type::error:
-                    status_msg = "Server error: " + ev->message;
-                    break;
-                case server_event_type::capture_done:
+                } else if (auto* e = std::get_if<evt_error>(&*ev)) {
+                    cur_sse    = sse_state::error;
+                    status_msg = "Server error: " + e->message;
+                } else if (auto* e = std::get_if<evt_capture_done>(&*ev)) {
                     capturing = false;
                     if (capture_mode == 0) {
-                        left_loader.start(ev->path);
+                        left_loader.start(e->path);
                     } else if (capture_mode == 1) {
-                        // Split: load same image into compare as split source
-                        left_loader.start(ev->path);
+                        left_loader.start(e->path);
                     } else {
-                        // Compare: alternate left/right each capture
                         if (left_image.empty())
-                            left_loader.start(ev->path);
+                            left_loader.start(e->path);
                         else
-                            right_loader.start(ev->path);
+                            right_loader.start(e->path);
                     }
-                    status_msg = "Capture complete: " + ev->path;
-                    break;
+                    status_msg = "Capture complete: " + e->path;
                 }
             }
-            // Sync server_connected with sse_state
-            const auto cur_sse = cap_cli.get_sse_state();
-            if (!server_connected && cur_sse == sse_state::connected) {
-                server_connected = true;
-                status_msg = "Connected";
-            } else if (server_connected && cur_sse != sse_state::connected) {
-                server_connected = false;
-                capturing        = false;
-                if (cur_sse == sse_state::error)
-                    status_msg = "Connection lost: " + cap_cli.get_last_error();
+
+            // ----- Upload preview frame to GPU -----
+            preview_frame pf;
+            if (cap_cli->poll_preview_frame(pf)) {
+                if (preview_tex == 0 || preview_tex_w != pf.w || preview_tex_h != pf.h) {
+                    if (preview_tex == 0) glGenTextures(1, &preview_tex);
+                    glBindTexture(GL_TEXTURE_2D, preview_tex);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                    const GLint swizzle[] = {GL_RED, GL_RED, GL_RED, GL_ONE};
+                    glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
+                    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, pf.w, pf.h, 0,
+                                 GL_RED, GL_UNSIGNED_BYTE, pf.pixels.data());
+                    preview_tex_w = pf.w;
+                    preview_tex_h = pf.h;
+                } else {
+                    glBindTexture(GL_TEXTURE_2D, preview_tex);
+                    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, pf.w, pf.h,
+                                    GL_RED, GL_UNSIGNED_BYTE, pf.pixels.data());
+                }
+                glBindTexture(GL_TEXTURE_2D, 0);
             }
         }
 
@@ -636,17 +680,8 @@ int main(int argc, char** argv) {
         ImGui::SetNextWindowSize({700, 540}, ImGuiCond_Always);
         if (ImGui::BeginPopupModal("Camera Config##modal", &show_camera_config,
                                     ImGuiWindowFlags_NoResize)) {
-            if (!config_tabs.empty()) {
-                // File selector
-                if (config_tabs.size() > 1) {
-                    std::vector<const char*> names;
-                    for (const auto& t : config_tabs) names.push_back(t.path.c_str());
-                    ImGui::SetNextItemWidth(-1);
-                    ImGui::Combo("##cfg_sel", &selected_config_tab, names.data(),
-                                 static_cast<int>(names.size()));
-                }
-
-                auto& tab = config_tabs[selected_config_tab];
+            {
+                auto& tab = capture_cfg_tab;
 
                 // Path row
                 ImGui::SetNextItemWidth(-180.0f);
@@ -682,16 +717,8 @@ int main(int argc, char** argv) {
         ImGui::SetNextWindowSize({700, 540}, ImGuiCond_Always);
         if (ImGui::BeginPopupModal("Connect Config##modal", &show_connect_config,
                                     ImGuiWindowFlags_NoResize)) {
-            if (!connect_tabs.empty()) {
-                if (connect_tabs.size() > 1) {
-                    std::vector<const char*> names;
-                    for (const auto& t : connect_tabs) names.push_back(t.path.c_str());
-                    ImGui::SetNextItemWidth(-1);
-                    ImGui::Combo("##conn_sel", &selected_connect_tab, names.data(),
-                                 static_cast<int>(names.size()));
-                }
-
-                auto& tab = connect_tabs[selected_connect_tab];
+            {
+                auto& tab = connect_cfg_tab;
 
                 ImGui::SetNextItemWidth(-180.0f);
                 if (ImGui::InputText("##path", &tab.path)) tab.modified = true;
@@ -811,7 +838,7 @@ int main(int argc, char** argv) {
                 // SSE status indicator
                 const char* sse_label = "";
                 ImVec4      sse_col   = {1, 1, 1, 1};
-                switch (cap_cli.get_sse_state()) {
+                switch (cur_sse) {
                 case sse_state::disconnected:
                     sse_label = "Disconnected"; sse_col = {0.6f, 0.6f, 0.6f, 1}; break;
                 case sse_state::connecting:
@@ -822,11 +849,6 @@ int main(int argc, char** argv) {
                     sse_label = "Error";        sse_col = {1, 0.3f, 0.3f, 1};   break;
                 }
                 ImGui::TextColored(sse_col, "SSE: %s", sse_label);
-                if (cap_cli.get_sse_state() == sse_state::error) {
-                    const auto err = cap_cli.get_last_error();
-                    if (!err.empty())
-                        ImGui::TextDisabled("  %s", err.c_str());
-                }
                 ImGui::Separator();
 
                 // Connection settings (collapsible)
@@ -836,7 +858,7 @@ int main(int argc, char** argv) {
                 const bool conn_open = ImGui::CollapsingHeader("Connect Settings");
                 ImGui::PopStyleColor(3);
                 if (conn_open) {
-                    ImGui::BeginDisabled(server_connected);
+                    ImGui::BeginDisabled(cur_sse == sse_state::connected);
                     const float fw = ImGui::GetContentRegionAvail().x;
                     bool conn_changed = false;
                     auto labeled = [&](const char* label, auto fn) {
@@ -864,20 +886,14 @@ int main(int argc, char** argv) {
                         cap_cfg.timeout_ms      = conn_buf.timeout_ms;
                         capture_config::save("visionstudio.json", cap_cfg);
                     }
-                    if (!connect_tabs.empty()) {
+                    if (!connect_cfg_tab.path.empty()) {
                         ImGui::Separator();
                         ImGui::TextDisabled("Connect Config File");
-                        for (int i = 0; i < static_cast<int>(connect_tabs.size()); ++i) {
-                            const auto& p   = connect_tabs[i].path;
-                            const auto  pos = p.find_last_of("/\\");
-                            const std::string fname = (pos == std::string::npos) ? p : p.substr(pos + 1);
-                            ImGui::PushID(i);
-                            if (ImGui::Button(fname.empty() ? "(no file)" : fname.c_str(), {-1, 0})) {
-                                selected_connect_tab = i;
-                                show_connect_config = true;
-                            }
-                            ImGui::PopID();
-                        }
+                        const auto& p   = connect_cfg_tab.path;
+                        const auto  pos = p.find_last_of("/\\");
+                        const std::string fname = (pos == std::string::npos) ? p : p.substr(pos + 1);
+                        if (ImGui::Button(fname.c_str(), {-1, 0}))
+                            show_connect_config = true;
                     }
                     ImGui::EndDisabled();
                 }
@@ -887,19 +903,18 @@ int main(int argc, char** argv) {
                 ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.15f, 0.45f, 0.75f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.22f, 0.58f, 0.90f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.10f, 0.32f, 0.55f, 1.0f});
-                ImGui::BeginDisabled(cap_cli.get_sse_state() != sse_state::disconnected &&
-                                     cap_cli.get_sse_state() != sse_state::error);
+                ImGui::BeginDisabled(cur_sse != sse_state::disconnected &&
+                                     cur_sse != sse_state::error);
                 if (ImGui::Button("Connect", {-1, 0})) {
-                    cap_cli.connect();
+                    cap_cli->connect();
                     status_msg = "Connecting...";
                 }
                 ImGui::EndDisabled();
 
-                ImGui::BeginDisabled(!server_connected);
+                ImGui::BeginDisabled(cur_sse != sse_state::connected);
                 if (ImGui::Button("Disconnect", {-1, 0})) {
-                    cap_cli.disconnect();
-                    server_connected = false;
-                    capturing        = false;
+                    cap_cli->disconnect();
+                    capturing  = false;
                     status_msg = "Disconnecting...";
                 }
                 ImGui::EndDisabled();
@@ -911,7 +926,7 @@ int main(int argc, char** argv) {
 #ifndef NDEBUG
                 constexpr bool cap_settings_disabled = false;
 #else
-                const bool cap_settings_disabled = !server_connected;
+                const bool cap_settings_disabled = cur_sse != sse_state::connected;
 #endif
                 ImGui::BeginDisabled(cap_settings_disabled);
                 ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4{0.35f, 0.35f, 0.35f, 1.0f});
@@ -971,45 +986,62 @@ int main(int argc, char** argv) {
                     ImGui::Separator();
                     ImGui::TextDisabled("Capture Config Files");
                     const float fw = ImGui::GetContentRegionAvail().x;
-                    for (int i = 0; i < static_cast<int>(cap_cfg.capture_config_files.size()); ++i) {
-                        ImGui::PushID(i);
-                        // Filename label
-                        const auto& fpath = cap_cfg.capture_config_files[i];
+                    if (!capture_cfg_tab.path.empty()) {
+                        const auto& fpath = capture_cfg_tab.path;
                         const auto  pos   = fpath.find_last_of("/\\");
                         const std::string fname = (pos == std::string::npos) ? fpath : fpath.substr(pos + 1);
-                        if (ImGui::Button(fname.empty() ? "(no file)" : fname.c_str(), {-1, 0})) {
-                            selected_config_tab = i;
+                        if (ImGui::Button(fname.c_str(), {-1, 0}))
                             show_camera_config = true;
-                        }
-                        ImGui::PopID();
                     }
                 }
                 ImGui::EndDisabled();
                 ImGui::Separator();
 
                 // Capture buttons
-                ImGui::BeginDisabled(!server_connected || capturing);
+                ImGui::BeginDisabled(cur_sse != sse_state::connected || capturing);
                 ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.18f, 0.55f, 0.18f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.25f, 0.70f, 0.25f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.12f, 0.40f, 0.12f, 1.0f});
                 if (ImGui::Button("Start Capture", {-1, 0})) {
-                    cap_cli.start_capture();
+                    cap_cli->start_capture();
                     capturing  = true;
                     status_msg = "Capture started";
                 }
                 ImGui::PopStyleColor(3);
                 ImGui::EndDisabled();
 
-                ImGui::BeginDisabled(!server_connected || !capturing);
+                ImGui::BeginDisabled(cur_sse != sse_state::connected || !capturing);
                 ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.60f, 0.15f, 0.15f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.78f, 0.20f, 0.20f, 1.0f});
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.45f, 0.10f, 0.10f, 1.0f});
                 if (ImGui::Button("Stop Capture", {-1, 0})) {
-                    cap_cli.stop_capture();
+                    cap_cli->stop_capture();
                     capturing  = false;
                     status_msg = "Capture stopped";
                 }
                 ImGui::PopStyleColor(3);
+                ImGui::EndDisabled();
+
+                // Preview
+                ImGui::Separator();
+                const bool preview_on = cap_cli->is_preview_active();
+                ImGui::BeginDisabled(preview_on);
+                if (ImGui::Checkbox("Raw", &cap_cfg.preview_raw)) {
+                    capture_config::save("visionstudio.json", cap_cfg);
+                }
+                ImGui::EndDisabled();
+                ImGui::BeginDisabled(cur_sse != sse_state::connected);
+                if (!preview_on) {
+                    if (ImGui::Button("Start Preview", {-1, 0})) {
+                        cap_cli->start_preview();
+                        status_msg = "Preview started";
+                    }
+                } else {
+                    if (ImGui::Button("Stop Preview", {-1, 0})) {
+                        cap_cli->stop_preview();
+                        status_msg = "Preview stopped";
+                    }
+                }
                 ImGui::EndDisabled();
             }
             ImGui::EndChild();
@@ -1018,10 +1050,37 @@ int main(int argc, char** argv) {
 
         const ImVec2 viewer_origin = ImGui::GetCursorScreenPos();
 
-        if (use_single) {
+        if (mode == app_mode::capture && capture_mode == 0 && preview_tex != 0) {
+            // Full-viewer live preview (single mode)
+            const float aspect = static_cast<float>(preview_tex_w) / static_cast<float>(preview_tex_h);
+            float dw = viewer_w, dh = viewer_w / aspect;
+            if (dh > viewer_h) { dh = viewer_h; dw = viewer_h * aspect; }
+            const auto orig = ImGui::GetCursorPos();
+            ImGui::SetCursorPos({orig.x + (viewer_w - dw) * 0.5f,
+                                  orig.y + (viewer_h - dh) * 0.5f});
+            ImGui::Image(static_cast<ImTextureID>(preview_tex), {dw, dh});
+        } else if (use_single) {
             single_viewer.render("single_canvas", viewer_w, viewer_h);
         } else {
             compare.render(viewer_w, viewer_h);
+        }
+
+        // For capture_mode 1/2: overlay live preview on the right panel
+        if (mode == app_mode::capture && capture_mode != 0 && preview_tex != 0) {
+            const float spacing  = ImGui::GetStyle().ItemSpacing.x;
+            const float half_w   = std::floor((viewer_w - spacing) * 0.5f);
+            const ImVec2 rmin    = {viewer_origin.x + half_w + spacing, viewer_origin.y};
+            const ImVec2 rmax    = {viewer_origin.x + viewer_w,         viewer_origin.y + viewer_h};
+            const float  rw      = rmax.x - rmin.x;
+            const float  rh      = rmax.y - rmin.y;
+            const float  aspect  = static_cast<float>(preview_tex_w) / static_cast<float>(preview_tex_h);
+            float dw = rw, dh = rw / aspect;
+            if (dh > rh) { dh = rh; dw = rh * aspect; }
+            const ImVec2 imin = {rmin.x + (rw - dw) * 0.5f, rmin.y + (rh - dh) * 0.5f};
+            const ImVec2 imax = {imin.x + dw,                imin.y + dh};
+            auto* dl = ImGui::GetWindowDrawList();
+            dl->AddRectFilled(rmin, rmax, IM_COL32(20, 20, 20, 255));
+            dl->AddImage(static_cast<ImTextureID>(preview_tex), imin, imax);
         }
 
         // ----- Shared helpers for profile panels -----
@@ -1139,6 +1198,61 @@ int main(int argc, char** argv) {
                     ImGui::Spacing();
                     ImGui::TextDisabled(compare.diff_mode ? "Diff" : "Right");
                     draw_rgba("##rswatch", hi.right_rgba);
+                }
+            }
+
+            // ----- Overlay file selector -----
+            if (mode != app_mode::capture) {
+                ImGui::Separator();
+                ImGui::TextDisabled("Overlay");
+
+                const float load_w = 45.0f;
+                const float path_w = ImGui::GetContentRegionAvail().x
+                                     - load_w - ImGui::GetStyle().ItemSpacing.x;
+
+                if (mode == app_mode::compare) {
+                    // Left
+                    ImGui::Checkbox("L##ov_show_l", &compare.show_left_overlays);
+                    ImGui::SetNextItemWidth(path_w);
+                    ImGui::InputText("##ov_path_l", &left_overlay_file, ImGuiInputTextFlags_ReadOnly);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Load##ovl", {load_w, 0})) {
+                        if (jsonl_io::load(left_overlay_file, left_overlays)) {
+                            compare.set_left_overlays(left_overlays);
+                            status_msg = "Overlay L loaded: " + left_overlay_file;
+                        }
+                    }
+                    // Right
+                    ImGui::Checkbox("R##ov_show_r", &compare.show_right_overlays);
+                    ImGui::SetNextItemWidth(path_w);
+                    ImGui::InputText("##ov_path_r", &right_overlay_file, ImGuiInputTextFlags_ReadOnly);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Load##ovr", {load_w, 0})) {
+                        if (jsonl_io::load(right_overlay_file, right_overlays)) {
+                            compare.set_right_overlays(right_overlays);
+                            status_msg = "Overlay R loaded: " + right_overlay_file;
+                        }
+                    }
+                } else {
+                    bool& show_ov = use_single ? single_viewer.show_overlays
+                                               : compare.show_overlays;
+                    ImGui::Checkbox("Show##ov_show", &show_ov);
+                    ImGui::SetNextItemWidth(path_w);
+                    ImGui::InputText("##ov_path", &overlay_file, ImGuiInputTextFlags_ReadOnly);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Load##ov", {load_w, 0})) {
+                        if (use_single) {
+                            if (jsonl_io::load(overlay_file, overlays)) {
+                                single_viewer.set_overlays(overlays);
+                                status_msg = "Overlay loaded: " + overlay_file;
+                            }
+                        } else { // split
+                            if (jsonl_io::load(overlay_file, left_overlays)) {
+                                compare.set_split_overlays(left_overlays);
+                                status_msg = "Overlay loaded: " + overlay_file;
+                            }
+                        }
+                    }
                 }
             }
 
