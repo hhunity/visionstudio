@@ -577,17 +577,18 @@ void capture_client::run_download(std::string url_path, std::string dest_path) {
 
 void capture_client::start_upload(const std::string& url_path,
                                   const std::string& src_path,
+                                  const std::string& field_name,
                                   const std::string& content_type) {
     if (ul_thread_.joinable()) ul_thread_.join();
     upload_active_   = true;
     upload_progress_ = 0.0f;
-    ul_thread_ = std::thread([this, url_path, src_path, content_type] {
-        run_upload(url_path, src_path, content_type);
+    ul_thread_ = std::thread([this, url_path, src_path, field_name, content_type] {
+        run_upload(url_path, src_path, field_name, content_type);
     });
 }
 
 void capture_client::run_upload(std::string url_path, std::string src_path,
-                                std::string content_type) {
+                                std::string field_name, std::string content_type) {
     std::ifstream ifs(src_path, std::ios::binary);
     if (!ifs) {
         log("[upload] cannot open src: " + src_path);
@@ -596,6 +597,9 @@ void capture_client::run_upload(std::string url_path, std::string src_path,
         return;
     }
     const std::string body(std::istreambuf_iterator<char>(ifs), {});
+
+    // filename component of src_path
+    const std::string filename = src_path.substr(src_path.find_last_of("/\\") + 1);
 
     httplib::Client cli(cfg_.host, cfg_.port);
     {
@@ -606,10 +610,13 @@ void capture_client::run_upload(std::string url_path, std::string src_path,
         cli.set_read_timeout(3600, 0);
     }
 
-    log("[upload] POST " + url_path + " <- " + src_path
+    log("[upload] PUT " + url_path + " <- " + src_path
         + " (" + std::to_string(body.size()) + " bytes)");
 
-    auto res = cli.Post(url_path, body, content_type);
+    httplib::MultipartFormDataItems items = {
+        { field_name, body, filename, content_type }
+    };
+    auto res = cli.Put(url_path, items);
 
     if (!res || res->status < 200 || res->status >= 300) {
         log("[upload] failed");

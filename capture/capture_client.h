@@ -55,6 +55,7 @@ public:
 
     // File upload (async). progress: 0.0 while running, 1.0 on success, -1.0 on error.
     void  start_upload(const std::string& url_path, const std::string& src_path,
+                       const std::string& field_name   = "file",
                        const std::string& content_type = "application/octet-stream");
     float upload_progress() const { return upload_progress_.load(); }
     bool  is_uploading()    const { return upload_active_.load(); }
@@ -99,7 +100,8 @@ private:
     std::atomic<bool>  download_active_{false};
     std::atomic<float> download_progress_{0.0f};
 
-    void run_upload(std::string url_path, std::string src_path, std::string content_type);
+    void run_upload(std::string url_path, std::string src_path,
+                    std::string field_name, std::string content_type);
     std::thread        ul_thread_;
     std::atomic<bool>  upload_active_{false};
     std::atomic<float> upload_progress_{0.0f};
