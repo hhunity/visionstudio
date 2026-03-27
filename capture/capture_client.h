@@ -48,6 +48,12 @@ public:
     bool poll_preview_frame(preview_frame& out);
     bool is_preview_active() const { return preview_active_.load(); }
 
+    // File download (async). progress: [0,1] while running, 1.0 on success, -1.0 on error.
+    void  start_download(const std::string& url_path, const std::string& dest_path);
+    void  cancel_download();
+    float download_progress() const { return download_progress_.load(); }
+    bool  is_downloading()    const { return download_active_.load(); }
+
 private:
     enum class cmd { connect, start_capture, stop_capture, disconnect };
 
@@ -82,6 +88,14 @@ private:
     std::thread       preview_thread_;
     std::atomic<bool> preview_interrupted_{false};
     std::atomic<bool> preview_active_{false};
+
+    void run_download(std::string url_path, std::string dest_path);
+    std::mutex        dl_cli_mtx_;
+    httplib::Client*  dl_cli_ptr_{nullptr}; // valid only while run_download() runs
+    std::thread       dl_thread_;
+    std::atomic<bool> dl_interrupted_{false};
+    std::atomic<bool> download_active_{false};
+    std::atomic<float> download_progress_{0.0f};
 
     std::mutex     preview_mtx_;
     preview_frame  latest_frame_;
