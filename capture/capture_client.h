@@ -54,10 +54,9 @@ public:
     float download_progress() const { return download_progress_.load(); }
     bool  is_downloading()    const { return download_active_.load(); }
 
-    // File upload (async). progress: [0,1] while running, 1.0 on success, -1.0 on error.
+    // File upload (async). progress: 0.0 while running, 1.0 on success, -1.0 on error.
     void  start_upload(const std::string& url_path, const std::string& src_path,
                        const std::string& content_type = "application/octet-stream");
-    void  cancel_upload();
     float upload_progress() const { return upload_progress_.load(); }
     bool  is_uploading()    const { return upload_active_.load(); }
 
@@ -105,11 +104,8 @@ private:
     std::atomic<float> download_progress_{0.0f};
 
     void run_upload(std::string url_path, std::string src_path, std::string content_type);
-    std::mutex        ul_cli_mtx_;
-    httplib::Client*  ul_cli_ptr_{nullptr}; // valid only while run_upload() runs
-    std::thread       ul_thread_;
-    std::atomic<bool> ul_interrupted_{false};
-    std::atomic<bool> upload_active_{false};
+    std::thread        ul_thread_;
+    std::atomic<bool>  upload_active_{false};
     std::atomic<float> upload_progress_{0.0f};
 
     std::mutex     preview_mtx_;

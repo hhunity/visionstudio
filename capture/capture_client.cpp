@@ -34,7 +34,6 @@ capture_client::~capture_client() {
     interrupt_sse();
     stop_preview();
     cancel_download();
-    cancel_upload();
     if (sse_thread_.joinable())     sse_thread_.join();
     if (preview_thread_.joinable()) preview_thread_.join();
     if (dl_thread_.joinable())      dl_thread_.join();
@@ -632,9 +631,7 @@ void capture_client::run_download(std::string url_path, std::string dest_path) {
 void capture_client::start_upload(const std::string& url_path,
                                   const std::string& src_path,
                                   const std::string& content_type) {
-    cancel_upload();
     if (ul_thread_.joinable()) ul_thread_.join();
-    ul_interrupted_  = false;
     upload_active_   = true;
     upload_progress_ = 0.0f;
     ul_thread_ = std::thread([this, url_path, src_path, content_type] {
@@ -642,24 +639,16 @@ void capture_client::start_upload(const std::string& url_path,
     });
 }
 
-void capture_client::cancel_upload() {
-    if (!upload_active_.load()) return;
-    ul_interrupted_ = true;
-    std::lock_guard lock(ul_cli_mtx_);
-    if (ul_cli_ptr_) ul_cli_ptr_->stop();
-}
-
 void capture_client::run_upload(std::string url_path, std::string src_path,
                                 std::string content_type) {
-    std::ifstream ifs(src_path, std::ios::binary | std::ios::ate);
+    std::ifstream ifs(src_path, std::ios::binary);
     if (!ifs) {
         log("[upload] cannot open src: " + src_path);
         upload_progress_ = -1.0f;
         upload_active_   = false;
         return;
     }
-    const uint64_t file_size = static_cast<uint64_t>(ifs.tellg());
-    ifs.seekg(0);
+    const std::string body(std::istreambuf_iterator<char>(ifs), {});
 
     httplib::Client cli(cfg_.host, cfg_.port);
     {
@@ -669,46 +658,17 @@ void capture_client::run_upload(std::string url_path, std::string src_path,
         cli.set_write_timeout(3600, 0);
         cli.set_read_timeout(3600, 0);
     }
-    {
-        std::lock_guard lock(ul_cli_mtx_);
-        ul_cli_ptr_ = &cli;
-    }
 
     log("[upload] POST " + url_path + " <- " + src_path
-        + " (" + std::to_string(file_size) + " bytes)");
+        + " (" + std::to_string(body.size()) + " bytes)");
 
-    uint64_t sent = 0;
-    constexpr size_t chunk = 65536;
+    auto res = cli.Post(url_path, body, content_type);
 
-    auto res = cli.Post(
-        url_path,
-        static_cast<size_t>(file_size),
-        [&](size_t /*offset*/, size_t /*length*/, httplib::DataSink& sink) -> bool {
-            if (ul_interrupted_.load()) return false;
-            std::vector<char> buf(chunk);
-            ifs.read(buf.data(), static_cast<std::streamsize>(chunk));
-            const size_t n = static_cast<size_t>(ifs.gcount());
-            if (n == 0) { sink.done(); return true; }
-            if (!sink.write(buf.data(), n)) return false;
-            sent += n;
-            if (file_size > 0)
-                upload_progress_ = static_cast<float>(sent) /
-                                   static_cast<float>(file_size);
-            if (sent >= file_size) sink.done();
-            return true;
-        },
-        content_type);
-
-    {
-        std::lock_guard lock(ul_cli_mtx_);
-        ul_cli_ptr_ = nullptr;
-    }
-
-    if (!res || res->status < 200 || res->status >= 300 || ul_interrupted_.load()) {
-        log("[upload] failed or cancelled");
+    if (!res || res->status < 200 || res->status >= 300) {
+        log("[upload] failed");
         upload_progress_ = -1.0f;
     } else {
-        log("[upload] done, " + std::to_string(sent) + " bytes");
+        log("[upload] done, " + std::to_string(body.size()) + " bytes");
         upload_progress_ = 1.0f;
     }
     upload_active_ = false;
