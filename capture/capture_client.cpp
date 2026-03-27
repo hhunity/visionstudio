@@ -613,10 +613,17 @@ void capture_client::run_upload(std::string url_path, std::string src_path,
     log("[upload] PUT " + url_path + " <- " + src_path
         + " (" + std::to_string(body.size()) + " bytes)");
 
-    httplib::MultipartFormDataItems items = {
-        { field_name, body, filename, content_type }
-    };
-    auto res = cli.Put(url_path, items);
+    const std::string boundary = "----VisionStudioBoundary";
+    std::string mp;
+    mp += "--" + boundary + "\r\n";
+    mp += "Content-Disposition: form-data; name=\"" + field_name
+        + "\"; filename=\"" + filename + "\"\r\n";
+    mp += "Content-Type: " + content_type + "\r\n";
+    mp += "\r\n";
+    mp += body;
+    mp += "\r\n--" + boundary + "--\r\n";
+
+    auto res = cli.Put(url_path, mp, "multipart/form-data; boundary=" + boundary);
 
     if (!res || res->status < 200 || res->status >= 300) {
         log("[upload] failed");
