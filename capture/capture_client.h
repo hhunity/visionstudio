@@ -48,8 +48,8 @@ public:
     bool poll_preview_frame(preview_frame& out);
     bool is_preview_active() const { return preview_active_.load(); }
 
-    // Synchronous GET, returns response body on success or nullopt on error.
-    std::optional<std::string> get(const std::string& url_path);
+    // Synchronous GET, returns httplib::Result (has status, headers, body).
+    httplib::Result get(const std::string& url_path);
 
     // File download (async). is_downloading() goes false on completion or error.
     void start_download(const std::string& url_path, const std::string& dest_path);

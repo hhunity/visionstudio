@@ -536,7 +536,7 @@ void capture_client::log(const std::string& msg) const {
 // Synchronous GET
 // ---------------------------------------------------------------------------
 
-std::optional<std::string> capture_client::get(const std::string& url_path) {
+httplib::Result capture_client::get(const std::string& url_path) {
     httplib::Client cli(cfg_.host, cfg_.port);
     {
         const int sec  = cfg_.timeout_ms / 1000;
@@ -544,12 +544,7 @@ std::optional<std::string> capture_client::get(const std::string& url_path) {
         cli.set_connection_timeout(sec, usec);
         cli.set_read_timeout(sec, usec);
     }
-    auto res = cli.Get(url_path);
-    if (!res || res->status < 200 || res->status >= 300) {
-        log("[get] failed: " + url_path);
-        return std::nullopt;
-    }
-    return res->body;
+    return cli.Get(url_path);
 }
 
 // ---------------------------------------------------------------------------
