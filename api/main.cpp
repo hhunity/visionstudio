@@ -1214,7 +1214,7 @@ int main(int argc, char** argv) {
                     // Left
                     ImGui::Checkbox("L##ov_show_l", &compare.show_left_overlays);
                     ImGui::SetNextItemWidth(path_w);
-                    ImGui::InputText("##ov_path_l", &left_overlay_file);
+                    ImGui::InputText("##ov_path_l", &left_overlay_file, ImGuiInputTextFlags_ReadOnly);
                     ImGui::SameLine();
                     if (ImGui::Button("Load##ovl", {load_w, 0})) {
                         if (jsonl_io::load(left_overlay_file, left_overlays)) {
@@ -1225,7 +1225,7 @@ int main(int argc, char** argv) {
                     // Right
                     ImGui::Checkbox("R##ov_show_r", &compare.show_right_overlays);
                     ImGui::SetNextItemWidth(path_w);
-                    ImGui::InputText("##ov_path_r", &right_overlay_file);
+                    ImGui::InputText("##ov_path_r", &right_overlay_file, ImGuiInputTextFlags_ReadOnly);
                     ImGui::SameLine();
                     if (ImGui::Button("Load##ovr", {load_w, 0})) {
                         if (jsonl_io::load(right_overlay_file, right_overlays)) {
@@ -1238,7 +1238,7 @@ int main(int argc, char** argv) {
                                                : compare.show_overlays;
                     ImGui::Checkbox("Show##ov_show", &show_ov);
                     ImGui::SetNextItemWidth(path_w);
-                    ImGui::InputText("##ov_path", &overlay_file);
+                    ImGui::InputText("##ov_path", &overlay_file, ImGuiInputTextFlags_ReadOnly);
                     ImGui::SameLine();
                     if (ImGui::Button("Load##ov", {load_w, 0})) {
                         if (use_single) {
