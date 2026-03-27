@@ -539,8 +539,7 @@ void capture_client::log(const std::string& msg) const {
 void capture_client::start_download(const std::string& url_path,
                                     const std::string& dest_path) {
     if (dl_thread_.joinable()) dl_thread_.join();
-    download_active_   = true;
-    download_progress_ = 0.0f;
+    download_active_ = true;
     dl_thread_ = std::thread([this, url_path, dest_path] {
         run_download(url_path, dest_path);
     });
@@ -561,12 +560,10 @@ void capture_client::run_download(std::string url_path, std::string dest_path) {
 
     if (!res || res->status < 200 || res->status >= 300) {
         log("[download] failed");
-        download_progress_ = -1.0f;
     } else {
         std::ofstream ofs(dest_path, std::ios::binary);
         ofs.write(res->body.data(), static_cast<std::streamsize>(res->body.size()));
         log("[download] done, " + std::to_string(res->body.size()) + " bytes");
-        download_progress_ = 1.0f;
     }
     download_active_ = false;
 }
