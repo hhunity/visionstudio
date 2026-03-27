@@ -538,21 +538,12 @@ void capture_client::log(const std::string& msg) const {
 
 void capture_client::start_download(const std::string& url_path,
                                     const std::string& dest_path) {
-    cancel_download();
     if (dl_thread_.joinable()) dl_thread_.join();
-    dl_interrupted_    = false;
     download_active_   = true;
     download_progress_ = 0.0f;
     dl_thread_ = std::thread([this, url_path, dest_path] {
         run_download(url_path, dest_path);
     });
-}
-
-void capture_client::cancel_download() {
-    if (!download_active_.load()) return;
-    dl_interrupted_ = true;
-    std::lock_guard lock(dl_cli_mtx_);
-    if (dl_cli_ptr_) dl_cli_ptr_->stop();
 }
 
 void capture_client::run_download(std::string url_path, std::string dest_path) {
@@ -563,62 +554,18 @@ void capture_client::run_download(std::string url_path, std::string dest_path) {
         cli.set_connection_timeout(sec, usec);
         cli.set_read_timeout(3600, 0);
     }
-    {
-        std::lock_guard lock(dl_cli_mtx_);
-        dl_cli_ptr_ = &cli;
-    }
 
     log("[download] GET " + url_path + " -> " + dest_path);
 
-    std::ofstream ofs(dest_path, std::ios::binary);
-    if (!ofs) {
-        log("[download] cannot open dest: " + dest_path);
-        download_progress_ = -1.0f;
-        download_active_   = false;
-        std::lock_guard lock(dl_cli_mtx_);
-        dl_cli_ptr_ = nullptr;
-        return;
-    }
+    auto res = cli.Get(url_path);
 
-    uint64_t received    = 0;
-    uint64_t total_bytes = 0;
-
-    auto res = cli.Get(
-        url_path,
-        [&](const httplib::Response& r) -> bool {
-            if (r.status < 200 || r.status >= 300) {
-                log("[download] HTTP " + std::to_string(r.status));
-                return false;
-            }
-            auto it = r.headers.find("Content-Length");
-            if (it != r.headers.end()) {
-                try { total_bytes = std::stoull(it->second); } catch (...) {}
-            }
-            return true;
-        },
-        [&](const char* data, size_t len) -> bool {
-            if (dl_interrupted_.load()) return false;
-            ofs.write(data, static_cast<std::streamsize>(len));
-            received += len;
-            if (total_bytes > 0)
-                download_progress_ = static_cast<float>(received) /
-                                     static_cast<float>(total_bytes);
-            return true;
-        });
-
-    ofs.close();
-
-    {
-        std::lock_guard lock(dl_cli_mtx_);
-        dl_cli_ptr_ = nullptr;
-    }
-
-    if (!res || res->status < 200 || res->status >= 300 || dl_interrupted_.load()) {
-        log("[download] failed or cancelled");
-        std::remove(dest_path.c_str()); // remove partial file
+    if (!res || res->status < 200 || res->status >= 300) {
+        log("[download] failed");
         download_progress_ = -1.0f;
     } else {
-        log("[download] done, " + std::to_string(received) + " bytes");
+        std::ofstream ofs(dest_path, std::ios::binary);
+        ofs.write(res->body.data(), static_cast<std::streamsize>(res->body.size()));
+        log("[download] done, " + std::to_string(res->body.size()) + " bytes");
         download_progress_ = 1.0f;
     }
     download_active_ = false;
