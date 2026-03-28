@@ -17,6 +17,7 @@
 #include "generated/third_party_licenses.h"
 #include <CLI/CLI.hpp>
 #include <nlohmann/json.hpp>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -405,6 +406,9 @@ int main(int argc, char** argv) {
     bool        show_camera_config    = false;
     bool        show_connect_config   = false;
     bool        show_about            = false;
+    bool        show_settings         = false;
+    bool        settings_fresh        = false;
+    nlohmann::json settings_edit;
     sse_state   cur_sse               = sse_state::disconnected;
     bool        capturing             = false;
 
@@ -754,6 +758,10 @@ int main(int argc, char** argv) {
                 ImGui::MenuItem("Overlay Graph", nullptr, &show_overlay_graph);
                 ImGui::EndMenu();
             }
+            if (ImGui::MenuItem("Settings")) {
+                show_settings  = true;
+                settings_fresh = true;
+            }
             if (ImGui::BeginMenu("Help")) {
                 if (ImGui::MenuItem("About")) show_about = true;
                 ImGui::EndMenu();
@@ -822,6 +830,98 @@ int main(int argc, char** argv) {
                 {-1, text_h},
                 ImGuiInputTextFlags_ReadOnly);
             if (ImGui::Button("Close")) { show_about = false; ImGui::CloseCurrentPopup(); }
+            ImGui::EndPopup();
+        }
+
+        // ----- Settings modal -----
+        // On fresh open: populate settings_edit from cap_cfg so all fields are shown.
+        if (show_settings && settings_fresh) {
+            settings_fresh = false;
+            settings_edit = nlohmann::json::object();
+            settings_edit["capture"] = {
+                {"host",                 cap_cfg.host},
+                {"port",                 cap_cfg.port},
+                {"connect_path",         cap_cfg.connect_path},
+                {"start_path",           cap_cfg.start_path},
+                {"stop_path",            cap_cfg.stop_path},
+                {"disconnect_path",      cap_cfg.disconnect_path},
+                {"sse_path",             cap_cfg.sse_path},
+                {"preview_path",         cap_cfg.preview_path},
+                {"preview_raw_path",     cap_cfg.preview_raw_path},
+                {"preview_raw",          cap_cfg.preview_raw},
+                {"timeout_ms",           cap_cfg.timeout_ms},
+                {"connect_config_file",  cap_cfg.connect_config_file},
+                {"capture_config_file",  cap_cfg.capture_config_file},
+            };
+        }
+        if (show_settings) ImGui::OpenPopup("Settings##modal");
+        ImGui::SetNextWindowSize({480, 460}, ImGuiCond_Always);
+        if (ImGui::BeginPopupModal("Settings##modal", &show_settings, ImGuiWindowFlags_NoResize)) {
+            // Render each JSON section (skip internal keys) dynamically.
+            // Sections are CollapsedHeaders; fields are rendered by type.
+            static const std::array<std::string, 2> kSkipSections = {"window", "imgui_ini"};
+            const float fw = ImGui::GetContentRegionAvail().x;
+            for (auto& [section_key, section_val] : settings_edit.items()) {
+                bool skip = false;
+                for (const auto& s : kSkipSections) if (s == section_key) { skip = true; break; }
+                if (skip || !section_val.is_object()) continue;
+
+                if (ImGui::CollapsingHeader(section_key.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+                    ImGui::Indent(8.0f);
+                    for (auto& [key, val] : section_val.items()) {
+                        ImGui::TextDisabled("%s", key.c_str());
+                        ImGui::SetNextItemWidth(fw - 16.0f);
+                        const std::string wid = "##set_" + section_key + "_" + key;
+                        if (val.is_string()) {
+                            std::string sv = val.get<std::string>();
+                            if (ImGui::InputText(wid.c_str(), &sv))
+                                val = sv;
+                        } else if (val.is_number_integer()) {
+                            int iv = val.get<int>();
+                            if (ImGui::InputInt(wid.c_str(), &iv, 0))
+                                val = iv;
+                        } else if (val.is_boolean()) {
+                            bool bv = val.get<bool>();
+                            const std::string cb_label = key + wid;
+                            if (ImGui::Checkbox(cb_label.c_str(), &bv))
+                                val = bv;
+                        }
+                    }
+                    ImGui::Unindent(8.0f);
+                }
+            }
+
+            ImGui::Separator();
+            const float btn_w = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+            if (ImGui::Button("Apply & Save", {btn_w, 0})) {
+                // Update cap_cfg from settings_edit["capture"]
+                if (settings_edit.contains("capture")) {
+                    auto& c = settings_edit["capture"];
+                    if (c.contains("host")               && c["host"].is_string())           cap_cfg.host               = c["host"].get<std::string>();
+                    if (c.contains("port")               && c["port"].is_number_integer())   cap_cfg.port               = c["port"].get<int>();
+                    if (c.contains("connect_path")       && c["connect_path"].is_string())   cap_cfg.connect_path       = c["connect_path"].get<std::string>();
+                    if (c.contains("start_path")         && c["start_path"].is_string())     cap_cfg.start_path         = c["start_path"].get<std::string>();
+                    if (c.contains("stop_path")          && c["stop_path"].is_string())      cap_cfg.stop_path          = c["stop_path"].get<std::string>();
+                    if (c.contains("disconnect_path")    && c["disconnect_path"].is_string())cap_cfg.disconnect_path    = c["disconnect_path"].get<std::string>();
+                    if (c.contains("sse_path")           && c["sse_path"].is_string())       cap_cfg.sse_path           = c["sse_path"].get<std::string>();
+                    if (c.contains("preview_path")       && c["preview_path"].is_string())   cap_cfg.preview_path       = c["preview_path"].get<std::string>();
+                    if (c.contains("preview_raw_path")   && c["preview_raw_path"].is_string())cap_cfg.preview_raw_path  = c["preview_raw_path"].get<std::string>();
+                    if (c.contains("preview_raw")        && c["preview_raw"].is_boolean())   cap_cfg.preview_raw        = c["preview_raw"].get<bool>();
+                    if (c.contains("timeout_ms")         && c["timeout_ms"].is_number_integer()) cap_cfg.timeout_ms     = c["timeout_ms"].get<int>();
+                    if (c.contains("connect_config_file")&& c["connect_config_file"].is_string())cap_cfg.connect_config_file = c["connect_config_file"].get<std::string>();
+                    if (c.contains("capture_config_file")&& c["capture_config_file"].is_string())cap_cfg.capture_config_file = c["capture_config_file"].get<std::string>();
+                }
+                capture_config::save("visionstudio.json", cap_cfg);
+                // Sync conn_buf so the capture panel reflects the new values.
+                conn_buf = make_conn_edit(cap_cfg);
+                show_settings = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", {btn_w, 0})) {
+                show_settings = false;
+                ImGui::CloseCurrentPopup();
+            }
             ImGui::EndPopup();
         }
 
