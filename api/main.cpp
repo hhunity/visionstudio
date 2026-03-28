@@ -375,6 +375,7 @@ int main(int argc, char** argv) {
     std::string status_msg;
     bool        show_pixel_panel      = true;
     bool        show_profile_panel    = false;
+    bool        show_overlay_graph    = false;
     bool        show_camera_config    = false;
     bool        show_connect_config   = false;
     bool        show_about            = false;
@@ -724,6 +725,7 @@ int main(int argc, char** argv) {
                 ImGui::Separator();
                 ImGui::MenuItem("Pixel Panel",   nullptr, &show_pixel_panel);
                 ImGui::MenuItem("Profile Panel", nullptr, &show_profile_panel);
+                ImGui::MenuItem("Overlay Graph", nullptr, &show_overlay_graph);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Help")) {
@@ -845,13 +847,16 @@ int main(int argc, char** argv) {
             ImGui::SameLine();
             toggle_btn("Pixel",   show_pixel_panel);
             toggle_btn("Profile", show_profile_panel);
+            toggle_btn("OvGraph", show_overlay_graph);
             ImGui::NewLine();
         }
 
         // ----- Viewer area -----
-        const float status_h        = ImGui::GetFrameHeightWithSpacing();
-        const float profile_panel_h = show_profile_panel ? 180.0f : 0.0f;
-        const float viewer_h        = ImGui::GetContentRegionAvail().y - status_h - profile_panel_h;
+        const float status_h          = ImGui::GetFrameHeightWithSpacing();
+        const float profile_panel_h   = show_profile_panel  ? 180.0f : 0.0f;
+        const float overlay_graph_h   = show_overlay_graph  ? 360.0f : 0.0f;
+        const float viewer_h          = ImGui::GetContentRegionAvail().y - status_h
+                                        - profile_panel_h - overlay_graph_h;
 
         constexpr float panel_w         = 240.0f;  // right pixel panel
         constexpr float capture_panel_w = 180.0f;  // left capture control panel
@@ -1338,8 +1343,108 @@ int main(int argc, char** argv) {
             ImGui::EndChild();
         }
 
+        // ----- Overlay scatter graph panel -----
+        if (show_overlay_graph) {
+            const float content_left_x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
+            ImGui::SetCursorScreenPos({content_left_x, viewer_origin.y + viewer_h + profile_panel_h});
+            const float avail_w = ImGui::GetContentRegionAvail().x;
+            ImGui::BeginChild("##overlay_graph", {avail_w, overlay_graph_h}, ImGuiChildFlags_Borders);
+
+            const std::vector<roi_group>* src  = use_single ? &overlays : &left_overlays;
+            const std::vector<uint8_t>*   gvis = nullptr;
+            {
+                image_viewer& ref = use_single ? single_viewer : compare.left_viewer_ref();
+                if (ref.overlay_group_count() == src->size())
+                    gvis = &ref.overlay_group_visibility;
+            }
+
+            if (src->empty()) {
+                ImGui::TextDisabled("No overlay loaded");
+            } else if (ImGui::BeginTabBar("##ovgtabs")) {
+                for (size_t gi = 0; gi < src->size(); ++gi) {
+                    if (gvis && (*gvis)[gi] == 0) continue;
+                    const auto& g = (*src)[gi];
+                    if (g.entries.empty()) continue;
+
+                    // Collect scatter data
+                    const int n = static_cast<int>(g.entries.size());
+                    std::vector<double> xs_col(n), xs_row(n), dxs(n), dys(n), angles(n);
+                    for (int i = 0; i < n; ++i) {
+                        const auto& e = g.entries[i];
+                        xs_col[i] = static_cast<double>(e.x);
+                        xs_row[i] = static_cast<double>(e.y);
+                        dxs[i]    = static_cast<double>(e.dx);
+                        dys[i]    = static_cast<double>(e.dy);
+                        angles[i] = static_cast<double>(e.angle);
+                    }
+
+                    char tab_id[128];
+                    std::snprintf(tab_id, sizeof(tab_id), "%s##ovgtab%zu", g.label.c_str(), gi);
+                    if (ImGui::BeginTabItem(tab_id)) {
+                        const float inner_h = ImGui::GetContentRegionAvail().y;
+                        const float row_h   = (inner_h - ImGui::GetStyle().ItemSpacing.y) * 0.5f;
+                        const float col_w   = (avail_w - ImGui::GetStyle().ItemSpacing.x * 2.0f) / 3.0f;
+
+                        constexpr ImPlotFlags pf =
+                            ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
+                        constexpr ImPlotAxisFlags af = ImPlotAxisFlags_AutoFit;
+
+                        auto scatter = [&](const char* title,
+                                           const std::vector<double>& xs,
+                                           const std::vector<double>& ys) {
+                            char pid[128];
+                            std::snprintf(pid, sizeof(pid), "%s##%zu", title, gi);
+                            if (ImPlot::BeginPlot(pid, {col_w, row_h}, pf)) {
+                                ImPlot::SetupAxes(nullptr, nullptr, af, af);
+                                ImPlot::PlotScatter(title, xs.data(), ys.data(), n);
+
+                                // Nearest-point tooltip (within 15 px)
+                                if (ImPlot::IsPlotHovered() && n > 0) {
+                                    const ImVec2 mp = ImGui::GetMousePos();
+                                    int nearest = -1;
+                                    float best = 15.0f;
+                                    for (int i = 0; i < n; ++i) {
+                                        const ImVec2 pt = ImPlot::PlotToPixels(xs[i], ys[i]);
+                                        const float ddx = pt.x - mp.x;
+                                        const float ddy = pt.y - mp.y;
+                                        const float d = std::sqrt(ddx * ddx + ddy * ddy);
+                                        if (d < best) { best = d; nearest = i; }
+                                    }
+                                    if (nearest >= 0) {
+                                        const auto& e = g.entries[nearest];
+                                        ImGui::BeginTooltip();
+                                        ImGui::Text("Col: %d  Row: %d", e.x, e.y);
+                                        ImGui::Separator();
+                                        ImGui::Text("dx:    %.6f", e.dx);
+                                        ImGui::Text("dy:    %.6f", e.dy);
+                                        ImGui::Text("angle: %.6f", e.angle);
+                                        ImGui::EndTooltip();
+                                    }
+                                }
+
+                                ImPlot::EndPlot();
+                            }
+                        };
+
+                        // Row 1: column direction (x = col index)
+                        scatter("Col-dx",    xs_col, dxs);    ImGui::SameLine();
+                        scatter("Col-dy",    xs_col, dys);    ImGui::SameLine();
+                        scatter("Col-angle", xs_col, angles);
+                        // Row 2: row direction (x = row index)
+                        scatter("Row-dx",    xs_row, dxs);    ImGui::SameLine();
+                        scatter("Row-dy",    xs_row, dys);    ImGui::SameLine();
+                        scatter("Row-angle", xs_row, angles);
+
+                        ImGui::EndTabItem();
+                    }
+                }
+                ImGui::EndTabBar();
+            }
+            ImGui::EndChild();
+        }
+
         // Reset cursor to below all panels so the status bar sits correctly.
-        ImGui::SetCursorScreenPos({viewer_origin.x, viewer_origin.y + viewer_h + profile_panel_h});
+        ImGui::SetCursorScreenPos({viewer_origin.x, viewer_origin.y + viewer_h + profile_panel_h + overlay_graph_h});
 
         // ----- Status bar -----
         ImGui::Separator();
