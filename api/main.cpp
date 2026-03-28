@@ -248,16 +248,42 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
         std::vector<const char*> jsonl_files, img_files;
         for (int i = 0; i < count; ++i)
             (has_ext(paths[i], ".json") ? jsonl_files : img_files).push_back(paths[i]);
-        if (!img_files.empty())    app->left_loader->start(img_files[0]);
-        if (img_files.size() >= 2) app->right_loader->start(img_files[1]);
-        if (!jsonl_files.empty())
+        if (img_files.size() >= 2) {
+            // Two images: first → left, second → right.
+            app->left_loader->start(img_files[0]);
+            app->right_loader->start(img_files[1]);
+        } else if (img_files.size() == 1) {
+            // One image: load into the panel the cursor is over.
+            int win_w = 1;
+            glfwGetWindowSize(window, &win_w, nullptr);
+            double cx = 0.0;
+            glfwGetCursorPos(window, &cx, nullptr);
+            if (cx < win_w * 0.5)
+                app->left_loader->start(img_files[0]);
+            else
+                app->right_loader->start(img_files[0]);
+        }
+        if (jsonl_files.size() >= 2) {
             load_overlay(jsonl_files[0], *app->left_overlays,
                 [&](auto& g){ app->compare->set_left_overlay_groups(g); },
                 app->left_overlay_file);
-        if (jsonl_files.size() >= 2)
             load_overlay(jsonl_files[1], *app->right_overlays,
                 [&](auto& g){ app->compare->set_right_overlay_groups(g); },
                 app->right_overlay_file);
+        } else if (jsonl_files.size() == 1) {
+            int win_w = 1;
+            glfwGetWindowSize(window, &win_w, nullptr);
+            double cx = 0.0;
+            glfwGetCursorPos(window, &cx, nullptr);
+            if (cx < win_w * 0.5)
+                load_overlay(jsonl_files[0], *app->left_overlays,
+                    [&](auto& g){ app->compare->set_left_overlay_groups(g); },
+                    app->left_overlay_file);
+            else
+                load_overlay(jsonl_files[0], *app->right_overlays,
+                    [&](auto& g){ app->compare->set_right_overlay_groups(g); },
+                    app->right_overlay_file);
+        }
         *app->status_msg = "Loading...";
         return;
     }
