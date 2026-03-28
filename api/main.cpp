@@ -1407,43 +1407,103 @@ int main(int argc, char** argv) {
                     char tab_id[128];
                     std::snprintf(tab_id, sizeof(tab_id), "%s##ovgtab%zu", g.label.c_str(), gi);
                     if (ImGui::BeginTabItem(tab_id)) {
-                        const float inner_h = ImGui::GetContentRegionAvail().y;
-                        const float row_h   = (inner_h - ImGui::GetStyle().ItemSpacing.y) * 0.5f;
-                        const float col_w   = (avail_w - ImGui::GetStyle().ItemSpacing.x * 2.0f) / 3.0f;
+                        const float text_h  = ImGui::GetTextLineHeightWithSpacing() * 2.0f
+                                            + ImGui::GetStyle().ItemSpacing.y;
+                        const float plot_h  = ImGui::GetContentRegionAvail().y - text_h;
+                        const float plot_w  = (avail_w - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
 
-                        constexpr ImPlotFlags pf =
-                            ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
+                        constexpr ImPlotFlags    pf = ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
                         constexpr ImPlotAxisFlags af = ImPlotAxisFlags_AutoFit;
 
-                        auto scatter = [&](const char* title,
-                                           const std::vector<double>& xs,
-                                           const std::vector<double>& ys) {
+                        // Linear regression: returns {a, b} for y = a*x + b.
+                        auto linreg = [&](const std::vector<double>& xs,
+                                          const std::vector<double>& ys) -> std::pair<double,double> {
+                            const int m = static_cast<int>(xs.size());
+                            if (m < 2) return {0.0, ys.empty() ? 0.0 : ys[0]};
+                            double sx = 0, sy = 0, sxx = 0, sxy = 0;
+                            for (int i = 0; i < m; ++i) { sx += xs[i]; sy += ys[i]; sxx += xs[i]*xs[i]; sxy += xs[i]*ys[i]; }
+                            const double denom = m * sxx - sx * sx;
+                            if (std::abs(denom) < 1e-12) return {0.0, sy / m};
+                            const double a = (m * sxy - sx * sy) / denom;
+                            const double b = (sy - a * sx) / m;
+                            return {a, b};
+                        };
+
+                        // Pre-compute all regressions for formula display below plots.
+                        const auto [a_dx_col,  b_dx_col]  = linreg(xs_col, dxs);
+                        const auto [a_dy_col,  b_dy_col]  = linreg(xs_col, dys);
+                        const auto [a_ang_col, b_ang_col] = linreg(xs_col, angles);
+                        const auto [a_dx_row,  b_dx_row]  = linreg(xs_row, dxs);
+                        const auto [a_dy_row,  b_dy_row]  = linreg(xs_row, dys);
+                        const auto [a_ang_row, b_ang_row] = linreg(xs_row, angles);
+
+                        // One plot showing dx, dy (Y1) and angle (Y2) against an index axis.
+                        // Legend items are clickable to hide/show individual series.
+                        auto dual_scatter = [&](const char* title, const std::vector<double>& xs,
+                                                const char* xlabel,
+                                                double a_dx, double b_dx,
+                                                double a_dy, double b_dy,
+                                                double a_ang, double b_ang) {
                             char pid[128];
                             std::snprintf(pid, sizeof(pid), "%s##%zu", title, gi);
-                            if (ImPlot::BeginPlot(pid, {col_w, row_h}, pf)) {
-                                ImPlot::SetupAxes(nullptr, nullptr, af, af);
-                                ImPlot::PlotScatter(title, xs.data(), ys.data(), n);
+                            if (ImPlot::BeginPlot(pid, {plot_w, plot_h}, pf)) {
+                                ImPlot::SetupAxes(xlabel, "dx / dy", af, af);
+                                ImPlot::SetupAxis(ImAxis_Y2, "angle", af);
 
-                                // Nearest-point tooltip (within 15 px)
+                                // Scatter points
+                                ImPlot::PlotScatter("dx",    xs.data(), dxs.data(),    n);
+                                ImPlot::PlotScatter("dy",    xs.data(), dys.data(),    n);
+                                ImPlot::SetAxes(ImAxis_X1, ImAxis_Y2);
+                                ImPlot::PlotScatter("angle", xs.data(), angles.data(), n);
+
+                                // Linear regression lines
+                                if (n >= 2) {
+                                    const double xmin = *std::min_element(xs.begin(), xs.end());
+                                    const double xmax = *std::max_element(xs.begin(), xs.end());
+                                    const double fit_xs[2] = {xmin, xmax};
+
+                                    auto plot_fit = [&](double a, double b, ImAxis yax,
+                                                        ImVec4 col, const char* lbl) {
+                                        const double fit_ys[2] = {a*xmin+b, a*xmax+b};
+                                        ImPlot::SetAxes(ImAxis_X1, yax);
+                                        ImPlot::SetNextLineStyle(col, 1.5f);
+                                        char lid[64];
+                                        std::snprintf(lid, sizeof(lid), "%s##fit_%s_%zu", lbl, lbl, gi);
+                                        ImPlot::PlotLine(lid, fit_xs, fit_ys, 2);
+                                    };
+                                    plot_fit(a_dx,  b_dx,  ImAxis_Y1, {0.4f, 0.8f, 1.0f, 0.8f}, "dx fit");
+                                    plot_fit(a_dy,  b_dy,  ImAxis_Y1, {0.4f, 1.0f, 0.5f, 0.8f}, "dy fit");
+                                    plot_fit(a_ang, b_ang, ImAxis_Y2, {1.0f, 0.7f, 0.3f, 0.8f}, "angle fit");
+                                }
+
+                                // Nearest-point tooltip — tracks which series is closest
                                 if (ImPlot::IsPlotHovered() && n > 0) {
                                     const ImVec2 mp = ImGui::GetMousePos();
-                                    int nearest = -1;
+                                    int nearest = -1, nearest_series = -1;
                                     float best = 15.0f;
                                     for (int i = 0; i < n; ++i) {
-                                        const ImVec2 pt = ImPlot::PlotToPixels(xs[i], ys[i]);
-                                        const float ddx = pt.x - mp.x;
-                                        const float ddy = pt.y - mp.y;
-                                        const float d = std::sqrt(ddx * ddx + ddy * ddy);
-                                        if (d < best) { best = d; nearest = i; }
+                                        auto check = [&](double y, ImAxis ya, int sid) {
+                                            const ImVec2 pt = ImPlot::PlotToPixels(xs[i], y, ImAxis_X1, ya);
+                                            const float d = std::sqrt((pt.x-mp.x)*(pt.x-mp.x)+(pt.y-mp.y)*(pt.y-mp.y));
+                                            if (d < best) { best = d; nearest = i; nearest_series = sid; }
+                                        };
+                                        check(dxs[i],    ImAxis_Y1, 0);
+                                        check(dys[i],    ImAxis_Y1, 1);
+                                        check(angles[i], ImAxis_Y2, 2);
                                     }
                                     if (nearest >= 0) {
                                         const auto& e = g.entries[nearest];
                                         ImGui::BeginTooltip();
-                                        ImGui::Text("Col: %d  Row: %d", e.x, e.y);
+                                        ImGui::Text("x: %d  y: %d", e.x, e.y);
                                         ImGui::Separator();
-                                        ImGui::Text("dx:    %.6f", e.dx);
-                                        ImGui::Text("dy:    %.6f", e.dy);
-                                        ImGui::Text("angle: %.6f", e.angle);
+                                        auto row_text = [&](const char* label, double val, bool highlight) {
+                                            if (highlight) ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 220, 60, 255));
+                                            ImGui::Text("%-6s %.6f", label, val);
+                                            if (highlight) ImGui::PopStyleColor();
+                                        };
+                                        row_text("dx:",    e.dx,    nearest_series == 0);
+                                        row_text("dy:",    e.dy,    nearest_series == 1);
+                                        row_text("angle:", e.angle, nearest_series == 2);
                                         ImGui::EndTooltip();
                                     }
                                 }
@@ -1452,14 +1512,24 @@ int main(int argc, char** argv) {
                             }
                         };
 
-                        // Row 1: column direction (x = col index)
-                        scatter("Col-dx",    xs_col, dxs);    ImGui::SameLine();
-                        scatter("Col-dy",    xs_col, dys);    ImGui::SameLine();
-                        scatter("Col-angle", xs_col, angles);
-                        // Row 2: row direction (x = row index)
-                        scatter("Row-dx",    xs_row, dxs);    ImGui::SameLine();
-                        scatter("Row-dy",    xs_row, dys);    ImGui::SameLine();
-                        scatter("Row-angle", xs_row, angles);
+                        dual_scatter("Column", xs_col, "col",
+                                     a_dx_col, b_dx_col, a_dy_col, b_dy_col, a_ang_col, b_ang_col);
+                        ImGui::SameLine();
+                        dual_scatter("Row",    xs_row, "row",
+                                     a_dx_row, b_dx_row, a_dy_row, b_dy_row, a_ang_row, b_ang_row);
+
+                        // Regression formulas displayed below the plots
+                        ImGui::TextColored({0.4f,0.8f,1.0f,1.0f}, "Col:");
+                        ImGui::SameLine(); ImGui::Text("dx=%.4fx%+.4f", a_dx_col,  b_dx_col);
+                        ImGui::SameLine(); ImGui::Text("  dy=%.4fx%+.4f", a_dy_col,  b_dy_col);
+                        ImGui::SameLine(); ImGui::TextColored({1.0f,0.7f,0.3f,1.0f},
+                                                              "  angle=%.4fx%+.4f", a_ang_col, b_ang_col);
+
+                        ImGui::TextColored({0.4f,0.8f,1.0f,1.0f}, "Row:");
+                        ImGui::SameLine(); ImGui::Text("dx=%.4fx%+.4f", a_dx_row,  b_dx_row);
+                        ImGui::SameLine(); ImGui::Text("  dy=%.4fx%+.4f", a_dy_row,  b_dy_row);
+                        ImGui::SameLine(); ImGui::TextColored({1.0f,0.7f,0.3f,1.0f},
+                                                              "  angle=%.4fx%+.4f", a_ang_row, b_ang_row);
 
                         ImGui::EndTabItem();
                     }
