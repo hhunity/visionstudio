@@ -67,9 +67,16 @@ public:
     // Read-only access to the CPU image data (used by compare_viewer for diff).
     const image_data& get_image_data() const { return cpu_image_; }
 
-    // Overlay: load ROI entries for heatmap display (single-mode).
-    void set_overlays(std::vector<roi_entry> entries);
+    // Overlay: load ROI groups for heatmap display.
+    void set_overlay_groups(std::vector<roi_group> groups);
     void clear_overlays();
+
+    // Per-group visibility (index matches groups passed to set_overlay_groups).
+    // uint8_t instead of bool to allow taking bool* for ImGui (vector<bool> is bit-packed).
+    std::vector<uint8_t> overlay_group_visibility;
+
+    size_t             overlay_group_count() const;
+    const std::string& overlay_group_label(size_t i) const;
 
     // Display options
     bool  show_grid           = false;
@@ -116,7 +123,7 @@ private:
     view_state             owned_state_;
     bool                   needs_fit_ = false;  // fit view on first render after load
 
-    std::vector<roi_entry> overlays_;
+    std::vector<roi_group> overlay_groups_;
     float                  overlay_max_mag_ = 1.0f; // for color normalization
     hover_info             last_hover_;
     bool                   minimap_dragging_ = false;

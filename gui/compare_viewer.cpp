@@ -10,52 +10,60 @@ compare_viewer::compare_viewer() = default;
 const image_data& compare_viewer::get_left_image_data()  const { return left_viewer_.get_image_data(); }
 const image_data& compare_viewer::get_right_image_data() const { return right_viewer_.get_image_data(); }
 
-void compare_viewer::set_left_overlays(std::vector<roi_entry> entries) {
-    left_viewer_.set_overlays(std::move(entries));
+void compare_viewer::set_left_overlay_groups(std::vector<roi_group> groups) {
+    left_viewer_.set_overlay_groups(std::move(groups));
 }
 
-void compare_viewer::set_right_overlays(std::vector<roi_entry> entries) {
-    right_viewer_.set_overlays(std::move(entries));
+void compare_viewer::set_right_overlay_groups(std::vector<roi_group> groups) {
+    right_viewer_.set_overlay_groups(std::move(groups));
 }
 
-void compare_viewer::set_split_overlays(std::vector<roi_entry> entries) {
-    split_overlays_ = std::move(entries);
-    apply_split_overlays();
+void compare_viewer::set_split_overlay_groups(std::vector<roi_group> groups) {
+    split_overlay_groups_ = std::move(groups);
+    apply_split_overlay_groups();
 }
 
 void compare_viewer::clear_overlays() {
-    split_overlays_.clear();
+    split_overlay_groups_.clear();
     left_viewer_.clear_overlays();
     right_viewer_.clear_overlays();
 }
 
-void compare_viewer::apply_split_overlays() {
-    if (split_overlays_.empty() || split_src_.empty()) return;
+void compare_viewer::apply_split_overlay_groups() {
+    if (split_overlay_groups_.empty() || split_src_.empty()) return;
 
     const int left_w = std::max(1, std::min(split_x, split_src_.width - 1));
 
-    std::vector<roi_entry> left_ov, right_ov;
-    for (const auto& e : split_overlays_) {
-        const int x2 = e.x + e.w;
-
-        // Left panel: clip to [0, left_w)
-        if (e.x < left_w) {
-            roi_entry le = e;
-            le.w = std::min(x2, left_w) - e.x;
-            if (le.w > 0) left_ov.push_back(le);
+    std::vector<roi_group> left_groups, right_groups;
+    for (const auto& g : split_overlay_groups_) {
+        roi_group lg{g.label, g.tile_w, g.tile_h, {}};
+        roi_group rg{g.label, g.tile_w, g.tile_h, {}};
+        for (const auto& e : g.entries) {
+            const int x2 = e.x + e.w;
+            if (e.x < left_w) {
+                roi_entry le = e;
+                le.w = std::min(x2, left_w) - e.x;
+                if (le.w > 0) lg.entries.push_back(le);
+            }
+            if (x2 > left_w) {
+                roi_entry re = e;
+                re.x = std::max(e.x, left_w) - left_w;
+                re.w = x2 - std::max(e.x, left_w);
+                if (re.w > 0) rg.entries.push_back(re);
+            }
         }
-
-        // Right panel: clip to [left_w, src_width), shift x by -left_w
-        if (x2 > left_w) {
-            roi_entry re = e;
-            re.x = std::max(e.x, left_w) - left_w;
-            re.w = x2 - std::max(e.x, left_w);
-            if (re.w > 0) right_ov.push_back(re);
-        }
+        if (!lg.entries.empty()) left_groups.push_back(std::move(lg));
+        if (!rg.entries.empty()) right_groups.push_back(std::move(rg));
     }
 
-    left_viewer_.set_overlays(std::move(left_ov));
-    right_viewer_.set_overlays(std::move(right_ov));
+    // Preserve current group visibility across split position changes
+    const std::vector<uint8_t> prev_vis = left_viewer_.overlay_group_visibility;
+    left_viewer_.set_overlay_groups(std::move(left_groups));
+    right_viewer_.set_overlay_groups(std::move(right_groups));
+    if (prev_vis.size() == left_viewer_.overlay_group_visibility.size()) {
+        left_viewer_.overlay_group_visibility  = prev_vis;
+        right_viewer_.overlay_group_visibility = prev_vis;
+    }
 }
 
 bool compare_viewer::load_left(const image_data& img) {
@@ -125,7 +133,7 @@ void compare_viewer::apply_split() {
     split_x_applied_ = split_x;
     left_viewer_.load_image(left_half);
     right_viewer_.load_image(right_half);
-    apply_split_overlays();
+    apply_split_overlay_groups();
 }
 
 // ---------------------------------------------------------------------------

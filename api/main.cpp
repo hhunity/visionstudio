@@ -92,14 +92,126 @@ struct app_state {
     std::string*             status_msg    = nullptr;
     async_loader*            left_loader   = nullptr;
     async_loader*            right_loader  = nullptr;
-    std::vector<roi_entry>*  overlays       = nullptr; // single mode
-    std::vector<roi_entry>*  left_overlays  = nullptr; // compare / split mode (left panel)
-    std::vector<roi_entry>*  right_overlays = nullptr; // compare mode (right panel)
+    std::vector<roi_group>*  overlays       = nullptr; // single mode
+    std::vector<roi_group>*  left_overlays  = nullptr; // compare / split mode (left panel)
+    std::vector<roi_group>*  right_overlays = nullptr; // compare mode (right panel)
     std::string*             overlay_file       = nullptr; // single / split
     std::string*             left_overlay_file  = nullptr; // compare left
     std::string*             right_overlay_file = nullptr; // compare right
 };
 
+// ---------------------------------------------------------------------------
+// Config tab — text file editor state (path, text content, modified flag).
+// ---------------------------------------------------------------------------
+
+struct config_tab {
+    std::string path;
+    std::string text;
+    bool        modified = false;
+
+    void load() {
+        std::ifstream f(path);
+        if (!f.is_open()) return;
+        text = std::string(std::istreambuf_iterator<char>(f), {});
+        modified = false;
+    }
+    void save() {
+        std::ofstream f(path);
+        if (!f.is_open()) return;
+        f << text;
+        modified = false;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Static inline helpers shared between drop_callback and the main loop.
+// ---------------------------------------------------------------------------
+
+// Load an overlay JSON file into `buf`, call `setter(buf)`, and optionally
+// update `file_out` and `status_out`. Returns true on success.
+template<typename Setter>
+static inline bool load_overlay(const std::string& path,
+                                 std::vector<roi_group>& buf,
+                                 Setter setter,
+                                 std::string* file_out    = nullptr,
+                                 std::string* status_out  = nullptr,
+                                 const char*  status_prefix = "Overlay loaded: ") {
+    if (!overlay_io::load(path, buf)) return false;
+    setter(buf);
+    if (file_out)   *file_out   = path;
+    if (status_out) *status_out = std::string(status_prefix) + path;
+    return true;
+}
+
+// Render ImGui checkboxes for each overlay group in `viewer` (for panels).
+// If `sync_viewer` is non-null its visibility is kept in sync (split mode).
+static inline void overlay_group_checkboxes(image_viewer& viewer,
+                                             const char* id_prefix,
+                                             image_viewer* sync_viewer = nullptr) {
+    for (size_t gi = 0; gi < viewer.overlay_group_count(); ++gi) {
+        char id[128];
+        std::snprintf(id, sizeof(id), "%s##%s%zu",
+                      viewer.overlay_group_label(gi).c_str(), id_prefix, gi);
+        bool vis = viewer.overlay_group_visibility[gi] != 0;
+        if (ImGui::Checkbox(id, &vis)) {
+            viewer.overlay_group_visibility[gi] = vis ? 1 : 0;
+            if (sync_viewer && gi < sync_viewer->overlay_group_visibility.size())
+                sync_viewer->overlay_group_visibility[gi] = vis ? 1 : 0;
+        }
+    }
+}
+
+// Render ImGui menu items for each overlay group in `viewer`.
+// If `sync_viewer` is non-null its visibility is kept in sync (split mode).
+static inline void overlay_group_menu_items(image_viewer& viewer,
+                                             const char* id_prefix,
+                                             image_viewer* sync_viewer = nullptr) {
+    for (size_t gi = 0; gi < viewer.overlay_group_count(); ++gi) {
+        char lbl[128];
+        std::snprintf(lbl, sizeof(lbl), "  %s##%s%zu",
+                      viewer.overlay_group_label(gi).c_str(), id_prefix, gi);
+        bool vis = viewer.overlay_group_visibility[gi] != 0;
+        if (ImGui::MenuItem(lbl, nullptr, &vis)) {
+            viewer.overlay_group_visibility[gi] = vis ? 1 : 0;
+            if (sync_viewer && gi < sync_viewer->overlay_group_visibility.size())
+                sync_viewer->overlay_group_visibility[gi] = vis ? 1 : 0;
+        }
+    }
+}
+
+// Render the interior of a config editor modal: path row (Browse/Reload),
+// text editor, and Save button. `id_suffix` keeps ImGui IDs unique.
+static inline void config_editor_modal_body(config_tab& tab, const char* id_suffix) {
+    char browse_id[48], reload_id[48], save_id[48];
+    std::snprintf(browse_id, sizeof(browse_id), "Browse##%s", id_suffix);
+    std::snprintf(reload_id, sizeof(reload_id), "Reload##%s", id_suffix);
+    std::snprintf(save_id,   sizeof(save_id),   "##save_%s",  id_suffix);
+
+    ImGui::SetNextItemWidth(-180.0f);
+    if (ImGui::InputText("##path", &tab.path)) tab.modified = true;
+    ImGui::SameLine();
+    if (ImGui::Button(browse_id)) {
+        nfdchar_t* out = nullptr;
+        if (NFD::OpenDialog(out) == NFD_OKAY) {
+            tab.path = out;
+            NFD::FreePath(out);
+            tab.load();
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(reload_id)) tab.load();
+
+    const float avail_h = ImGui::GetContentRegionAvail().y
+                        - ImGui::GetFrameHeightWithSpacing() - 4;
+    if (ImGui::InputTextMultiline("##ed", &tab.text, {-1, avail_h}))
+        tab.modified = true;
+
+    const std::string save_label = std::string("Save")
+        + (tab.modified ? " *" : "") + save_id;
+    if (ImGui::Button(save_label.c_str())) tab.save();
+}
+
+// ---------------------------------------------------------------------------
 // Returns true if path ends with the given (lower-case) extension including dot.
 static bool has_ext(const char* path, const char* ext) {
     const size_t plen = std::strlen(path);
@@ -123,44 +235,38 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
     case app_mode::single:
         for (int i = 0; i < count; ++i) {
             if (has_ext(paths[i], ".json")) {
-                if (overlay_io::load_flat(paths[i], *app->overlays)) {
-                    app->single_viewer->set_overlays(*app->overlays);
-                    if (app->overlay_file) *app->overlay_file = paths[i];
-                    *app->status_msg = std::string("Overlay loaded: ") + paths[i];
-                }
+                load_overlay(paths[i], *app->overlays,
+                    [&](auto& g){ app->single_viewer->set_overlay_groups(g); },
+                    app->overlay_file, app->status_msg);
             } else {
                 app->left_loader->start(paths[i]);
                 *app->status_msg = "Loading...";
             }
         }
-        return; // status_msg already set above
+        return;
     case app_mode::compare: {
-        // Partition dropped files: .jsonl → overlays, others → images
         std::vector<const char*> jsonl_files, img_files;
         for (int i = 0; i < count; ++i)
             (has_ext(paths[i], ".json") ? jsonl_files : img_files).push_back(paths[i]);
-        if (!img_files.empty())  app->left_loader->start(img_files[0]);
+        if (!img_files.empty())    app->left_loader->start(img_files[0]);
         if (img_files.size() >= 2) app->right_loader->start(img_files[1]);
-        if (!jsonl_files.empty()) {
-            overlay_io::load_flat(jsonl_files[0], *app->left_overlays);
-            app->compare->set_left_overlays(*app->left_overlays);
-            if (app->left_overlay_file) *app->left_overlay_file = jsonl_files[0];
-        }
-        if (jsonl_files.size() >= 2) {
-            overlay_io::load_flat(jsonl_files[1], *app->right_overlays);
-            app->compare->set_right_overlays(*app->right_overlays);
-            if (app->right_overlay_file) *app->right_overlay_file = jsonl_files[1];
-        }
+        if (!jsonl_files.empty())
+            load_overlay(jsonl_files[0], *app->left_overlays,
+                [&](auto& g){ app->compare->set_left_overlay_groups(g); },
+                app->left_overlay_file);
+        if (jsonl_files.size() >= 2)
+            load_overlay(jsonl_files[1], *app->right_overlays,
+                [&](auto& g){ app->compare->set_right_overlay_groups(g); },
+                app->right_overlay_file);
         *app->status_msg = "Loading...";
         return;
     }
     case app_mode::split: {
         for (int i = 0; i < count; ++i) {
             if (has_ext(paths[i], ".json")) {
-                overlay_io::load_flat(paths[i], *app->left_overlays);
-                app->compare->set_split_overlays(*app->left_overlays);
-                if (app->overlay_file) *app->overlay_file = paths[i];
-                *app->status_msg = std::string("Overlay loaded: ") + paths[i];
+                load_overlay(paths[i], *app->left_overlays,
+                    [&](auto& g){ app->compare->set_split_overlay_groups(g); },
+                    app->overlay_file, app->status_msg);
             } else {
                 app->left_loader->start(paths[i]);
                 *app->status_msg = "Loading...";
@@ -310,25 +416,6 @@ int main(int argc, char** argv) {
         e.timeout_ms = c.timeout_ms;
         return e;
     };
-    // Camera config editor state.
-    struct config_tab {
-        std::string path;
-        std::string text;
-        bool        modified = false;
-
-        void load() {
-            std::ifstream f(path);
-            if (!f.is_open()) return;
-            text = std::string(std::istreambuf_iterator<char>(f), {});
-            modified = false;
-        }
-        void save() {
-            std::ofstream f(path);
-            if (!f.is_open()) return;
-            f << text;
-            modified = false;
-        }
-    };
     config_tab capture_cfg_tab;   // capture_config_file
     config_tab connect_cfg_tab;   // connect_config_file
 
@@ -348,9 +435,9 @@ int main(int argc, char** argv) {
 
     async_loader           left_loader;
     async_loader           right_loader;
-    std::vector<roi_entry> overlays;
-    std::vector<roi_entry> left_overlays;
-    std::vector<roi_entry> right_overlays;
+    std::vector<roi_group> overlays;
+    std::vector<roi_group> left_overlays;
+    std::vector<roi_group> right_overlays;
     std::string            overlay_file;
     std::string            left_overlay_file;
     std::string            right_overlay_file;
@@ -382,27 +469,24 @@ int main(int argc, char** argv) {
         status_msg = "Loading...";
     }
 
-    // Load overlay JSONL from CLI args
+    // Load overlay JSON from CLI args
     if (!arg_overlays.empty()) {
         if (mode == app_mode::single) {
-            if (overlay_io::load_flat(arg_overlays[0], overlays)) {
-                single_viewer.set_overlays(overlays);
-                overlay_file = arg_overlays[0];
-            }
+            load_overlay(arg_overlays[0], overlays,
+                [&](auto& g){ single_viewer.set_overlay_groups(g); },
+                &overlay_file);
         } else if (mode == app_mode::split) {
-            if (overlay_io::load_flat(arg_overlays[0], left_overlays)) {
-                compare.set_split_overlays(left_overlays);
-                overlay_file = arg_overlays[0];
-            }
+            load_overlay(arg_overlays[0], left_overlays,
+                [&](auto& g){ compare.set_split_overlay_groups(g); },
+                &overlay_file);
         } else if (mode == app_mode::compare) {
-            if (overlay_io::load_flat(arg_overlays[0], left_overlays)) {
-                compare.set_left_overlays(left_overlays);
-                left_overlay_file = arg_overlays[0];
-            }
-            if (arg_overlays.size() >= 2 && overlay_io::load_flat(arg_overlays[1], right_overlays)) {
-                compare.set_right_overlays(right_overlays);
-                right_overlay_file = arg_overlays[1];
-            }
+            load_overlay(arg_overlays[0], left_overlays,
+                [&](auto& g){ compare.set_left_overlay_groups(g); },
+                &left_overlay_file);
+            if (arg_overlays.size() >= 2)
+                load_overlay(arg_overlays[1], right_overlays,
+                    [&](auto& g){ compare.set_right_overlay_groups(g); },
+                    &right_overlay_file);
         }
     }
 
@@ -588,6 +672,8 @@ int main(int argc, char** argv) {
                     ImGui::MenuItem("Show Grid",     nullptr, &single_viewer.show_grid);
                     ImGui::MenuItem("Show Minimap",  nullptr, &single_viewer.show_minimap);
                     ImGui::MenuItem("Show Overlays",  nullptr, &single_viewer.show_overlays);
+                    if (single_viewer.show_overlays)
+                        overlay_group_menu_items(single_viewer, "ovg");
                     ImGui::MenuItem("Show Tooltip",   nullptr, &single_viewer.show_coordinates);
                     ImGui::MenuItem("Show Crosshair", nullptr, &single_viewer.show_crosshair);
                     if (single_viewer.show_minimap) {
@@ -605,6 +691,9 @@ int main(int argc, char** argv) {
                     ImGui::MenuItem("Show Grid",     nullptr, &compare.show_grid);
                     ImGui::MenuItem("Show Minimap",  nullptr, &compare.show_minimap);
                     ImGui::MenuItem("Show Overlays",  nullptr, &compare.show_overlays);
+                    if (compare.show_overlays)
+                        overlay_group_menu_items(compare.left_viewer_ref(), "covg",
+                            compare.is_split() ? &compare.right_viewer_ref() : nullptr);
                     ImGui::MenuItem("Show Tooltip",   nullptr, &compare.show_coordinates);
                     ImGui::MenuItem("Show Crosshair", nullptr, &compare.show_crosshair);
                     ImGui::MenuItem("Sync Views",     nullptr, &compare.sync_views);
@@ -677,35 +766,7 @@ int main(int argc, char** argv) {
         ImGui::SetNextWindowSize({700, 540}, ImGuiCond_Always);
         if (ImGui::BeginPopupModal("Camera Config##modal", &show_camera_config,
                                     ImGuiWindowFlags_NoResize)) {
-            {
-                auto& tab = capture_cfg_tab;
-
-                // Path row
-                ImGui::SetNextItemWidth(-180.0f);
-                if (ImGui::InputText("##path", &tab.path)) tab.modified = true;
-                ImGui::SameLine();
-                if (ImGui::Button("Browse##cfg")) {
-                    nfdchar_t* out = nullptr;
-                    if (NFD::OpenDialog(out) == NFD_OKAY) {
-                        tab.path = out;
-                        NFD::FreePath(out);
-                        tab.load();
-                    }
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Reload")) tab.load();
-
-                // Text editor
-                const float avail_h = ImGui::GetContentRegionAvail().y
-                                    - ImGui::GetFrameHeightWithSpacing() - 4;
-                if (ImGui::InputTextMultiline("##ed", &tab.text, {-1, avail_h}))
-                    tab.modified = true;
-
-                // Save button
-                const std::string save_label = std::string("Save")
-                    + (tab.modified ? " *" : "") + "##save";
-                if (ImGui::Button(save_label.c_str())) tab.save();
-            }
+            config_editor_modal_body(capture_cfg_tab, "cfg");
             ImGui::EndPopup();
         }
 
@@ -714,32 +775,7 @@ int main(int argc, char** argv) {
         ImGui::SetNextWindowSize({700, 540}, ImGuiCond_Always);
         if (ImGui::BeginPopupModal("Connect Config##modal", &show_connect_config,
                                     ImGuiWindowFlags_NoResize)) {
-            {
-                auto& tab = connect_cfg_tab;
-
-                ImGui::SetNextItemWidth(-180.0f);
-                if (ImGui::InputText("##path", &tab.path)) tab.modified = true;
-                ImGui::SameLine();
-                if (ImGui::Button("Browse##conn_cfg")) {
-                    nfdchar_t* out = nullptr;
-                    if (NFD::OpenDialog(out) == NFD_OKAY) {
-                        tab.path = out;
-                        NFD::FreePath(out);
-                        tab.load();
-                    }
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Reload##conn")) tab.load();
-
-                const float avail_h = ImGui::GetContentRegionAvail().y
-                                    - ImGui::GetFrameHeightWithSpacing() - 4;
-                if (ImGui::InputTextMultiline("##ed", &tab.text, {-1, avail_h}))
-                    tab.modified = true;
-
-                const std::string save_label = std::string("Save")
-                    + (tab.modified ? " *" : "") + "##connsave";
-                if (ImGui::Button(save_label.c_str())) tab.save();
-            }
+            config_editor_modal_body(connect_cfg_tab, "conn");
             ImGui::EndPopup();
         }
 
@@ -1209,47 +1245,44 @@ int main(int argc, char** argv) {
 
                 if (mode == app_mode::compare) {
                     // Left
-                    ImGui::Checkbox("L##ov_show_l", &compare.show_left_overlays);
+                    ImGui::TextDisabled("L");
                     ImGui::SetNextItemWidth(path_w);
                     ImGui::InputText("##ov_path_l", &left_overlay_file, ImGuiInputTextFlags_ReadOnly);
                     ImGui::SameLine();
-                    if (ImGui::Button("Load##ovl", {load_w, 0})) {
-                        if (overlay_io::load_flat(left_overlay_file, left_overlays)) {
-                            compare.set_left_overlays(left_overlays);
-                            status_msg = "Overlay L loaded: " + left_overlay_file;
-                        }
-                    }
+                    if (ImGui::Button("Load##ovl", {load_w, 0}))
+                        load_overlay(left_overlay_file, left_overlays,
+                            [&](auto& g){ compare.set_left_overlay_groups(g); },
+                            nullptr, &status_msg, "Overlay L loaded: ");
+                    overlay_group_checkboxes(compare.left_viewer_ref(), "ovgl");
                     // Right
-                    ImGui::Checkbox("R##ov_show_r", &compare.show_right_overlays);
+                    ImGui::TextDisabled("R");
                     ImGui::SetNextItemWidth(path_w);
                     ImGui::InputText("##ov_path_r", &right_overlay_file, ImGuiInputTextFlags_ReadOnly);
                     ImGui::SameLine();
-                    if (ImGui::Button("Load##ovr", {load_w, 0})) {
-                        if (overlay_io::load_flat(right_overlay_file, right_overlays)) {
-                            compare.set_right_overlays(right_overlays);
-                            status_msg = "Overlay R loaded: " + right_overlay_file;
-                        }
-                    }
+                    if (ImGui::Button("Load##ovr", {load_w, 0}))
+                        load_overlay(right_overlay_file, right_overlays,
+                            [&](auto& g){ compare.set_right_overlay_groups(g); },
+                            nullptr, &status_msg, "Overlay R loaded: ");
+                    overlay_group_checkboxes(compare.right_viewer_ref(), "ovgr");
                 } else {
-                    bool& show_ov = use_single ? single_viewer.show_overlays
-                                               : compare.show_overlays;
-                    ImGui::Checkbox("Show##ov_show", &show_ov);
                     ImGui::SetNextItemWidth(path_w);
                     ImGui::InputText("##ov_path", &overlay_file, ImGuiInputTextFlags_ReadOnly);
                     ImGui::SameLine();
                     if (ImGui::Button("Load##ov", {load_w, 0})) {
-                        if (use_single) {
-                            if (overlay_io::load_flat(overlay_file, overlays)) {
-                                single_viewer.set_overlays(overlays);
-                                status_msg = "Overlay loaded: " + overlay_file;
-                            }
-                        } else { // split
-                            if (overlay_io::load_flat(overlay_file, left_overlays)) {
-                                compare.set_split_overlays(left_overlays);
-                                status_msg = "Overlay loaded: " + overlay_file;
-                            }
-                        }
+                        if (use_single)
+                            load_overlay(overlay_file, overlays,
+                                [&](auto& g){ single_viewer.set_overlay_groups(g); },
+                                nullptr, &status_msg);
+                        else
+                            load_overlay(overlay_file, left_overlays,
+                                [&](auto& g){ compare.set_split_overlay_groups(g); },
+                                nullptr, &status_msg);
                     }
+                    if (use_single)
+                        overlay_group_checkboxes(single_viewer, "ovg");
+                    else // split: left/right share the same groups
+                        overlay_group_checkboxes(compare.left_viewer_ref(), "ovg",
+                            &compare.right_viewer_ref());
                 }
             }
 

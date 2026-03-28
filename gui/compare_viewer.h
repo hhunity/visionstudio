@@ -18,15 +18,19 @@ public:
     int  split_src_width() const { return split_src_.width; }
 
     // Overlays for compare mode (independent left/right).
-    void set_left_overlays(std::vector<roi_entry> entries);
-    void set_right_overlays(std::vector<roi_entry> entries);
+    void set_left_overlay_groups(std::vector<roi_group> groups);
+    void set_right_overlay_groups(std::vector<roi_group> groups);
     // Overlay for split mode: stores source and re-splits whenever split_x changes.
-    void set_split_overlays(std::vector<roi_entry> entries);
+    void set_split_overlay_groups(std::vector<roi_group> groups);
     void clear_overlays();
 
     // Image data access for profile graphs.
     const image_data& get_left_image_data()  const;
     const image_data& get_right_image_data() const;
+
+    // Viewer access for per-group overlay visibility UI.
+    image_viewer& left_viewer_ref()  { return left_viewer_; }
+    image_viewer& right_viewer_ref() { return right_viewer_; }
 
     // View state access for visible-range profiles.
     const view_state& get_view_state() const { return shared_state_; }
@@ -66,7 +70,7 @@ private:
     void compute_diff();
     void update_right_viewer();    // reload right viewer with diff or original
     void apply_split();            // slice split_src_ at split_x and reload both viewers
-    void apply_split_overlays();   // re-clip split_overlays_ at current split_x
+    void apply_split_overlay_groups();   // re-clip split_overlay_groups_ at current split_x
 
     image_viewer left_viewer_;
     image_viewer right_viewer_;
@@ -81,6 +85,6 @@ private:
     bool                   is_split_        = false;
     int                    split_x_applied_ = -1; // last pixel position applied; -1 forces initial apply
 
-    std::vector<roi_entry> split_overlays_;       // source overlays for split mode
+    std::vector<roi_group> split_overlay_groups_; // source overlay groups for split mode
     combined_hover_info    combined_hover_;        // updated every frame in render()
 };

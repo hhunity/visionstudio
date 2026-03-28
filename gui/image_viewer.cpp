@@ -344,7 +344,7 @@ void image_viewer::draw_content(ImDrawList* dl, const ImVec2& canvas_pos,
     if (show_grid)
         draw_grid(dl, canvas_pos, canvas_size, state);
 
-    if (show_overlays && !overlays_.empty())
+    if (show_overlays && !overlay_groups_.empty())
         draw_overlays(dl, canvas_pos, state);
 
     if (show_minimap)
@@ -479,19 +479,30 @@ void image_viewer::draw_minimap(ImDrawList* dl, const ImVec2& canvas_pos,
 // Overlay helpers
 // ---------------------------------------------------------------------------
 
-void image_viewer::set_overlays(std::vector<roi_entry> entries) {
-    overlays_ = std::move(entries);
+void image_viewer::set_overlay_groups(std::vector<roi_group> groups) {
+    overlay_groups_ = std::move(groups);
+    overlay_group_visibility.assign(overlay_groups_.size(), 1);
     float max_mag = 0.0f;
-    for (const auto& e : overlays_) {
-        const float mag = std::sqrt(e.dx * e.dx + e.dy * e.dy);
-        if (mag > max_mag) max_mag = mag;
-    }
+    for (const auto& g : overlay_groups_)
+        for (const auto& e : g.entries) {
+            const float mag = std::sqrt(e.dx * e.dx + e.dy * e.dy);
+            if (mag > max_mag) max_mag = mag;
+        }
     overlay_max_mag_ = max_mag > 0.0f ? max_mag : 1.0f;
 }
 
 void image_viewer::clear_overlays() {
-    overlays_.clear();
+    overlay_groups_.clear();
+    overlay_group_visibility.clear();
     overlay_max_mag_ = 1.0f;
+}
+
+size_t image_viewer::overlay_group_count() const {
+    return overlay_groups_.size();
+}
+
+const std::string& image_viewer::overlay_group_label(size_t i) const {
+    return overlay_groups_[i].label;
 }
 
 // Map t∈[0,1] to a blue→cyan→green→yellow→red color.
@@ -530,7 +541,9 @@ void image_viewer::draw_overlays(ImDrawList* dl, const ImVec2& canvas_pos,
                 canvas_pos.y + state.pan_y + iy * state.zoom};
     };
 
-    for (const auto& e : overlays_) {
+    for (size_t gi = 0; gi < overlay_groups_.size(); ++gi) {
+        if (gi < overlay_group_visibility.size() && !overlay_group_visibility[gi]) continue;
+    for (const auto& e : overlay_groups_[gi].entries) {
         const float mag = std::sqrt(e.dx * e.dx + e.dy * e.dy);
         const float t   = mag / overlay_max_mag_;
 
@@ -590,5 +603,6 @@ void image_viewer::draw_overlays(ImDrawList* dl, const ImVec2& canvas_pos,
             std::snprintf(buf, sizeof(buf), "dx:%.1f dy:%.1f a:%.2f", e.dx, e.dy, e.angle);
         }
         dl->AddText({tl.x + 3.0f, tl.y + 2.0f}, border_col, buf);
-    }
+    } // entries
+    } // groups
 }
