@@ -29,13 +29,13 @@ add_library(cpplib_io STATIC
     external/cpplib/io/tiff_io.cpp
 )
 target_include_directories(cpplib_io PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/external/cpplib>
 )
 target_link_libraries(cpplib_io PUBLIC TIFF::TIFF ZLIB::ZLIB Threads::Threads)
 
-# ----- vs_io: JSONL IO library (tiff_io now provided by cpplib_io) -----
+# ----- vs_io: overlay IO library (tiff_io now provided by cpplib_io) -----
 add_library(vs_io STATIC
-    io/jsonl_io.cpp
+    io/overlay_io.cpp
 )
 target_include_directories(vs_io PUBLIC
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>
@@ -75,7 +75,7 @@ target_link_libraries(vs_capture PUBLIC
     httplib::httplib
     nlohmann_json::nlohmann_json
     Threads::Threads
-    libjpeg-turbo::turbojpeg
+    libjpeg-turbo::turbojpeg-static
 )
 
 # ----- Embed THIRD_PARTY_LICENSES.txt at build time -----

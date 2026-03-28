@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <imgui.h>
 #include "util/image_data.h"
-#include "util/roi_data.h"
+#include "io/overlay_io.h"
 
 // Shared zoom/pan state — can be owned by the viewer or provided externally
 // to synchronize multiple viewers.

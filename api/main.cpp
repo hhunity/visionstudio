@@ -11,10 +11,8 @@
 #include "gui/compare_viewer.h"
 #include "gui/image_viewer.h"
 #include <implot.h>
-#include "io/jsonl_io.h"
-#include "io/tiff_io.h"
-#include "util/image_data.h"
-#include "util/roi_data.h"
+#include "io/overlay_io.h"
+#include "external/cpplib/io/tiff_io.h"
 
 #include "generated/third_party_licenses.h"
 #include <CLI/CLI.hpp>
@@ -53,8 +51,8 @@ struct async_loader {
     async_loader& operator=(const async_loader&) = delete;
 
     ~async_loader() {
-        cancel.store(true);          // signal tiff_io::read to exit early
-        if (future.valid()) future.wait(); // now completes quickly
+        cancel.store(true);
+        if (future.valid()) future.wait();
     }
 
     void start(std::string p) {
@@ -63,10 +61,9 @@ struct async_loader {
         cancel.store(false);
         active = true;
         auto* prog = &progress;
-        auto* can  = &cancel;
-        future = std::async(std::launch::async, [p = std::move(p), prog, can]() {
+        future = std::async(std::launch::async, [p = std::move(p), prog]() {
             image_data img;
-            if (!tiff_io::read(p, img, prog, can))
+            if (!tiff_io::read(p, img, prog, tiff_io::ReadOptions{.output_format = PixelFormat::rgba}))
                 img.pixels.clear(); // ensure empty() == true so caller knows load failed
             return img;
         });
@@ -125,8 +122,8 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
         break; // ignore drops
     case app_mode::single:
         for (int i = 0; i < count; ++i) {
-            if (has_ext(paths[i], ".jsonl")) {
-                if (jsonl_io::load(paths[i], *app->overlays)) {
+            if (has_ext(paths[i], ".json")) {
+                if (overlay_io::load_flat(paths[i], *app->overlays)) {
                     app->single_viewer->set_overlays(*app->overlays);
                     if (app->overlay_file) *app->overlay_file = paths[i];
                     *app->status_msg = std::string("Overlay loaded: ") + paths[i];
@@ -141,16 +138,16 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
         // Partition dropped files: .jsonl → overlays, others → images
         std::vector<const char*> jsonl_files, img_files;
         for (int i = 0; i < count; ++i)
-            (has_ext(paths[i], ".jsonl") ? jsonl_files : img_files).push_back(paths[i]);
+            (has_ext(paths[i], ".json") ? jsonl_files : img_files).push_back(paths[i]);
         if (!img_files.empty())  app->left_loader->start(img_files[0]);
         if (img_files.size() >= 2) app->right_loader->start(img_files[1]);
         if (!jsonl_files.empty()) {
-            jsonl_io::load(jsonl_files[0], *app->left_overlays);
+            overlay_io::load_flat(jsonl_files[0], *app->left_overlays);
             app->compare->set_left_overlays(*app->left_overlays);
             if (app->left_overlay_file) *app->left_overlay_file = jsonl_files[0];
         }
         if (jsonl_files.size() >= 2) {
-            jsonl_io::load(jsonl_files[1], *app->right_overlays);
+            overlay_io::load_flat(jsonl_files[1], *app->right_overlays);
             app->compare->set_right_overlays(*app->right_overlays);
             if (app->right_overlay_file) *app->right_overlay_file = jsonl_files[1];
         }
@@ -159,8 +156,8 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
     }
     case app_mode::split: {
         for (int i = 0; i < count; ++i) {
-            if (has_ext(paths[i], ".jsonl")) {
-                jsonl_io::load(paths[i], *app->left_overlays);
+            if (has_ext(paths[i], ".json")) {
+                overlay_io::load_flat(paths[i], *app->left_overlays);
                 app->compare->set_split_overlays(*app->left_overlays);
                 if (app->overlay_file) *app->overlay_file = paths[i];
                 *app->status_msg = std::string("Overlay loaded: ") + paths[i];
@@ -388,21 +385,21 @@ int main(int argc, char** argv) {
     // Load overlay JSONL from CLI args
     if (!arg_overlays.empty()) {
         if (mode == app_mode::single) {
-            if (jsonl_io::load(arg_overlays[0], overlays)) {
+            if (overlay_io::load_flat(arg_overlays[0], overlays)) {
                 single_viewer.set_overlays(overlays);
                 overlay_file = arg_overlays[0];
             }
         } else if (mode == app_mode::split) {
-            if (jsonl_io::load(arg_overlays[0], left_overlays)) {
+            if (overlay_io::load_flat(arg_overlays[0], left_overlays)) {
                 compare.set_split_overlays(left_overlays);
                 overlay_file = arg_overlays[0];
             }
         } else if (mode == app_mode::compare) {
-            if (jsonl_io::load(arg_overlays[0], left_overlays)) {
+            if (overlay_io::load_flat(arg_overlays[0], left_overlays)) {
                 compare.set_left_overlays(left_overlays);
                 left_overlay_file = arg_overlays[0];
             }
-            if (arg_overlays.size() >= 2 && jsonl_io::load(arg_overlays[1], right_overlays)) {
+            if (arg_overlays.size() >= 2 && overlay_io::load_flat(arg_overlays[1], right_overlays)) {
                 compare.set_right_overlays(right_overlays);
                 right_overlay_file = arg_overlays[1];
             }
@@ -1217,7 +1214,7 @@ int main(int argc, char** argv) {
                     ImGui::InputText("##ov_path_l", &left_overlay_file, ImGuiInputTextFlags_ReadOnly);
                     ImGui::SameLine();
                     if (ImGui::Button("Load##ovl", {load_w, 0})) {
-                        if (jsonl_io::load(left_overlay_file, left_overlays)) {
+                        if (overlay_io::load_flat(left_overlay_file, left_overlays)) {
                             compare.set_left_overlays(left_overlays);
                             status_msg = "Overlay L loaded: " + left_overlay_file;
                         }
@@ -1228,7 +1225,7 @@ int main(int argc, char** argv) {
                     ImGui::InputText("##ov_path_r", &right_overlay_file, ImGuiInputTextFlags_ReadOnly);
                     ImGui::SameLine();
                     if (ImGui::Button("Load##ovr", {load_w, 0})) {
-                        if (jsonl_io::load(right_overlay_file, right_overlays)) {
+                        if (overlay_io::load_flat(right_overlay_file, right_overlays)) {
                             compare.set_right_overlays(right_overlays);
                             status_msg = "Overlay R loaded: " + right_overlay_file;
                         }
@@ -1242,12 +1239,12 @@ int main(int argc, char** argv) {
                     ImGui::SameLine();
                     if (ImGui::Button("Load##ov", {load_w, 0})) {
                         if (use_single) {
-                            if (jsonl_io::load(overlay_file, overlays)) {
+                            if (overlay_io::load_flat(overlay_file, overlays)) {
                                 single_viewer.set_overlays(overlays);
                                 status_msg = "Overlay loaded: " + overlay_file;
                             }
                         } else { // split
-                            if (jsonl_io::load(overlay_file, left_overlays)) {
+                            if (overlay_io::load_flat(overlay_file, left_overlays)) {
                                 compare.set_split_overlays(left_overlays);
                                 status_msg = "Overlay loaded: " + overlay_file;
                             }

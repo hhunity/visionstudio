@@ -33,7 +33,7 @@ capture_client::~capture_client() {
     if (worker_thread_.joinable())  worker_thread_.join();
     interrupt_sse();
     stop_preview();
-    cancel_download();
+    download_active_.store(false);
     if (sse_thread_.joinable())     sse_thread_.join();
     if (preview_thread_.joinable()) preview_thread_.join();
     if (dl_thread_.joinable())      dl_thread_.join();
