@@ -65,7 +65,7 @@ endif()
 
 # ----- vs_capture: HTTP capture client -----
 add_library(vs_capture STATIC
-    capture/capture_config.cpp
+    util/capture_config.cpp
     capture/capture_client.cpp
 )
 target_include_directories(vs_capture PUBLIC

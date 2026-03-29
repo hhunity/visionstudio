@@ -1,18 +1,23 @@
 {
+  "window": {
+    "width": 1470,
+    "height": 891
+  },
   "capture": {
-    "capture_config_file": "camera_config_b.json",
     "connect_config_file": "camera_config_a.json",
-    "connect_path": "/connect",
-    "disconnect_path": "/disconnect",
+    "capture_config_file": "camera_config_b.json"
+  },
+  "capture_client": {
     "host": "localhost",
     "port": 8080,
-    "sse_path": "/events",
+    "connect_path": "/connect",
     "start_path": "/start",
     "stop_path": "/stop",
+    "disconnect_path": "/disconnect",
+    "sse_path": "/events",
+    "preview_path": "/preview",
+    "preview_raw_path": "/preview_raw",
+    "preview_raw": false,
     "timeout_ms": 5000
-  },
-  "window": {
-    "height": 891,
-    "width": 1470
   }
 }

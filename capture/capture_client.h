@@ -9,7 +9,7 @@
 #include <thread>
 #include <variant>
 #include <httplib.h>
-#include "capture/capture_config.h"
+#include "util/capture_config.h"
 
 enum class sse_state { disconnected, connecting, connected, error };
 
