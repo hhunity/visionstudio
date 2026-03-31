@@ -31,6 +31,7 @@ add_library(cpplib_io STATIC
 target_include_directories(cpplib_io PUBLIC
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/external/cpplib>
 )
+target_compile_definitions(cpplib_io PUBLIC IO_STATIC)
 target_link_libraries(cpplib_io PUBLIC TIFF::TIFF ZLIB::ZLIB Threads::Threads)
 
 # ----- vs_io: overlay IO library (tiff_io now provided by cpplib_io) -----
