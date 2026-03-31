@@ -1,4 +1,11 @@
 
+Get-ChildItem -Path C:\VSLayout -Filter *.vsix -Recurse |
+    Get-AuthenticodeSignature |
+    Select-Object -First 1 -ExpandProperty SignerCertificate |
+    Export-Certificate -FilePath C:\certs\ms_signer.cer
+
+
+
 # レイアウト内のvsixファイルを1つ選んで署名情報を確認
 Get-AuthenticodeSignature "C:\VSLayout\*.vsix" | 
     Select-Object -First 1 -ExpandProperty SignerCertificate |
