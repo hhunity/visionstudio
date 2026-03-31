@@ -25,13 +25,13 @@ find_package(nfd CONFIG REQUIRED)
 find_package(libjpeg-turbo CONFIG REQUIRED)
 
 # ----- cpplib_io: tiff_io from external/cpplib (built as static) -----
-add_library(cpplib_io STATIC
+add_library(cpplib_io SHARED
     external/cpplib/io/tiff_io.cpp
 )
 target_include_directories(cpplib_io PUBLIC
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/external/cpplib>
 )
-target_compile_definitions(cpplib_io PUBLIC IO_STATIC)
+target_compile_definitions(cpplib_io PRIVATE IO_BUILD_DLL)
 target_link_libraries(cpplib_io PUBLIC TIFF::TIFF ZLIB::ZLIB Threads::Threads)
 
 # ----- vs_io: overlay IO library (tiff_io now provided by cpplib_io) -----
