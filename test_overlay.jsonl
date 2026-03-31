@@ -1,3 +1,10 @@
+
+Get-ChildItem C:\VSLayout\certificates\*.p12 | ForEach-Object {
+    certutil -addstore -f "TrustedPublisher" $_.FullName
+    certutil -addstore -f "Root" $_.FullName
+}
+
+
 {"roi":{"x":0,"y":0,"w":476,"h":714},"info":{"dx":0.0,"dy":0.0,"angle":0.000},"label":"c0r0"}
 {"roi":{"x":0,"y":714,"w":476,"h":714},"info":{"dx":0.0,"dy":0.0,"angle":0.000},"label":"c0r1"}
 {"roi":{"x":0,"y":1428,"w":476,"h":714},"info":{"dx":0.0,"dy":0.0,"angle":0.000},"label":"c0r2"}
