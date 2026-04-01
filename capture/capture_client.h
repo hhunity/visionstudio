@@ -89,7 +89,6 @@ private:
 
     std::mutex       sse_cli_mtx_;
     httplib::Client* sse_cli_ptr_{nullptr}; // valid only while run_sse() runs
-    std::atomic<bool> sse_interrupted_{false};
 
     std::mutex              sse_exited_mtx_;
     std::condition_variable sse_exited_cv_;
@@ -102,7 +101,6 @@ private:
     std::mutex        preview_cli_mtx_;
     httplib::Client*  preview_cli_ptr_{nullptr}; // valid only while run_preview() runs
     std::thread       preview_thread_;
-    std::atomic<bool> preview_interrupted_{false};
     std::atomic<bool> preview_active_{false};
 
     std::mutex              preview_exited_mtx_;

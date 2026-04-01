@@ -70,7 +70,6 @@ void capture_client::stop_capture() {
 }
 
 void capture_client::interrupt_sse() {
-    sse_interrupted_ = true;
     std::lock_guard lock(sse_cli_mtx_);
     if (sse_cli_ptr_) sse_cli_ptr_->stop();
 }
@@ -106,7 +105,7 @@ void capture_client::join_preview_thread(int timeout_s) {
         if (!exited) {
             log("[preview] join timeout (" + std::to_string(timeout_s) + "s): forcing stop");
             lock.unlock();
-            stop_preview(); // sets preview_interrupted_ + cli.stop()
+            stop_preview();
         }
     }
     preview_thread_.join();
@@ -154,7 +153,6 @@ void capture_client::worker_thread_func() {
             if (state != sse_state::disconnected && state != sse_state::error) break;
             join_sse_thread();
             sse_state_.store(sse_state::connecting);
-            sse_interrupted_ = false;
             {
                 std::lock_guard lock(sse_exited_mtx_);
                 sse_exited_ = false;
@@ -244,7 +242,7 @@ void capture_client::run_sse() {
                     cur_data = trim(line.substr(5));
                 }
             }
-            return !shutdown_ && !sse_interrupted_;
+            return !shutdown_;
         });
 
     {
@@ -426,8 +424,7 @@ std::optional<server_event> capture_client::poll_server_event() {
 void capture_client::start_preview() {
     if (preview_active_.load()) return;
     join_preview_thread();
-    preview_interrupted_ = false;
-    preview_active_      = true;
+    preview_active_ = true;
     {
         std::lock_guard lock(preview_exited_mtx_);
         preview_exited_ = false;
@@ -437,7 +434,6 @@ void capture_client::start_preview() {
 
 void capture_client::stop_preview() {
     if (!preview_active_.load()) return;
-    preview_interrupted_ = true;
     std::lock_guard lock(preview_cli_mtx_);
     if (preview_cli_ptr_) preview_cli_ptr_->stop();
     // join happens in the next start_preview() or destructor
@@ -561,7 +557,7 @@ void capture_client::run_preview_mjpeg(httplib::Client& cli) {
                 }
                 buf.erase(buf.begin(), data_start + content_length);
             }
-            return !preview_interrupted_;
+            return true;
         });
 
     tjDestroy(tj);
@@ -601,7 +597,7 @@ void capture_client::run_preview_raw(httplib::Client& cli) {
                 store_preview_frame(static_cast<int>(w), static_cast<int>(h), std::move(pixels));
                 buf.erase(buf.begin(), buf.begin() + static_cast<ptrdiff_t>(frame_size));
             }
-            return !preview_interrupted_;
+            return true;
         });
 
     log("[preview_raw] GET " + url + " closed");
