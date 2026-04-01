@@ -52,8 +52,8 @@ void compare_viewer::apply_split_overlay_groups() {
                 if (re.w > 0) rg.entries.push_back(re);
             }
         }
-        if (!lg.entries.empty()) left_groups.push_back(std::move(lg));
-        if (!rg.entries.empty()) right_groups.push_back(std::move(rg));
+        left_groups.push_back(std::move(lg));
+        right_groups.push_back(std::move(rg));
     }
 
     // Preserve current group visibility across split position changes
