@@ -128,11 +128,12 @@ void compare_viewer::apply_split() {
                   right_half.pixels.begin() + static_cast<ptrdiff_t>(y) * right_w * 4);
     }
 
-    right_orig_      = right_half;
-    diff_applied_    = false;
-    split_x_applied_ = split_x;
-    left_viewer_.load_image(left_half);
-    right_viewer_.load_image(right_half);
+    right_orig_   = right_half;
+    diff_applied_ = false;
+    const bool initial = (split_x_applied_ == -1);
+    split_x_applied_  = split_x;
+    left_viewer_.load_image(left_half,  initial);
+    right_viewer_.load_image(right_half, initial);
     apply_split_overlay_groups();
 }
 
