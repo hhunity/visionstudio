@@ -1200,7 +1200,7 @@ int main(int argc, char** argv) {
 
         const ImVec2 viewer_origin = ImGui::GetCursorScreenPos();
 
-        if (mode == app_mode::capture && capture_mode == 0 && preview_tex != 0) {
+        if (imode == input_mode::remote_capture && use_single && preview_tex != 0) {
             // Full-viewer live preview (single mode)
             const float aspect = static_cast<float>(preview_tex_w) / static_cast<float>(preview_tex_h);
             float dw = viewer_w, dh = viewer_w / aspect;
@@ -1215,8 +1215,8 @@ int main(int argc, char** argv) {
             compare.render(viewer_w, viewer_h);
         }
 
-        // For capture_mode 1/2: overlay live preview on the right panel
-        if (mode == app_mode::capture && capture_mode != 0 && preview_tex != 0) {
+        // For split/compare capture: overlay live preview on the right panel
+        if (imode == input_mode::remote_capture && !use_single && preview_tex != 0) {
             const float spacing  = ImGui::GetStyle().ItemSpacing.x;
             const float half_w   = std::floor((viewer_w - spacing) * 0.5f);
             const ImVec2 rmin    = {viewer_origin.x + half_w + spacing, viewer_origin.y};
@@ -1352,7 +1352,7 @@ int main(int argc, char** argv) {
             }
 
             // ----- Overlay file selector -----
-            if (mode != app_mode::capture) {
+            if (imode == input_mode::read_img) {
                 ImGui::Separator();
                 ImGui::TextDisabled("Overlay");
 
@@ -1360,7 +1360,7 @@ int main(int argc, char** argv) {
                 const float path_w = ImGui::GetContentRegionAvail().x
                                      - load_w - ImGui::GetStyle().ItemSpacing.x;
 
-                if (mode == app_mode::compare) {
+                if (vmode == view_mode::compare) {
                     // Left
                     ImGui::TextDisabled("L");
                     ImGui::SetNextItemWidth(path_w);
