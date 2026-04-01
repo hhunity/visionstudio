@@ -105,6 +105,23 @@ private:
     std::atomic<bool> preview_interrupted_{false};
     std::atomic<bool> preview_active_{false};
 
+    std::mutex              preview_exited_mtx_;
+    std::condition_variable preview_exited_cv_;
+    bool                    preview_exited_{true};
+
+    void join_preview_thread(int timeout_s = 5);
+
+    // Worker HTTP client pointer — valid only during do_connect_post / do_simple_post.
+    std::mutex       worker_cli_mtx_;
+    httplib::Client* worker_cli_ptr_{nullptr};
+    void interrupt_worker();
+
+    std::mutex              worker_exited_mtx_;
+    std::condition_variable worker_exited_cv_;
+    bool                    worker_exited_{false}; // false: worker starts in constructor
+
+    void join_worker_thread(int timeout_s = 5);
+
     void run_download(std::string url_path, std::string dest_path);
     std::thread       dl_thread_;
     std::atomic<bool> download_active_{false};
