@@ -428,9 +428,13 @@ int main(int argc, char** argv) {
     int    preview_tex_h = 0;
 
     // Capture settings
-    bool image_acquisition     = true;
-    bool live_image            = false;
-    bool auto_detect           = true;
+    // capture_mode mirrors vmode for remote_capture; changeable at runtime.
+    int  capture_mode      = vmode == view_mode::compare ? 2
+                           : vmode == view_mode::split   ? 1
+                                                         : 0;
+    bool image_acquisition = true;
+    bool live_image        = false;
+    bool auto_detect       = true;
     std::string ref_img_path;
 
     // Editable copies of connection settings (local to UI, applied on Save).
@@ -1097,6 +1101,21 @@ int main(int argc, char** argv) {
                 const bool cap_settings_open = ImGui::CollapsingHeader("Capture Settings");
                 ImGui::PopStyleColor(3);
                 if (cap_settings_open) {
+                    constexpr const char* kCaptureModes[] = {"Single", "Split", "Compare"};
+                    ImGui::TextDisabled("View Mode");
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                    const int prev_cap_mode = capture_mode;
+                    if (ImGui::Combo("##cap_mode", &capture_mode, kCaptureModes, 3)) {
+                        if (prev_cap_mode == 2 && capture_mode != 2) {
+                            ref_img_path.clear();
+                            compare.unload_left();
+                        }
+                        vmode = capture_mode == 2 ? view_mode::compare
+                              : capture_mode == 1 ? view_mode::split
+                                                  : view_mode::single;
+                    }
+                    ImGui::Separator();
+
                     ImGui::TextDisabled("Image Acquisition");
                     if (ImGui::RadioButton("Enable##acq",  image_acquisition))  image_acquisition = true;
                     ImGui::SameLine();
