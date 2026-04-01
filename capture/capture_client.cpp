@@ -335,6 +335,34 @@ bool capture_client::do_connect_post() {
         push_event(evt_error{"connect: HTTP " + std::to_string(res->status)});
         return false;
     }
+    // Apply any config fields the server returns in the response body.
+    if (!res->body.empty()) {
+        try {
+            const auto j = nlohmann::json::parse(res->body);
+            capture_config updated = cfg_;
+            // capture_client section (HTTP settings)
+            const auto& c = j.contains("capture_client") ? j["capture_client"] : j;
+            if (c.contains("host")             && c["host"].is_string())              updated.host             = c["host"];
+            if (c.contains("port")             && c["port"].is_number_integer())      updated.port             = c["port"];
+            if (c.contains("connect_path")     && c["connect_path"].is_string())      updated.connect_path     = c["connect_path"];
+            if (c.contains("start_path")       && c["start_path"].is_string())        updated.start_path       = c["start_path"];
+            if (c.contains("stop_path")        && c["stop_path"].is_string())         updated.stop_path        = c["stop_path"];
+            if (c.contains("disconnect_path")  && c["disconnect_path"].is_string())   updated.disconnect_path  = c["disconnect_path"];
+            if (c.contains("sse_path")         && c["sse_path"].is_string())          updated.sse_path         = c["sse_path"];
+            if (c.contains("preview_path")     && c["preview_path"].is_string())      updated.preview_path     = c["preview_path"];
+            if (c.contains("preview_raw_path") && c["preview_raw_path"].is_string())  updated.preview_raw_path = c["preview_raw_path"];
+            if (c.contains("preview_raw")      && c["preview_raw"].is_boolean())      updated.preview_raw      = c["preview_raw"];
+            if (c.contains("timeout_ms")       && c["timeout_ms"].is_number_integer()) updated.timeout_ms      = c["timeout_ms"];
+            // capture section (file paths)
+            const auto& cap = j.contains("capture") ? j["capture"] : j;
+            if (cap.contains("connect_config_file") && cap["connect_config_file"].is_string()) updated.connect_config_file = cap["connect_config_file"];
+            if (cap.contains("capture_config_file") && cap["capture_config_file"].is_string()) updated.capture_config_file = cap["capture_config_file"];
+            if (updated != cfg_) {
+                cfg_ = updated;
+                push_event(evt_config_updated{updated});
+            }
+        } catch (...) {}
+    }
     return true;
 }
 

@@ -17,7 +17,8 @@ struct evt_connected    {};
 struct evt_disconnected {};
 struct evt_error        { std::string message; };
 struct evt_capture_done { std::string path; };
-using server_event = std::variant<evt_connected, evt_disconnected, evt_error, evt_capture_done>;
+struct evt_config_updated { capture_config cfg; }; // server returned updated config on connect
+using server_event = std::variant<evt_connected, evt_disconnected, evt_error, evt_capture_done, evt_config_updated>;
 
 struct preview_frame {
     std::vector<uint8_t> pixels; // grayscale, w*h bytes

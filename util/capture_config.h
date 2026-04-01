@@ -19,6 +19,9 @@ struct capture_config {
     std::string connect_config_file; // path to connection config file
     std::string capture_config_file; // path to capture config file (JSON)
 
+    bool operator==(const capture_config&) const = default;
+    bool operator!=(const capture_config& o) const { return !(*this == o); }
+
     // Load settings from visionstudio.json.
     // Network settings come from "capture_client"; config file paths from "capture".
     // Returns defaults if the file is not found or keys are missing.

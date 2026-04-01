@@ -650,6 +650,11 @@ int main(int argc, char** argv) {
                             right_loader.start(e->path);
                     }
                     status_msg = "Capture complete: " + e->path;
+                } else if (auto* e = std::get_if<evt_config_updated>(&*ev)) {
+                    cap_cfg    = e->cfg;
+                    conn_buf   = make_conn_edit(cap_cfg);
+                    capture_config::save("visionstudio.json", cap_cfg);
+                    status_msg = "Config updated by server";
                 }
             }
 
