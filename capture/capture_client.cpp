@@ -34,7 +34,7 @@ capture_client::~capture_client() {
     interrupt_sse();
     stop_preview();
     download_active_.store(false);
-    if (sse_thread_.joinable())     sse_thread_.join();
+    join_sse_thread();
     if (preview_thread_.joinable()) preview_thread_.join();
     if (dl_thread_.joinable())      dl_thread_.join();
     if (ul_thread_.joinable())      ul_thread_.join();
@@ -75,6 +75,23 @@ void capture_client::interrupt_sse() {
     if (sse_cli_ptr_) sse_cli_ptr_->stop();
 }
 
+void capture_client::join_sse_thread(int timeout_s) {
+    if (!sse_thread_.joinable()) return;
+    {
+        std::unique_lock lock(sse_exited_mtx_);
+        const bool exited = sse_exited_cv_.wait_for(
+            lock, std::chrono::seconds(timeout_s),
+            [this] { return sse_exited_; });
+        if (!exited) {
+            log("[sse] join timeout (" + std::to_string(timeout_s) +
+                "s): forcing stop");
+            lock.unlock();
+            interrupt_sse();
+        }
+    }
+    sse_thread_.join();
+}
+
 // ---------------------------------------------------------------------------
 // Worker thread
 // ---------------------------------------------------------------------------
@@ -94,9 +111,13 @@ void capture_client::worker_thread_func() {
         switch (c) {
         case cmd::connect:
             if (state != sse_state::disconnected && state != sse_state::error) break;
+            join_sse_thread();
             sse_state_.store(sse_state::connecting);
             sse_interrupted_ = false;
-            if (sse_thread_.joinable()) sse_thread_.join();
+            {
+                std::lock_guard lock(sse_exited_mtx_);
+                sse_exited_ = false;
+            }
             sse_thread_ = std::thread([this] { run_sse(); });
             break;
 
@@ -190,6 +211,11 @@ void capture_client::run_sse() {
         sse_cli_ptr_ = nullptr;
     }
     log("[sse] GET " + url + " closed");
+    {
+        std::lock_guard lock(sse_exited_mtx_);
+        sse_exited_ = true;
+    }
+    sse_exited_cv_.notify_all();
     const auto s = sse_state_.load();
     if (s != sse_state::error && s != sse_state::disconnected) {
         sse_state_.store(sse_state::disconnected);
