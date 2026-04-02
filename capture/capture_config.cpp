@@ -1,6 +1,13 @@
 #include "capture/capture_config.h"
 #include <nlohmann/json.hpp>
 #include <fstream>
+#ifdef _WIN32
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+#  include <shlobj.h>
+#else
+#  include <cstdlib>
+#endif
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -14,6 +21,22 @@ static nlohmann::json load_json(const std::string& path) {
     } catch (...) {
         return nlohmann::json::object();
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+static std::string default_save_dir() {
+#ifdef _WIN32
+    char path[MAX_PATH] = {};
+    if (SUCCEEDED(SHGetFolderPathA(nullptr, CSIDL_PERSONAL, nullptr, SHGFP_TYPE_CURRENT, path)))
+        return std::string(path) + "\\VisionStudio\\captures";
+    return "captures";
+#else
+    const char* home = std::getenv("HOME");
+    return home ? std::string(home) + "/VisionStudio/captures" : "captures";
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -41,6 +64,10 @@ capture_config capture_config::load(const std::string& json_path) {
         cfg.connect_config_file = c["connect_config_file"];
     if (c.contains("capture_config_file") && c["capture_config_file"].is_string())
         cfg.capture_config_file = c["capture_config_file"];
+    if (c.contains("save_dir") && c["save_dir"].is_string())
+        cfg.save_dir = c["save_dir"];
+    if (cfg.save_dir.empty())
+        cfg.save_dir = default_save_dir();
     return cfg;
 }
 
@@ -64,6 +91,7 @@ void capture_config::save(const std::string& json_path,
         {"timeout_ms",      cfg.timeout_ms},
         {"connect_config_file", cfg.connect_config_file},
         {"capture_config_file", cfg.capture_config_file},
+        {"save_dir",            cfg.save_dir},
     };
 
     if (!imgui_ini.empty())

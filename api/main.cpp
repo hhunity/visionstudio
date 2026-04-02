@@ -874,13 +874,15 @@ int main(int argc, char** argv) {
                 {"connect_config_file",  cap_cfg.connect_config_file},
                 {"capture_config_file",  cap_cfg.capture_config_file},
             };
+            // save_dir is managed separately (folder picker UI)
+            settings_edit["save_dir"] = cap_cfg.save_dir;
         }
         if (show_settings) ImGui::OpenPopup("Settings##modal");
         ImGui::SetNextWindowSize({480, 460}, ImGuiCond_Always);
         if (ImGui::BeginPopupModal("Settings##modal", &show_settings, ImGuiWindowFlags_NoResize)) {
             // Render each JSON section (skip internal keys) dynamically.
             // Sections are CollapsedHeaders; fields are rendered by type.
-            static const std::array<std::string, 2> kSkipSections = {"window", "imgui_ini"};
+            static const std::array<std::string, 3> kSkipSections = {"window", "imgui_ini", "save_dir"};
             const float fw = ImGui::GetContentRegionAvail().x;
             for (auto& [section_key, section_val] : settings_edit.items()) {
                 bool skip = false;
@@ -912,6 +914,25 @@ int main(int argc, char** argv) {
                 }
             }
 
+            // ----- Save directory (folder picker) -----
+            if (ImGui::CollapsingHeader("Save Directory", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Indent(8.0f);
+                std::string save_dir_val = settings_edit.value("save_dir", "");
+                const float browse_w = 70.0f;
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - browse_w - ImGui::GetStyle().ItemSpacing.x);
+                if (ImGui::InputText("##save_dir", &save_dir_val))
+                    settings_edit["save_dir"] = save_dir_val;
+                ImGui::SameLine();
+                if (ImGui::Button("Browse##sd", {browse_w, 0})) {
+                    nfdchar_t* out = nullptr;
+                    if (NFD::PickFolder(out) == NFD_OKAY) {
+                        settings_edit["save_dir"] = std::string(out);
+                        NFD::FreePath(out);
+                    }
+                }
+                ImGui::Unindent(8.0f);
+            }
+
             ImGui::Separator();
             const float btn_w = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
             if (ImGui::Button("Apply & Save", {btn_w, 0})) {
@@ -932,6 +953,8 @@ int main(int argc, char** argv) {
                     if (c.contains("connect_config_file")&& c["connect_config_file"].is_string())cap_cfg.connect_config_file = c["connect_config_file"].get<std::string>();
                     if (c.contains("capture_config_file")&& c["capture_config_file"].is_string())cap_cfg.capture_config_file = c["capture_config_file"].get<std::string>();
                 }
+                if (settings_edit.contains("save_dir") && settings_edit["save_dir"].is_string())
+                    cap_cfg.save_dir = settings_edit["save_dir"].get<std::string>();
                 capture_config::save("visionstudio.json", cap_cfg);
                 // Sync conn_buf so the capture panel reflects the new values.
                 conn_buf = make_conn_edit(cap_cfg);

@@ -15,6 +15,7 @@ struct capture_config {
     int         timeout_ms      = 5000;
     std::string connect_config_file; // path to connection config file (any format)
     std::string capture_config_file; // path to capture config file (JSON)
+    std::string save_dir;            // local directory to save downloaded captures (empty = default)
 
     // Load capture settings from visionstudio.json.
     // Returns defaults if the file is not found or the "capture" key is missing.
