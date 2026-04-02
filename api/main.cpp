@@ -428,9 +428,13 @@ int main(int argc, char** argv) {
     int    preview_tex_h = 0;
 
     // Capture settings
-    bool image_acquisition     = true;
-    bool live_image            = false;
-    bool auto_detect           = true;
+    // capture_mode mirrors vmode for remote_capture; changeable at runtime.
+    int  capture_mode      = vmode == view_mode::compare ? 2
+                           : vmode == view_mode::split   ? 1
+                                                         : 0;
+    bool image_acquisition = true;
+    bool live_image        = false;
+    bool auto_detect       = true;
     std::string ref_img_path;
 
     // Editable copies of connection settings (local to UI, applied on Save).
@@ -1097,6 +1101,21 @@ int main(int argc, char** argv) {
                 const bool cap_settings_open = ImGui::CollapsingHeader("Capture Settings");
                 ImGui::PopStyleColor(3);
                 if (cap_settings_open) {
+                    constexpr const char* kCaptureModes[] = {"Single", "Split", "Compare"};
+                    ImGui::TextDisabled("View Mode");
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                    const int prev_cap_mode = capture_mode;
+                    if (ImGui::Combo("##cap_mode", &capture_mode, kCaptureModes, 3)) {
+                        if (prev_cap_mode == 2 && capture_mode != 2) {
+                            ref_img_path.clear();
+                            compare.unload_left();
+                        }
+                        vmode = capture_mode == 2 ? view_mode::compare
+                              : capture_mode == 1 ? view_mode::split
+                                                  : view_mode::single;
+                    }
+                    ImGui::Separator();
+
                     ImGui::TextDisabled("Image Acquisition");
                     if (ImGui::RadioButton("Enable##acq",  image_acquisition))  image_acquisition = true;
                     ImGui::SameLine();
@@ -1200,7 +1219,7 @@ int main(int argc, char** argv) {
 
         const ImVec2 viewer_origin = ImGui::GetCursorScreenPos();
 
-        if (mode == app_mode::capture && capture_mode == 0 && preview_tex != 0) {
+        if (imode == input_mode::remote_capture && use_single && preview_tex != 0) {
             // Full-viewer live preview (single mode)
             const float aspect = static_cast<float>(preview_tex_w) / static_cast<float>(preview_tex_h);
             float dw = viewer_w, dh = viewer_w / aspect;
@@ -1215,8 +1234,8 @@ int main(int argc, char** argv) {
             compare.render(viewer_w, viewer_h);
         }
 
-        // For capture_mode 1/2: overlay live preview on the right panel
-        if (mode == app_mode::capture && capture_mode != 0 && preview_tex != 0) {
+        // For split/compare capture: overlay live preview on the right panel
+        if (imode == input_mode::remote_capture && !use_single && preview_tex != 0) {
             const float spacing  = ImGui::GetStyle().ItemSpacing.x;
             const float half_w   = std::floor((viewer_w - spacing) * 0.5f);
             const ImVec2 rmin    = {viewer_origin.x + half_w + spacing, viewer_origin.y};
@@ -1352,7 +1371,7 @@ int main(int argc, char** argv) {
             }
 
             // ----- Overlay file selector -----
-            if (mode != app_mode::capture) {
+            if (imode == input_mode::read_img) {
                 ImGui::Separator();
                 ImGui::TextDisabled("Overlay");
 
@@ -1360,7 +1379,7 @@ int main(int argc, char** argv) {
                 const float path_w = ImGui::GetContentRegionAvail().x
                                      - load_w - ImGui::GetStyle().ItemSpacing.x;
 
-                if (mode == app_mode::compare) {
+                if (vmode == view_mode::compare) {
                     // Left
                     ImGui::TextDisabled("L");
                     ImGui::SetNextItemWidth(path_w);
