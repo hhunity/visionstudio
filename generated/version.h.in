@@ -1,0 +1,12 @@
+#pragma once
+
+#define VS_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define VS_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define VS_VERSION_PATCH @PROJECT_VERSION_PATCH@
+#define VS_VERSION_STRING  "@PROJECT_VERSION@"
+#define VS_GIT_HASH        "@VS_GIT_HASH@"
+#define VS_COMPANY_NAME    "@VS_COMPANY_NAME@"
+#define VS_COPYRIGHT_YEAR  "@VS_COPYRIGHT_YEAR@"
+
+// Build timestamp is injected by the compiler at compile time.
+#define VS_BUILD_TIMESTAMP (__DATE__ " " __TIME__)

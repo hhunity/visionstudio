@@ -78,6 +78,25 @@ target_link_libraries(vs_capture PUBLIC
     libjpeg-turbo::turbojpeg-static
 )
 
+# ----- Resolve git hash for version header -----
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE VS_GIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT VS_GIT_HASH)
+    set(VS_GIT_HASH "unknown")
+endif()
+
+# ----- Generate version header -----
+configure_file(
+    "${CMAKE_SOURCE_DIR}/generated/version.h.in"
+    "${CMAKE_BINARY_DIR}/generated/version.h"
+    @ONLY
+)
+
 # ----- Embed THIRD_PARTY_LICENSES.txt at build time -----
 file(READ "${CMAKE_SOURCE_DIR}/THIRD_PARTY_LICENSES.txt" LICENSE_CONTENT)
 configure_file(
@@ -112,4 +131,13 @@ if(WIN32)
         $<$<CONFIG:Debug>:/SUBSYSTEM:CONSOLE>
         $<$<CONFIG:Release>:/SUBSYSTEM:WINDOWS>
     )
+    # Embed application icon and version info via Windows resource file
+    set(VS_COMPANY_NAME   "YourCompany" CACHE STRING "Company name embedded in the exe")
+    set(VS_COPYRIGHT_YEAR "2025"        CACHE STRING "Copyright year embedded in the exe")
+    configure_file(
+        "${CMAKE_SOURCE_DIR}/api/app.rc.in"
+        "${CMAKE_BINARY_DIR}/generated/app.rc"
+        @ONLY
+    )
+    target_sources(visionstudio PRIVATE "${CMAKE_BINARY_DIR}/generated/app.rc")
 endif()

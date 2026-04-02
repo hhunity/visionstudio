@@ -15,6 +15,7 @@
 #include "external/cpplib/io/tiff_io.h"
 
 #include "generated/third_party_licenses.h"
+#include "generated/version.h"
 #include <CLI/CLI.hpp>
 #include <nlohmann/json.hpp>
 #include <array>
@@ -315,7 +316,7 @@ int main(int argc, char** argv) {
     // Argument parsing (CLI11)
     // -------------------------------------------------------------------------
     CLI::App cli{"VisionStudio - TIFF image viewer"};
-    cli.set_version_flag("--version", "0.1.0");
+    cli.set_version_flag("--version", VS_VERSION_STRING);
 
     std::string              view_mode_str;
     std::vector<std::string> arg_images;
@@ -379,7 +380,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    GLFWwindow* window = glfwCreateWindow(saved_w, saved_h, "VisionStudio", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(saved_w, saved_h, "VisionStudio  v" VS_VERSION_STRING, nullptr, nullptr);
     if (!window) { glfwTerminate(); return 1; }
 
     glfwMakeContextCurrent(window);
@@ -416,6 +417,7 @@ int main(int argc, char** argv) {
     bool        show_camera_config    = false;
     bool        show_connect_config   = false;
     bool        show_about            = false;
+    bool        show_version          = false;
     bool        show_settings         = false;
     bool        settings_fresh        = false;
     nlohmann::json settings_edit;
@@ -765,7 +767,8 @@ int main(int argc, char** argv) {
                 settings_fresh = true;
             }
             if (ImGui::BeginMenu("Help")) {
-                if (ImGui::MenuItem("About")) show_about = true;
+                if (ImGui::MenuItem("Version")) show_version = true;
+                if (ImGui::MenuItem("About"))   show_about   = true;
                 ImGui::EndMenu();
             }
             ImGui::EndMenuBar();
@@ -817,12 +820,28 @@ int main(int argc, char** argv) {
             ImGui::EndPopup();
         }
 
+        // ----- Version modal -----
+        if (show_version) ImGui::OpenPopup("Version##modal");
+        ImGui::SetNextWindowSize({320, 0}, ImGuiCond_Always);
+        if (ImGui::BeginPopupModal("Version##modal", &show_version,
+                                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("VisionStudio  v%s", VS_VERSION_STRING);
+            ImGui::Separator();
+            ImGui::TextDisabled("Build");
+            ImGui::Text("  %s", VS_BUILD_TIMESTAMP);
+            ImGui::TextDisabled("Commit");
+            ImGui::Text("  %s", VS_GIT_HASH);
+            ImGui::Spacing();
+            if (ImGui::Button("Close", {-1, 0})) { show_version = false; ImGui::CloseCurrentPopup(); }
+            ImGui::EndPopup();
+        }
+
         // ----- About modal -----
         if (show_about) ImGui::OpenPopup("About VisionStudio##modal");
         ImGui::SetNextWindowSize({620, 520}, ImGuiCond_Always);
         if (ImGui::BeginPopupModal("About VisionStudio##modal", &show_about,
                                     ImGuiWindowFlags_NoResize)) {
-            ImGui::TextUnformatted("VisionStudio  v0.1.0");
+            ImGui::Text("VisionStudio  v%s", VS_VERSION_STRING);
             ImGui::Separator();
             const float text_h = ImGui::GetContentRegionAvail().y
                                 - ImGui::GetFrameHeightWithSpacing() - 4;
