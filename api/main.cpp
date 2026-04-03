@@ -391,7 +391,17 @@ int main(int argc, char** argv) {
     }
 
     GLFWwindow* window = glfwCreateWindow(saved_w, saved_h, "VisionStudio  v" VS_VERSION_STRING, nullptr, nullptr);
-    if (!window) { fatal_error("glfwCreateWindow() failed.\nOpenGL 3.3 Core Profile may not be supported."); glfwTerminate(); return 1; }
+    if (!window) {
+        const char* err_desc = nullptr;
+        int err_code = glfwGetError(&err_desc);
+        char buf[512];
+        std::snprintf(buf, sizeof(buf),
+            "glfwCreateWindow() failed.\nGLFW error %d: %s",
+            err_code, err_desc ? err_desc : "unknown");
+        fatal_error(buf);
+        glfwTerminate();
+        return 1;
+    }
 
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
