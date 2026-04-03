@@ -128,12 +128,12 @@ if(BUILD_CAPTURE_CLI)
 endif()
 
 if(WIN32)
-    set_target_properties(visionstudio PROPERTIES
-        WIN32_EXECUTABLE $<IF:$<CONFIG:Release>,TRUE,FALSE>
-    )
+    # Use main() entry point (not WinMain). /ENTRY:mainCRTStartup tells the linker
+    # to use the CRT startup stub that calls main(), while /SUBSYSTEM:WINDOWS hides
+    # the console window in Release builds.
     target_link_options(visionstudio PRIVATE
         $<$<CONFIG:Debug>:/SUBSYSTEM:CONSOLE>
-        $<$<CONFIG:Release>:/SUBSYSTEM:WINDOWS>
+        $<$<CONFIG:Release>:/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup>
     )
     # Embed version info via Windows resource file
     configure_file(
