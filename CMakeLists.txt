@@ -111,6 +111,6 @@ if(WIN32)
     )
     target_link_options(visionstudio PRIVATE
         $<$<CONFIG:Debug>:/SUBSYSTEM:CONSOLE>
-        $<$<CONFIG:Release>:/SUBSYSTEM:WINDOWS>
+        $<$<CONFIG:Release>:/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup>
     )
 endif()
