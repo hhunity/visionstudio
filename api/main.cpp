@@ -957,7 +957,8 @@ int main(int argc, char** argv) {
                 ImGui::SameLine();
                 if (ImGui::Button("Browse##sd", {browse_w, 0})) {
                     nfdchar_t* out = nullptr;
-                    if (NFD::PickFolder(out) == NFD_OKAY) {
+                    const std::string cur_dir = settings_edit.value("save_dir", "");
+                    if (NFD::PickFolder(out, cur_dir.empty() ? nullptr : cur_dir.c_str()) == NFD_OKAY) {
                         settings_edit["save_dir"] = std::string(out);
                         NFD::FreePath(out);
                     }
