@@ -9,7 +9,7 @@
 #include <thread>
 #include <variant>
 #include <httplib.h>
-#include "capture/capture_config.h"
+#include "util/capture_config.h"
 
 enum class sse_state { disconnected, connecting, connected, error };
 
@@ -17,7 +17,8 @@ struct evt_connected    {};
 struct evt_disconnected {};
 struct evt_error        { std::string message; };
 struct evt_capture_done { std::string path; };
-using server_event = std::variant<evt_connected, evt_disconnected, evt_error, evt_capture_done>;
+struct evt_config_updated { capture_config cfg; }; // server returned updated config on connect
+using server_event = std::variant<evt_connected, evt_disconnected, evt_error, evt_capture_done, evt_config_updated>;
 
 struct preview_frame {
     std::vector<uint8_t> pixels; // grayscale, w*h bytes
@@ -89,13 +90,36 @@ private:
 
     std::mutex       sse_cli_mtx_;
     httplib::Client* sse_cli_ptr_{nullptr}; // valid only while run_sse() runs
-    std::atomic<bool> sse_interrupted_{false};
+
+    std::mutex              sse_exited_mtx_;
+    std::condition_variable sse_exited_cv_;
+    bool                    sse_exited_{true}; // true = no SSE thread running
+
+    // Wait up to timeout_s for the SSE thread to exit naturally,
+    // then force-stop it if still running, then join.
+    void join_sse_thread(int timeout_s = 5);
 
     std::mutex        preview_cli_mtx_;
     httplib::Client*  preview_cli_ptr_{nullptr}; // valid only while run_preview() runs
     std::thread       preview_thread_;
-    std::atomic<bool> preview_interrupted_{false};
     std::atomic<bool> preview_active_{false};
+
+    std::mutex              preview_exited_mtx_;
+    std::condition_variable preview_exited_cv_;
+    bool                    preview_exited_{true};
+
+    void join_preview_thread(int timeout_s = 5);
+
+    // Worker HTTP client pointer — valid only during do_connect_post / do_simple_post.
+    std::mutex       worker_cli_mtx_;
+    httplib::Client* worker_cli_ptr_{nullptr};
+    void interrupt_worker();
+
+    std::mutex              worker_exited_mtx_;
+    std::condition_variable worker_exited_cv_;
+    bool                    worker_exited_{false}; // false: worker starts in constructor
+
+    void join_worker_thread(int timeout_s = 5);
 
     void run_download(std::string url_path, std::string dest_path);
     std::thread       dl_thread_;

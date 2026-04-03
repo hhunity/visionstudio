@@ -29,12 +29,13 @@ set(VS_COMPANY_NAME   "YourCompany" CACHE STRING "Company name embedded in the e
 set(VS_COPYRIGHT_YEAR "2025"        CACHE STRING "Copyright year embedded in the exe")
 
 # ----- cpplib_io: tiff_io from external/cpplib (built as static) -----
-add_library(cpplib_io STATIC
+add_library(cpplib_io SHARED
     external/cpplib/io/tiff_io.cpp
 )
 target_include_directories(cpplib_io PUBLIC
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/external/cpplib>
 )
+target_compile_definitions(cpplib_io PRIVATE IO_BUILD_DLL)
 target_link_libraries(cpplib_io PUBLIC TIFF::TIFF ZLIB::ZLIB Threads::Threads)
 
 # ----- vs_io: overlay IO library (tiff_io now provided by cpplib_io) -----
@@ -69,7 +70,7 @@ endif()
 
 # ----- vs_capture: HTTP capture client -----
 add_library(vs_capture STATIC
-    capture/capture_config.cpp
+    util/capture_config.cpp
     capture/capture_client.cpp
 )
 target_include_directories(vs_capture PUBLIC
@@ -108,9 +109,18 @@ configure_file(
     "${CMAKE_BINARY_DIR}/generated/third_party_licenses.h"
 )
 
+# ----- Application icon (Windows only) -----
+if(WIN32)
+    configure_file(
+        "${CMAKE_SOURCE_DIR}/generated/app.rc.in"
+        "${CMAKE_BINARY_DIR}/generated/app.rc"
+    )
+endif()
+
 # ----- visionstudio: main application -----
 add_executable(visionstudio
     api/main.cpp
+    $<$<BOOL:${WIN32}>:${CMAKE_BINARY_DIR}/generated/app.rc>
 )
 target_include_directories(visionstudio PRIVATE ${CMAKE_BINARY_DIR})
 target_link_libraries(visionstudio PRIVATE vs_gui vs_io vs_capture CLI11::CLI11 implot::implot nfd::nfd)

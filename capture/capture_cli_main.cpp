@@ -35,7 +35,7 @@
 #include <vector>
 
 #include "capture/capture_client.h"
-#include "capture/capture_config.h"
+#include "util/capture_config.h"
 
 // ---------------------------------------------------------------------------
 // Helpers

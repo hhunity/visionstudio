@@ -14,15 +14,17 @@
 image_viewer::image_viewer()  = default;
 image_viewer::~image_viewer() { destroy_texture(); }
 
-bool image_viewer::load_image(const image_data& img) {
+bool image_viewer::load_image(const image_data& img, bool reset_view) {
     if (img.empty()) return false;
     destroy_texture();
     create_texture(img);
-    img_w_       = img.width;
-    img_h_       = img.height;
-    cpu_image_   = img;          // keep CPU copy for pixel inspection
-    owned_state_ = view_state{};
-    needs_fit_   = true;
+    img_w_     = img.width;
+    img_h_     = img.height;
+    cpu_image_ = img;          // keep CPU copy for pixel inspection
+    if (reset_view) {
+        owned_state_ = view_state{};
+        needs_fit_   = true;
+    }
     return !tiles_.empty();
 }
 

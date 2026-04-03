@@ -30,14 +30,14 @@ capture_client::~capture_client() {
         shutdown_ = true;
     }
     cmd_cv_.notify_all();
-    if (worker_thread_.joinable())  worker_thread_.join();
+    join_worker_thread();
     interrupt_sse();
     stop_preview();
     download_active_.store(false);
-    if (sse_thread_.joinable())     sse_thread_.join();
-    if (preview_thread_.joinable()) preview_thread_.join();
-    if (dl_thread_.joinable())      dl_thread_.join();
-    if (ul_thread_.joinable())      ul_thread_.join();
+    join_sse_thread();
+    join_preview_thread();
+    if (dl_thread_.joinable()) dl_thread_.join();
+    if (ul_thread_.joinable()) ul_thread_.join();
 }
 
 // ---------------------------------------------------------------------------
@@ -70,9 +70,61 @@ void capture_client::stop_capture() {
 }
 
 void capture_client::interrupt_sse() {
-    sse_interrupted_ = true;
     std::lock_guard lock(sse_cli_mtx_);
     if (sse_cli_ptr_) sse_cli_ptr_->stop();
+}
+
+void capture_client::interrupt_worker() {
+    std::lock_guard lock(worker_cli_mtx_);
+    if (worker_cli_ptr_) worker_cli_ptr_->stop();
+}
+
+void capture_client::join_sse_thread(int timeout_s) {
+    if (!sse_thread_.joinable()) return;
+    {
+        std::unique_lock lock(sse_exited_mtx_);
+        const bool exited = sse_exited_cv_.wait_for(
+            lock, std::chrono::seconds(timeout_s),
+            [this] { return sse_exited_; });
+        if (!exited) {
+            log("[sse] join timeout (" + std::to_string(timeout_s) + "s): forcing stop");
+            lock.unlock();
+            interrupt_sse();
+        }
+    }
+    sse_thread_.join();
+}
+
+void capture_client::join_preview_thread(int timeout_s) {
+    if (!preview_thread_.joinable()) return;
+    {
+        std::unique_lock lock(preview_exited_mtx_);
+        const bool exited = preview_exited_cv_.wait_for(
+            lock, std::chrono::seconds(timeout_s),
+            [this] { return preview_exited_; });
+        if (!exited) {
+            log("[preview] join timeout (" + std::to_string(timeout_s) + "s): forcing stop");
+            lock.unlock();
+            stop_preview();
+        }
+    }
+    preview_thread_.join();
+}
+
+void capture_client::join_worker_thread(int timeout_s) {
+    if (!worker_thread_.joinable()) return;
+    {
+        std::unique_lock lock(worker_exited_mtx_);
+        const bool exited = worker_exited_cv_.wait_for(
+            lock, std::chrono::seconds(timeout_s),
+            [this] { return worker_exited_; });
+        if (!exited) {
+            log("[worker] join timeout (" + std::to_string(timeout_s) + "s): forcing stop");
+            lock.unlock();
+            interrupt_worker(); // force-abort any in-flight HTTP call
+        }
+    }
+    worker_thread_.join();
 }
 
 // ---------------------------------------------------------------------------
@@ -83,7 +135,12 @@ void capture_client::worker_thread_func() {
     while (true) {
         std::unique_lock lock(cmd_mtx_);
         cmd_cv_.wait(lock, [&] { return !cmd_queue_.empty() || shutdown_; });
-        if (shutdown_) return;
+        if (shutdown_) {
+            std::lock_guard eg(worker_exited_mtx_);
+            worker_exited_ = true;
+            worker_exited_cv_.notify_all();
+            return;
+        }
 
         const cmd c = cmd_queue_.front();
         cmd_queue_.pop_front();
@@ -94,9 +151,12 @@ void capture_client::worker_thread_func() {
         switch (c) {
         case cmd::connect:
             if (state != sse_state::disconnected && state != sse_state::error) break;
+            join_sse_thread();
             sse_state_.store(sse_state::connecting);
-            sse_interrupted_ = false;
-            if (sse_thread_.joinable()) sse_thread_.join();
+            {
+                std::lock_guard lock(sse_exited_mtx_);
+                sse_exited_ = false;
+            }
             sse_thread_ = std::thread([this] { run_sse(); });
             break;
 
@@ -182,7 +242,7 @@ void capture_client::run_sse() {
                     cur_data = trim(line.substr(5));
                 }
             }
-            return !shutdown_ && !sse_interrupted_;
+            return !shutdown_;
         });
 
     {
@@ -190,6 +250,11 @@ void capture_client::run_sse() {
         sse_cli_ptr_ = nullptr;
     }
     log("[sse] GET " + url + " closed");
+    {
+        std::lock_guard lock(sse_exited_mtx_);
+        sse_exited_ = true;
+    }
+    sse_exited_cv_.notify_all();
     const auto s = sse_state_.load();
     if (s != sse_state::error && s != sse_state::disconnected) {
         sse_state_.store(sse_state::disconnected);
@@ -256,7 +321,9 @@ bool capture_client::do_connect_post() {
     const std::string url = cfg_.host + ":" + std::to_string(cfg_.port) + cfg_.connect_path;
     log("[http] PUT " + url);
     const std::string ct = "multipart/form-data; boundary=" + boundary;
+    { std::lock_guard lock(worker_cli_mtx_); worker_cli_ptr_ = &cli; }
     auto res = cli.Put(cfg_.connect_path, body, ct.c_str());
+    { std::lock_guard lock(worker_cli_mtx_); worker_cli_ptr_ = nullptr; }
     if (!res) {
         log("[http] PUT " + url + " -> (no response)");
         push_event(evt_error{"connect: PUT failed"});
@@ -268,6 +335,34 @@ bool capture_client::do_connect_post() {
         push_event(evt_error{"connect: HTTP " + std::to_string(res->status)});
         return false;
     }
+    // Apply any config fields the server returns in the response body.
+    if (!res->body.empty()) {
+        try {
+            const auto j = nlohmann::json::parse(res->body);
+            capture_config updated = cfg_;
+            // capture_client section (HTTP settings)
+            const auto& c = j.contains("capture_client") ? j["capture_client"] : j;
+            if (c.contains("host")             && c["host"].is_string())              updated.host             = c["host"];
+            if (c.contains("port")             && c["port"].is_number_integer())      updated.port             = c["port"];
+            if (c.contains("connect_path")     && c["connect_path"].is_string())      updated.connect_path     = c["connect_path"];
+            if (c.contains("start_path")       && c["start_path"].is_string())        updated.start_path       = c["start_path"];
+            if (c.contains("stop_path")        && c["stop_path"].is_string())         updated.stop_path        = c["stop_path"];
+            if (c.contains("disconnect_path")  && c["disconnect_path"].is_string())   updated.disconnect_path  = c["disconnect_path"];
+            if (c.contains("sse_path")         && c["sse_path"].is_string())          updated.sse_path         = c["sse_path"];
+            if (c.contains("preview_path")     && c["preview_path"].is_string())      updated.preview_path     = c["preview_path"];
+            if (c.contains("preview_raw_path") && c["preview_raw_path"].is_string())  updated.preview_raw_path = c["preview_raw_path"];
+            if (c.contains("preview_raw")      && c["preview_raw"].is_boolean())      updated.preview_raw      = c["preview_raw"];
+            if (c.contains("timeout_ms")       && c["timeout_ms"].is_number_integer()) updated.timeout_ms      = c["timeout_ms"];
+            // capture section (file paths)
+            const auto& cap = j.contains("capture") ? j["capture"] : j;
+            if (cap.contains("connect_config_file") && cap["connect_config_file"].is_string()) updated.connect_config_file = cap["connect_config_file"];
+            if (cap.contains("capture_config_file") && cap["capture_config_file"].is_string()) updated.capture_config_file = cap["capture_config_file"];
+            if (updated != cfg_) {
+                cfg_ = updated;
+                push_event(evt_config_updated{updated});
+            }
+        } catch (...) {}
+    }
     return true;
 }
 
@@ -276,7 +371,9 @@ bool capture_client::do_simple_post(const std::string& path,
     const std::string url = cfg_.host + ":" + std::to_string(cfg_.port) + path;
     log("[http] POST " + url);
     auto cli = make_cli();
+    { std::lock_guard lock(worker_cli_mtx_); worker_cli_ptr_ = &cli; }
     auto res = cli.Post(path);
+    { std::lock_guard lock(worker_cli_mtx_); worker_cli_ptr_ = nullptr; }
     if (!res) {
         log("[http] POST " + url + " -> (no response)");
         push_event(evt_error{label + ": POST failed"});
@@ -354,15 +451,17 @@ std::optional<server_event> capture_client::poll_server_event() {
 
 void capture_client::start_preview() {
     if (preview_active_.load()) return;
-    preview_interrupted_ = false;
-    preview_active_      = true;
-    if (preview_thread_.joinable()) preview_thread_.join();
+    join_preview_thread();
+    preview_active_ = true;
+    {
+        std::lock_guard lock(preview_exited_mtx_);
+        preview_exited_ = false;
+    }
     preview_thread_ = std::thread([this] { run_preview(); });
 }
 
 void capture_client::stop_preview() {
     if (!preview_active_.load()) return;
-    preview_interrupted_ = true;
     std::lock_guard lock(preview_cli_mtx_);
     if (preview_cli_ptr_) preview_cli_ptr_->stop();
     // join happens in the next start_preview() or destructor
@@ -394,6 +493,11 @@ void capture_client::run_preview() {
         preview_cli_ptr_ = nullptr;
     }
     preview_active_ = false;
+    {
+        std::lock_guard lock(preview_exited_mtx_);
+        preview_exited_ = true;
+    }
+    preview_exited_cv_.notify_all();
 }
 
 // ---------------------------------------------------------------------------
@@ -481,7 +585,7 @@ void capture_client::run_preview_mjpeg(httplib::Client& cli) {
                 }
                 buf.erase(buf.begin(), data_start + content_length);
             }
-            return !preview_interrupted_;
+            return true;
         });
 
     tjDestroy(tj);
@@ -521,7 +625,7 @@ void capture_client::run_preview_raw(httplib::Client& cli) {
                 store_preview_frame(static_cast<int>(w), static_cast<int>(h), std::move(pixels));
                 buf.erase(buf.begin(), buf.begin() + static_cast<ptrdiff_t>(frame_size));
             }
-            return !preview_interrupted_;
+            return true;
         });
 
     log("[preview_raw] GET " + url + " closed");

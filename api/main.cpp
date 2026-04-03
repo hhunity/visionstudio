@@ -7,7 +7,7 @@
 #include <imgui_stdlib.h>
 
 #include "capture/capture_client.h"
-#include "capture/capture_config.h"
+#include "util/capture_config.h"
 #include "gui/compare_viewer.h"
 #include "gui/image_viewer.h"
 #include <implot.h>
@@ -682,6 +682,11 @@ int main(int argc, char** argv) {
                         left_loader.start(e->path);
                     }
                     status_msg = "Capture complete: " + e->path;
+                } else if (auto* e = std::get_if<evt_config_updated>(&*ev)) {
+                    cap_cfg    = e->cfg;
+                    conn_buf   = make_conn_edit(cap_cfg);
+                    capture_config::save("visionstudio.json", cap_cfg);
+                    status_msg = "Config updated by server";
                 }
             }
 
@@ -892,19 +897,21 @@ int main(int argc, char** argv) {
             settings_fresh = false;
             settings_edit = nlohmann::json::object();
             settings_edit["capture"] = {
-                {"host",                 cap_cfg.host},
-                {"port",                 cap_cfg.port},
-                {"connect_path",         cap_cfg.connect_path},
-                {"start_path",           cap_cfg.start_path},
-                {"stop_path",            cap_cfg.stop_path},
-                {"disconnect_path",      cap_cfg.disconnect_path},
-                {"sse_path",             cap_cfg.sse_path},
-                {"preview_path",         cap_cfg.preview_path},
-                {"preview_raw_path",     cap_cfg.preview_raw_path},
-                {"preview_raw",          cap_cfg.preview_raw},
-                {"timeout_ms",           cap_cfg.timeout_ms},
                 {"connect_config_file",  cap_cfg.connect_config_file},
                 {"capture_config_file",  cap_cfg.capture_config_file},
+            };
+            settings_edit["capture_client"] = {
+                {"host",             cap_cfg.host},
+                {"port",             cap_cfg.port},
+                {"connect_path",     cap_cfg.connect_path},
+                {"start_path",       cap_cfg.start_path},
+                {"stop_path",        cap_cfg.stop_path},
+                {"disconnect_path",  cap_cfg.disconnect_path},
+                {"sse_path",         cap_cfg.sse_path},
+                {"preview_path",     cap_cfg.preview_path},
+                {"preview_raw_path", cap_cfg.preview_raw_path},
+                {"preview_raw",      cap_cfg.preview_raw},
+                {"timeout_ms",       cap_cfg.timeout_ms},
             };
             // save_dir is managed separately (folder picker UI)
             settings_edit["save_dir"] = cap_cfg.save_dir;
@@ -969,22 +976,25 @@ int main(int argc, char** argv) {
             ImGui::Separator();
             const float btn_w = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
             if (ImGui::Button("Apply & Save", {btn_w, 0})) {
-                // Update cap_cfg from settings_edit["capture"]
+                // Update cap_cfg from settings_edit sections.
+                if (settings_edit.contains("capture_client")) {
+                    auto& c = settings_edit["capture_client"];
+                    if (c.contains("host")             && c["host"].is_string())              cap_cfg.host             = c["host"].get<std::string>();
+                    if (c.contains("port")             && c["port"].is_number_integer())      cap_cfg.port             = c["port"].get<int>();
+                    if (c.contains("connect_path")     && c["connect_path"].is_string())      cap_cfg.connect_path     = c["connect_path"].get<std::string>();
+                    if (c.contains("start_path")       && c["start_path"].is_string())        cap_cfg.start_path       = c["start_path"].get<std::string>();
+                    if (c.contains("stop_path")        && c["stop_path"].is_string())         cap_cfg.stop_path        = c["stop_path"].get<std::string>();
+                    if (c.contains("disconnect_path")  && c["disconnect_path"].is_string())   cap_cfg.disconnect_path  = c["disconnect_path"].get<std::string>();
+                    if (c.contains("sse_path")         && c["sse_path"].is_string())          cap_cfg.sse_path         = c["sse_path"].get<std::string>();
+                    if (c.contains("preview_path")     && c["preview_path"].is_string())      cap_cfg.preview_path     = c["preview_path"].get<std::string>();
+                    if (c.contains("preview_raw_path") && c["preview_raw_path"].is_string())  cap_cfg.preview_raw_path = c["preview_raw_path"].get<std::string>();
+                    if (c.contains("preview_raw")      && c["preview_raw"].is_boolean())      cap_cfg.preview_raw      = c["preview_raw"].get<bool>();
+                    if (c.contains("timeout_ms")       && c["timeout_ms"].is_number_integer()) cap_cfg.timeout_ms      = c["timeout_ms"].get<int>();
+                }
                 if (settings_edit.contains("capture")) {
                     auto& c = settings_edit["capture"];
-                    if (c.contains("host")               && c["host"].is_string())           cap_cfg.host               = c["host"].get<std::string>();
-                    if (c.contains("port")               && c["port"].is_number_integer())   cap_cfg.port               = c["port"].get<int>();
-                    if (c.contains("connect_path")       && c["connect_path"].is_string())   cap_cfg.connect_path       = c["connect_path"].get<std::string>();
-                    if (c.contains("start_path")         && c["start_path"].is_string())     cap_cfg.start_path         = c["start_path"].get<std::string>();
-                    if (c.contains("stop_path")          && c["stop_path"].is_string())      cap_cfg.stop_path          = c["stop_path"].get<std::string>();
-                    if (c.contains("disconnect_path")    && c["disconnect_path"].is_string())cap_cfg.disconnect_path    = c["disconnect_path"].get<std::string>();
-                    if (c.contains("sse_path")           && c["sse_path"].is_string())       cap_cfg.sse_path           = c["sse_path"].get<std::string>();
-                    if (c.contains("preview_path")       && c["preview_path"].is_string())   cap_cfg.preview_path       = c["preview_path"].get<std::string>();
-                    if (c.contains("preview_raw_path")   && c["preview_raw_path"].is_string())cap_cfg.preview_raw_path  = c["preview_raw_path"].get<std::string>();
-                    if (c.contains("preview_raw")        && c["preview_raw"].is_boolean())   cap_cfg.preview_raw        = c["preview_raw"].get<bool>();
-                    if (c.contains("timeout_ms")         && c["timeout_ms"].is_number_integer()) cap_cfg.timeout_ms     = c["timeout_ms"].get<int>();
-                    if (c.contains("connect_config_file")&& c["connect_config_file"].is_string())cap_cfg.connect_config_file = c["connect_config_file"].get<std::string>();
-                    if (c.contains("capture_config_file")&& c["capture_config_file"].is_string())cap_cfg.capture_config_file = c["capture_config_file"].get<std::string>();
+                    if (c.contains("connect_config_file") && c["connect_config_file"].is_string()) cap_cfg.connect_config_file = c["connect_config_file"].get<std::string>();
+                    if (c.contains("capture_config_file") && c["capture_config_file"].is_string()) cap_cfg.capture_config_file = c["capture_config_file"].get<std::string>();
                 }
                 if (settings_edit.contains("save_dir") && settings_edit["save_dir"].is_string())
                     cap_cfg.save_dir = settings_edit["save_dir"].get<std::string>();
