@@ -24,6 +24,10 @@ find_package(httplib CONFIG REQUIRED)
 find_package(nfd CONFIG REQUIRED)
 find_package(libjpeg-turbo CONFIG REQUIRED)
 
+# ----- Version metadata (set before configure_file so all platforms get them) -----
+set(VS_COMPANY_NAME   "YourCompany" CACHE STRING "Company name embedded in the exe")
+set(VS_COPYRIGHT_YEAR "2025"        CACHE STRING "Copyright year embedded in the exe")
+
 # ----- cpplib_io: tiff_io from external/cpplib (built as static) -----
 add_library(cpplib_io STATIC
     external/cpplib/io/tiff_io.cpp
@@ -124,16 +128,14 @@ if(BUILD_CAPTURE_CLI)
 endif()
 
 if(WIN32)
-    set_target_properties(visionstudio PROPERTIES
-        WIN32_EXECUTABLE $<IF:$<CONFIG:Release>,TRUE,FALSE>
-    )
+    # Use main() entry point (not WinMain). /ENTRY:mainCRTStartup tells the linker
+    # to use the CRT startup stub that calls main(), while /SUBSYSTEM:WINDOWS hides
+    # the console window in Release builds.
     target_link_options(visionstudio PRIVATE
         $<$<CONFIG:Debug>:/SUBSYSTEM:CONSOLE>
-        $<$<CONFIG:Release>:/SUBSYSTEM:WINDOWS>
+        $<$<CONFIG:Release>:/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup>
     )
-    # Embed application icon and version info via Windows resource file
-    set(VS_COMPANY_NAME   "YourCompany" CACHE STRING "Company name embedded in the exe")
-    set(VS_COPYRIGHT_YEAR "2025"        CACHE STRING "Copyright year embedded in the exe")
+    # Embed version info via Windows resource file
     configure_file(
         "${CMAKE_SOURCE_DIR}/api/app.rc.in"
         "${CMAKE_BINARY_DIR}/generated/app.rc"

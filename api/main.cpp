@@ -26,6 +26,16 @@
 #include <future>
 #include <optional>
 #include <string>
+#ifdef _WIN32
+#  define WIN32_LEAN_AND_MEAN
+#  define NOMINMAX
+#  include <windows.h>
+static void fatal_error(const char* msg) {
+    MessageBoxA(nullptr, msg, "VisionStudio - Fatal Error", MB_OK | MB_ICONERROR);
+}
+#else
+static void fatal_error(const char* msg) { fprintf(stderr, "Fatal: %s\n", msg); }
+#endif
 
 static void glfw_error_cb(int error, const char* desc) {
     fprintf(stderr, "GLFW Error %d: %s\n", error, desc);
@@ -354,7 +364,7 @@ int main(int argc, char** argv) {
     // GLFW + OpenGL + ImGui init
     // -------------------------------------------------------------------------
     glfwSetErrorCallback(glfw_error_cb);
-    if (!glfwInit()) return 1;
+    if (!glfwInit()) { fatal_error("glfwInit() failed."); return 1; }
 
     const char* glsl_version = "#version 330";
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -381,14 +391,24 @@ int main(int argc, char** argv) {
     }
 
     GLFWwindow* window = glfwCreateWindow(saved_w, saved_h, "VisionStudio  v" VS_VERSION_STRING, nullptr, nullptr);
-    if (!window) { glfwTerminate(); return 1; }
+    if (!window) {
+        const char* err_desc = nullptr;
+        int err_code = glfwGetError(&err_desc);
+        char buf[512];
+        std::snprintf(buf, sizeof(buf),
+            "glfwCreateWindow() failed.\nGLFW error %d: %s",
+            err_code, err_desc ? err_desc : "unknown");
+        fatal_error(buf);
+        glfwTerminate();
+        return 1;
+    }
 
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
     glfwSetDropCallback(window, drop_callback);
 
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
-        fprintf(stderr, "Failed to initialize GLAD\n");
+        fatal_error("gladLoadGLLoader() failed.");
         return 1;
     }
 
@@ -396,10 +416,18 @@ int main(int argc, char** argv) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImPlot::CreateContext();
+    ImGui::GetIO().IniFilename = nullptr; // Disable auto imgui.ini; layout saved in visionstudio.json
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
+
+    // Restore imgui layout from visionstudio.json.
+    {
+        const std::string ini = capture_config::load_imgui_ini("visionstudio.json");
+        if (!ini.empty())
+            ImGui::LoadIniSettingsFromMemory(ini.c_str(), ini.size());
+    }
 
     // -------------------------------------------------------------------------
     // Application state
@@ -845,9 +873,13 @@ int main(int argc, char** argv) {
             ImGui::Separator();
             const float text_h = ImGui::GetContentRegionAvail().y
                                 - ImGui::GetFrameHeightWithSpacing() - 4;
+            // Use a mutable buffer: constexpr data lives in .rdata (read-only) in
+            // Release builds, and ImGui may write to the buffer internally.
+            static std::string s_license_buf(kThirdPartyLicenses,
+                                             sizeof(kThirdPartyLicenses) - 1);
             ImGui::InputTextMultiline("##about_text",
-                const_cast<char*>(kThirdPartyLicenses),
-                sizeof(kThirdPartyLicenses),
+                s_license_buf.data(),
+                s_license_buf.size() + 1,
                 {-1, text_h},
                 ImGuiInputTextFlags_ReadOnly);
             if (ImGui::Button("Close")) { show_about = false; ImGui::CloseCurrentPopup(); }
@@ -1729,12 +1761,12 @@ int main(int argc, char** argv) {
         glfwSwapBuffers(window);
     }
 
-    // Save window size to visionstudio.json.
+    // Save window size and imgui layout to visionstudio.json.
     {
         int cur_w, cur_h;
         glfwGetWindowSize(window, &cur_w, &cur_h);
+        const std::string imgui_ini = ImGui::SaveIniSettingsToMemory();
 
-        // Load existing JSON to preserve other keys.
         nlohmann::json j = nlohmann::json::object();
         {
             std::ifstream jf("visionstudio.json");
@@ -1742,7 +1774,8 @@ int main(int argc, char** argv) {
                 try { j = nlohmann::json::parse(jf); } catch (...) {}
             }
         }
-        j["window"] = {{"width", cur_w}, {"height", cur_h}};
+        j["window"]    = {{"width", cur_w}, {"height", cur_h}};
+        j["imgui_ini"] = imgui_ini;
         std::ofstream jf("visionstudio.json");
         if (jf.is_open()) jf << j.dump(2) << '\n';
     }
