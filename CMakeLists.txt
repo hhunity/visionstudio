@@ -153,3 +153,56 @@ if(WIN32)
     )
     target_sources(visionstudio PRIVATE "${CMAKE_BINARY_DIR}/generated/app.rc")
 endif()
+
+# =============================================================================
+# CPack / NSIS installer (Windows only)
+# =============================================================================
+if(WIN32)
+    # install() puts files into the installer package.
+    install(TARGETS visionstudio
+        RUNTIME DESTINATION "."
+    )
+    # cpplib_io is a SHARED library — its DLL must ship alongside the exe.
+    install(TARGETS cpplib_io
+        RUNTIME DESTINATION "."
+    )
+    # Runtime DLLs (MSVC CRT, vcpkg DLLs, etc.) resolved automatically.
+    install(IMPORTED_RUNTIME_ARTIFACTS visionstudio
+        RUNTIME DESTINATION "."
+    )
+
+    set(CPACK_GENERATOR "NSIS")
+    set(CPACK_PACKAGE_NAME        "VisionStudio")
+    set(CPACK_PACKAGE_VENDOR      "${VS_COMPANY_NAME}")
+    set(CPACK_PACKAGE_DESCRIPTION "TIFF Image Viewer")
+    set(CPACK_PACKAGE_VERSION_MAJOR "${PROJECT_VERSION_MAJOR}")
+    set(CPACK_PACKAGE_VERSION_MINOR "${PROJECT_VERSION_MINOR}")
+    set(CPACK_PACKAGE_VERSION_PATCH "${PROJECT_VERSION_PATCH}")
+
+    # Default install directory: C:\Program Files\VisionStudio
+    set(CPACK_NSIS_INSTALL_ROOT   "$PROGRAMFILES64")
+    set(CPACK_NSIS_PACKAGE_NAME   "VisionStudio ${PROJECT_VERSION}")
+    set(CPACK_NSIS_DISPLAY_NAME   "VisionStudio ${PROJECT_VERSION}")
+
+    # Start menu + desktop shortcut
+    set(CPACK_NSIS_CREATE_ICONS_EXTRA
+        "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\VisionStudio.lnk' '$INSTDIR\\\\visionstudio.exe'"
+    )
+    set(CPACK_NSIS_DELETE_ICONS_EXTRA
+        "Delete '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\VisionStudio.lnk'"
+    )
+    set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS
+        "CreateShortCut '$DESKTOP\\\\VisionStudio.lnk' '$INSTDIR\\\\visionstudio.exe'"
+    )
+    set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
+        "Delete '$DESKTOP\\\\VisionStudio.lnk'"
+    )
+
+    # Icon for the installer window (requires .ico)
+    if(EXISTS "${CMAKE_SOURCE_DIR}/assets/visionstudio.ico")
+        set(CPACK_NSIS_MUI_ICON    "${CMAKE_SOURCE_DIR}/assets/visionstudio.ico")
+        set(CPACK_NSIS_MUI_UNIICON "${CMAKE_SOURCE_DIR}/assets/visionstudio.ico")
+    endif()
+
+    include(CPack)
+endif()
