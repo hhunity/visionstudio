@@ -24,6 +24,10 @@ find_package(httplib CONFIG REQUIRED)
 find_package(nfd CONFIG REQUIRED)
 find_package(libjpeg-turbo CONFIG REQUIRED)
 
+# ----- Version metadata (set before configure_file so all platforms get them) -----
+set(VS_COMPANY_NAME   "YourCompany" CACHE STRING "Company name embedded in the exe")
+set(VS_COPYRIGHT_YEAR "2025"        CACHE STRING "Copyright year embedded in the exe")
+
 # ----- cpplib_io: tiff_io from external/cpplib (built as static) -----
 add_library(cpplib_io SHARED
     external/cpplib/io/tiff_io.cpp
@@ -79,6 +83,25 @@ target_link_libraries(vs_capture PUBLIC
     libjpeg-turbo::turbojpeg-static
 )
 
+# ----- Resolve git hash for version header -----
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE VS_GIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT VS_GIT_HASH)
+    set(VS_GIT_HASH "unknown")
+endif()
+
+# ----- Generate version header -----
+configure_file(
+    "${CMAKE_SOURCE_DIR}/generated/version.h.in"
+    "${CMAKE_BINARY_DIR}/generated/version.h"
+    @ONLY
+)
+
 # ----- Embed THIRD_PARTY_LICENSES.txt at build time -----
 file(READ "${CMAKE_SOURCE_DIR}/THIRD_PARTY_LICENSES.txt" LICENSE_CONTENT)
 configure_file(
@@ -115,8 +138,18 @@ if(BUILD_CAPTURE_CLI)
 endif()
 
 if(WIN32)
+    # Use main() entry point (not WinMain). /ENTRY:mainCRTStartup tells the linker
+    # to use the CRT startup stub that calls main(), while /SUBSYSTEM:WINDOWS hides
+    # the console window in Release builds.
     target_link_options(visionstudio PRIVATE
         $<$<CONFIG:Debug>:/SUBSYSTEM:CONSOLE>
         $<$<CONFIG:Release>:/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup>
     )
+    # Embed version info via Windows resource file
+    configure_file(
+        "${CMAKE_SOURCE_DIR}/api/app.rc.in"
+        "${CMAKE_BINARY_DIR}/generated/app.rc"
+        @ONLY
+    )
+    target_sources(visionstudio PRIVATE "${CMAKE_BINARY_DIR}/generated/app.rc")
 endif()

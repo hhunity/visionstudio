@@ -15,6 +15,7 @@
 #include "external/cpplib/io/tiff_io.h"
 
 #include "generated/third_party_licenses.h"
+#include "generated/version.h"
 #include <CLI/CLI.hpp>
 #include <nlohmann/json.hpp>
 #include <array>
@@ -25,6 +26,16 @@
 #include <future>
 #include <optional>
 #include <string>
+#ifdef _WIN32
+#  define WIN32_LEAN_AND_MEAN
+#  define NOMINMAX
+#  include <windows.h>
+static void fatal_error(const char* msg) {
+    MessageBoxA(nullptr, msg, "VisionStudio - Fatal Error", MB_OK | MB_ICONERROR);
+}
+#else
+static void fatal_error(const char* msg) { fprintf(stderr, "Fatal: %s\n", msg); }
+#endif
 
 static void glfw_error_cb(int error, const char* desc) {
     fprintf(stderr, "GLFW Error %d: %s\n", error, desc);
@@ -34,7 +45,8 @@ static void glfw_error_cb(int error, const char* desc) {
 // Mode
 // ---------------------------------------------------------------------------
 
-enum class app_mode { none, single, compare, split, capture };
+enum class view_mode  { none, single, split, compare };
+enum class input_mode { read_img, remote_capture };
 
 // ---------------------------------------------------------------------------
 // Async loader
@@ -85,7 +97,8 @@ struct async_loader {
 // ---------------------------------------------------------------------------
 
 struct app_state {
-    app_mode*                mode          = nullptr;
+    view_mode*               vmode         = nullptr;
+    input_mode*              imode         = nullptr;
     image_viewer*            single_viewer = nullptr;
     compare_viewer*          compare       = nullptr;
     image_data*              left_image    = nullptr;
@@ -229,11 +242,12 @@ static bool has_ext(const char* path, const char* ext) {
 static void drop_callback(GLFWwindow* window, int count, const char** paths) {
     auto* app = static_cast<app_state*>(glfwGetWindowUserPointer(window));
 
-    switch (*app->mode) {
-    case app_mode::none:
-    case app_mode::capture:
-        break; // ignore drops
-    case app_mode::single:
+    // Remote capture mode does not accept file drops.
+    if (*app->imode == input_mode::remote_capture) return;
+    if (*app->vmode == view_mode::none) return;
+
+    switch (*app->vmode) {
+    case view_mode::single:
         for (int i = 0; i < count; ++i) {
             if (has_ext(paths[i], ".json")) {
                 load_overlay(paths[i], *app->overlays,
@@ -245,7 +259,7 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
             }
         }
         return;
-    case app_mode::compare: {
+    case view_mode::compare: {
         std::vector<const char*> jsonl_files, img_files;
         for (int i = 0; i < count; ++i)
             (has_ext(paths[i], ".json") ? jsonl_files : img_files).push_back(paths[i]);
@@ -288,7 +302,7 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
         *app->status_msg = "Loading...";
         return;
     }
-    case app_mode::split: {
+    case view_mode::split: {
         for (int i = 0; i < count; ++i) {
             if (has_ext(paths[i], ".json")) {
                 load_overlay(paths[i], *app->left_overlays,
@@ -301,6 +315,8 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
         }
         return;
     }
+    default:
+        break;
     }
     *app->status_msg = "Loading...";
 }
@@ -310,40 +326,45 @@ int main(int argc, char** argv) {
     // Argument parsing (CLI11)
     // -------------------------------------------------------------------------
     CLI::App cli{"VisionStudio - TIFF image viewer"};
-    cli.set_version_flag("--version", "0.1.0");
+    cli.set_version_flag("--version", VS_VERSION_STRING);
 
-    std::string              mode_str;
+    std::string              view_mode_str;
     std::vector<std::string> arg_images;
     std::vector<std::string> arg_overlays;
     bool                     arg_diff    = false;
     float                    arg_amplify = 1.0f;
 
-    cli.add_option("--mode", mode_str, "Viewer mode: single | compare | split | capture")
-       ->transform(CLI::IsMember({"single", "compare", "split", "capture"}, CLI::ignore_case));
-    cli.add_option("images", arg_images, "Image file(s). One file: single/split. Two files: compare.")
-       ->expected(0, 2);
-    cli.add_flag("--diff",      arg_diff,    "Enable diff mode on startup");
-    cli.add_option("--amplify", arg_amplify, "Diff amplification factor (default: 1.0)")
-       ->check(CLI::Range(1.0f, 20.0f));
-    cli.add_option("--overlay", arg_overlays,
-                   "JSONL overlay file(s). One file: single/split. Two files: compare left+right.")
-       ->expected(1, 2)
-       ->check(CLI::ExistingFile);
+    auto* img_sub = cli.add_subcommand("img", "Load and view image file(s)");
+    img_sub->add_option("--mode", view_mode_str, "View mode: single | split | compare")
+        ->transform(CLI::IsMember({"single", "split", "compare"}, CLI::ignore_case));
+    img_sub->add_option("images", arg_images, "Image file(s). One file: single/split. Two files: compare.")
+        ->expected(0, 2);
+    img_sub->add_flag("--diff",      arg_diff,    "Enable diff mode on startup");
+    img_sub->add_option("--amplify", arg_amplify, "Diff amplification factor (default: 1.0)")
+        ->check(CLI::Range(1.0f, 20.0f));
+    img_sub->add_option("--overlay", arg_overlays,
+                        "JSONL overlay file(s). One file: single/split. Two files: compare left+right.")
+        ->expected(1, 2)
+        ->check(CLI::ExistingFile);
+
+    auto* cap_sub = cli.add_subcommand("capture", "Remote capture mode");
+    cap_sub->add_option("--mode", view_mode_str, "View mode: single | split | compare")
+        ->transform(CLI::IsMember({"single", "split", "compare"}, CLI::ignore_case));
 
     CLI11_PARSE(cli, argc, argv);
 
-    // --mode omitted → show mode selection UI at startup
-    app_mode mode = mode_str.empty()          ? app_mode::none
-                  : (mode_str == "compare")   ? app_mode::compare
-                  : (mode_str == "split")     ? app_mode::split
-                  : (mode_str == "capture")   ? app_mode::capture
-                                              : app_mode::single;
+    const bool input_decided = img_sub->parsed() || cap_sub->parsed();
+    input_mode imode = cap_sub->parsed() ? input_mode::remote_capture : input_mode::read_img;
+    view_mode  vmode = view_mode_str.empty()        ? view_mode::none
+                     : (view_mode_str == "compare") ? view_mode::compare
+                     : (view_mode_str == "split")   ? view_mode::split
+                                                    : view_mode::single;
 
     // -------------------------------------------------------------------------
     // GLFW + OpenGL + ImGui init
     // -------------------------------------------------------------------------
     glfwSetErrorCallback(glfw_error_cb);
-    if (!glfwInit()) return 1;
+    if (!glfwInit()) { fatal_error("glfwInit() failed."); return 1; }
 
     const char* glsl_version = "#version 330";
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -369,15 +390,25 @@ int main(int argc, char** argv) {
         }
     }
 
-    GLFWwindow* window = glfwCreateWindow(saved_w, saved_h, "VisionStudio", nullptr, nullptr);
-    if (!window) { glfwTerminate(); return 1; }
+    GLFWwindow* window = glfwCreateWindow(saved_w, saved_h, "VisionStudio  v" VS_VERSION_STRING, nullptr, nullptr);
+    if (!window) {
+        const char* err_desc = nullptr;
+        int err_code = glfwGetError(&err_desc);
+        char buf[512];
+        std::snprintf(buf, sizeof(buf),
+            "glfwCreateWindow() failed.\nGLFW error %d: %s",
+            err_code, err_desc ? err_desc : "unknown");
+        fatal_error(buf);
+        glfwTerminate();
+        return 1;
+    }
 
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
     glfwSetDropCallback(window, drop_callback);
 
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
-        fprintf(stderr, "Failed to initialize GLAD\n");
+        fatal_error("gladLoadGLLoader() failed.");
         return 1;
     }
 
@@ -385,10 +416,18 @@ int main(int argc, char** argv) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImPlot::CreateContext();
+    ImGui::GetIO().IniFilename = nullptr; // Disable auto imgui.ini; layout saved in visionstudio.json
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
+
+    // Restore imgui layout from visionstudio.json.
+    {
+        const std::string ini = capture_config::load_imgui_ini("visionstudio.json");
+        if (!ini.empty())
+            ImGui::LoadIniSettingsFromMemory(ini.c_str(), ini.size());
+    }
 
     // -------------------------------------------------------------------------
     // Application state
@@ -406,6 +445,7 @@ int main(int argc, char** argv) {
     bool        show_camera_config    = false;
     bool        show_connect_config   = false;
     bool        show_about            = false;
+    bool        show_version          = false;
     bool        show_settings         = false;
     bool        settings_fresh        = false;
     nlohmann::json settings_edit;
@@ -418,10 +458,13 @@ int main(int argc, char** argv) {
     int    preview_tex_h = 0;
 
     // Capture settings
-    int  capture_mode          = 0;     // 0=Capture, 1=Mode1, 2=Mode2
-    bool image_acquisition     = true;
-    bool live_image            = false;
-    bool auto_detect           = true;
+    // capture_mode mirrors vmode for remote_capture; changeable at runtime.
+    int  capture_mode      = vmode == view_mode::compare ? 2
+                           : vmode == view_mode::split   ? 1
+                                                         : 0;
+    bool image_acquisition = true;
+    bool live_image        = false;
+    bool auto_detect       = true;
     std::string ref_img_path;
 
     // Editable copies of connection settings (local to UI, applied on Save).
@@ -452,7 +495,7 @@ int main(int argc, char** argv) {
 
     capture_config                cap_cfg  = capture_config::load("visionstudio.json");
     std::optional<capture_client> cap_cli;
-    if (mode == app_mode::capture) cap_cli.emplace(cap_cfg);
+    if (imode == input_mode::remote_capture) cap_cli.emplace(cap_cfg);
     conn_edit       conn_buf = make_conn_edit(cap_cfg);
 
     if (!cap_cfg.capture_config_file.empty()) {
@@ -473,7 +516,7 @@ int main(int argc, char** argv) {
     std::string            left_overlay_file;
     std::string            right_overlay_file;
 
-    app_state drop_state{&mode,
+    app_state drop_state{&vmode, &imode,
                          &single_viewer, &compare,
                          &left_image, &right_image,
                          &status_msg,
@@ -482,12 +525,12 @@ int main(int argc, char** argv) {
                          &overlay_file, &left_overlay_file, &right_overlay_file};
     glfwSetWindowUserPointer(window, &drop_state);
 
-    // In capture mode launched via CLI, connect automatically.
-    if (mode == app_mode::capture)
+    // In remote capture mode launched via CLI, connect automatically.
+    if (imode == input_mode::remote_capture)
         cap_cli->connect();
 
     // Apply diff flags from args (compare / split mode)
-    if (mode == app_mode::compare || mode == app_mode::split) {
+    if (vmode == view_mode::compare || vmode == view_mode::split) {
         compare.diff_mode    = arg_diff;
         compare.diff_amplify = arg_amplify;
     }
@@ -495,22 +538,22 @@ int main(int argc, char** argv) {
     // Load images specified on command line
     if (!arg_images.empty()) {
         left_loader.start(arg_images[0]);
-        if (arg_images.size() >= 2 && mode == app_mode::compare)
+        if (arg_images.size() >= 2 && vmode == view_mode::compare)
             right_loader.start(arg_images[1]);
         status_msg = "Loading...";
     }
 
     // Load overlay JSON from CLI args
     if (!arg_overlays.empty()) {
-        if (mode == app_mode::single) {
+        if (vmode == view_mode::single) {
             load_overlay(arg_overlays[0], overlays,
                 [&](auto& g){ single_viewer.set_overlay_groups(g); },
                 &overlay_file);
-        } else if (mode == app_mode::split) {
+        } else if (vmode == view_mode::split) {
             load_overlay(arg_overlays[0], left_overlays,
                 [&](auto& g){ compare.set_split_overlay_groups(g); },
                 &overlay_file);
-        } else if (mode == app_mode::compare) {
+        } else if (vmode == view_mode::compare) {
             load_overlay(arg_overlays[0], left_overlays,
                 [&](auto& g){ compare.set_left_overlay_groups(g); },
                 &left_overlay_file);
@@ -536,7 +579,7 @@ int main(int argc, char** argv) {
         glfwGetWindowSize(window, &win_w, &win_h);
 
         // ----- Mode selection screen -----
-        if (mode == app_mode::none) {
+        if (vmode == view_mode::none) {
             ImGui::SetNextWindowPos(
                 {static_cast<float>(win_w) * 0.5f, static_cast<float>(win_h) * 0.5f},
                 ImGuiCond_Always, {0.5f, 0.5f});
@@ -545,17 +588,22 @@ int main(int argc, char** argv) {
                 ImGuiWindowFlags_NoDecoration    | ImGuiWindowFlags_NoMove        |
                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize |
                 ImGuiWindowFlags_NoNav);
-            ImGui::TextUnformatted("Select Viewer Mode");
-            ImGui::Spacing();
-            if (ImGui::Button("Single",  {120.0f, 40.0f})) mode = app_mode::single;
-            ImGui::SameLine();
-            if (ImGui::Button("Compare", {120.0f, 40.0f})) mode = app_mode::compare;
-            ImGui::SameLine();
-            if (ImGui::Button("Split",   {120.0f, 40.0f})) mode = app_mode::split;
-            ImGui::SameLine();
-            if (ImGui::Button("Capture", {120.0f, 40.0f})) {
-                mode = app_mode::capture;
-                cap_cli.emplace(cap_cfg);
+            if (!input_decided || imode == input_mode::read_img) {
+                ImGui::TextDisabled("Image File");
+                if (ImGui::Button("Single##img",  {120.0f, 40.0f})) { vmode = view_mode::single;  imode = input_mode::read_img; }
+                ImGui::SameLine();
+                if (ImGui::Button("Split##img",   {120.0f, 40.0f})) { vmode = view_mode::split;   imode = input_mode::read_img; }
+                ImGui::SameLine();
+                if (ImGui::Button("Compare##img", {120.0f, 40.0f})) { vmode = view_mode::compare; imode = input_mode::read_img; }
+            }
+            if (!input_decided || imode == input_mode::remote_capture) {
+                if (!input_decided) ImGui::Spacing();
+                ImGui::TextDisabled("Remote Capture");
+                if (ImGui::Button("Single##cap",  {120.0f, 40.0f})) { vmode = view_mode::single;  imode = input_mode::remote_capture; cap_cli.emplace(cap_cfg); }
+                ImGui::SameLine();
+                if (ImGui::Button("Split##cap",   {120.0f, 40.0f})) { vmode = view_mode::split;   imode = input_mode::remote_capture; cap_cli.emplace(cap_cfg); }
+                ImGui::SameLine();
+                if (ImGui::Button("Compare##cap", {120.0f, 40.0f})) { vmode = view_mode::compare; imode = input_mode::remote_capture; cap_cli.emplace(cap_cfg); }
             }
             ImGui::End();
 
@@ -568,9 +616,7 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        // In capture mode, the internal viewer is determined by capture_mode.
-        const bool use_single = (mode == app_mode::single)
-                             || (mode == app_mode::capture && capture_mode == 0);
+        const bool use_single = (vmode == view_mode::single);
 
         // ----- Poll async loaders -----
         {
@@ -580,31 +626,19 @@ int main(int argc, char** argv) {
                     status_msg = "Load failed: " + left_loader.path;
                 } else {
                     left_image = std::move(tmp);
-                    switch (mode) {
-                    case app_mode::single:
+                    switch (vmode) {
+                    case view_mode::single:
                         single_viewer.load_image(left_image);
                         break;
-                    case app_mode::compare:
+                    case view_mode::compare:
                         compare.load_left(left_image);
                         compare.left_label = left_loader.path;
                         break;
-                    case app_mode::split:
+                    case view_mode::split:
                         compare.load_split(left_image);
                         compare.left_label  = left_loader.path;
                         compare.right_label = left_loader.path;
                         break;
-                case app_mode::capture:
-                    if (capture_mode == 0) {
-                        single_viewer.load_image(left_image);
-                    } else if (capture_mode == 1) {
-                        compare.load_split(left_image);
-                        compare.left_label  = left_loader.path;
-                        compare.right_label = left_loader.path;
-                    } else {
-                        compare.load_left(left_image);
-                        compare.left_label = left_loader.path;
-                    }
-                    break;
                     default:
                         break;
                     }
@@ -625,7 +659,7 @@ int main(int argc, char** argv) {
         }
 
         // ----- Poll capture events (SSE) -----
-        if (mode == app_mode::capture) {
+        if (imode == input_mode::remote_capture) {
             while (auto ev = cap_cli->poll_server_event()) {
                 if (std::get_if<evt_connected>(&*ev)) {
                     cur_sse    = sse_state::connected;
@@ -639,15 +673,13 @@ int main(int argc, char** argv) {
                     status_msg = "Server error: " + e->message;
                 } else if (auto* e = std::get_if<evt_capture_done>(&*ev)) {
                     capturing = false;
-                    if (capture_mode == 0) {
-                        left_loader.start(e->path);
-                    } else if (capture_mode == 1) {
-                        left_loader.start(e->path);
-                    } else {
+                    if (vmode == view_mode::compare) {
                         if (left_image.empty())
                             left_loader.start(e->path);
                         else
                             right_loader.start(e->path);
+                    } else {
+                        left_loader.start(e->path);
                     }
                     status_msg = "Capture complete: " + e->path;
                 } else if (auto* e = std::get_if<evt_config_updated>(&*ev)) {
@@ -697,7 +729,7 @@ int main(int argc, char** argv) {
 
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("File")) {
-                if (mode != app_mode::capture)
+                if (imode == input_mode::read_img)
                     if (ImGui::MenuItem("Open...")) open_file = true;
                 ImGui::Separator();
                 if (ImGui::MenuItem("Quit")) glfwSetWindowShouldClose(window, GLFW_TRUE);
@@ -740,7 +772,7 @@ int main(int argc, char** argv) {
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("0 = image aspect  >0 = forced W/H ratio");
                     }
-                    if (mode == app_mode::split && compare.is_split()) {
+                    if (vmode == view_mode::split && compare.is_split()) {
                         ImGui::Separator();
                         ImGui::SetNextItemWidth(200.0f);
                         ImGui::SliderInt("Split##sp", &compare.split_x,
@@ -768,7 +800,8 @@ int main(int argc, char** argv) {
                 settings_fresh = true;
             }
             if (ImGui::BeginMenu("Help")) {
-                if (ImGui::MenuItem("About")) show_about = true;
+                if (ImGui::MenuItem("Version")) show_version = true;
+                if (ImGui::MenuItem("About"))   show_about   = true;
                 ImGui::EndMenu();
             }
             ImGui::EndMenuBar();
@@ -777,7 +810,7 @@ int main(int argc, char** argv) {
         // ----- Open file via native dialog -----
         if (open_file) {
             constexpr nfdfilteritem_t kTiffFilter[] = {{"TIFF Image", "tiff,tif"}};
-            if (mode == app_mode::compare) {
+            if (vmode == view_mode::compare) {
                 nfdchar_t* out = nullptr;
                 if (NFD::OpenDialog(out, kTiffFilter, 1) == NFD_OKAY) {
                     std::strncpy(left_path_buf, out, sizeof(left_path_buf) - 1);
@@ -820,18 +853,38 @@ int main(int argc, char** argv) {
             ImGui::EndPopup();
         }
 
+        // ----- Version modal -----
+        if (show_version) ImGui::OpenPopup("Version##modal");
+        ImGui::SetNextWindowSize({320, 0}, ImGuiCond_Always);
+        if (ImGui::BeginPopupModal("Version##modal", &show_version,
+                                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("VisionStudio  v%s", VS_VERSION_STRING);
+            ImGui::Separator();
+            ImGui::TextDisabled("Build");
+            ImGui::Text("  %s", VS_BUILD_TIMESTAMP);
+            ImGui::TextDisabled("Commit");
+            ImGui::Text("  %s", VS_GIT_HASH);
+            ImGui::Spacing();
+            if (ImGui::Button("Close", {-1, 0})) { show_version = false; ImGui::CloseCurrentPopup(); }
+            ImGui::EndPopup();
+        }
+
         // ----- About modal -----
         if (show_about) ImGui::OpenPopup("About VisionStudio##modal");
         ImGui::SetNextWindowSize({620, 520}, ImGuiCond_Always);
         if (ImGui::BeginPopupModal("About VisionStudio##modal", &show_about,
                                     ImGuiWindowFlags_NoResize)) {
-            ImGui::TextUnformatted("VisionStudio  v0.1.0");
+            ImGui::Text("VisionStudio  v%s", VS_VERSION_STRING);
             ImGui::Separator();
             const float text_h = ImGui::GetContentRegionAvail().y
                                 - ImGui::GetFrameHeightWithSpacing() - 4;
+            // Use a mutable buffer: constexpr data lives in .rdata (read-only) in
+            // Release builds, and ImGui may write to the buffer internally.
+            static std::string s_license_buf(kThirdPartyLicenses,
+                                             sizeof(kThirdPartyLicenses) - 1);
             ImGui::InputTextMultiline("##about_text",
-                const_cast<char*>(kThirdPartyLicenses),
-                sizeof(kThirdPartyLicenses),
+                s_license_buf.data(),
+                s_license_buf.size() + 1,
                 {-1, text_h},
                 ImGuiInputTextFlags_ReadOnly);
             if (ImGui::Button("Close")) { show_about = false; ImGui::CloseCurrentPopup(); }
@@ -860,13 +913,15 @@ int main(int argc, char** argv) {
                 {"preview_raw",      cap_cfg.preview_raw},
                 {"timeout_ms",       cap_cfg.timeout_ms},
             };
+            // save_dir is managed separately (folder picker UI)
+            settings_edit["save_dir"] = cap_cfg.save_dir;
         }
         if (show_settings) ImGui::OpenPopup("Settings##modal");
         ImGui::SetNextWindowSize({480, 460}, ImGuiCond_Always);
         if (ImGui::BeginPopupModal("Settings##modal", &show_settings, ImGuiWindowFlags_NoResize)) {
             // Render each JSON section (skip internal keys) dynamically.
             // Sections are CollapsedHeaders; fields are rendered by type.
-            static const std::array<std::string, 2> kSkipSections = {"window", "imgui_ini"};
+            static const std::array<std::string, 3> kSkipSections = {"window", "imgui_ini", "save_dir"};
             const float fw = ImGui::GetContentRegionAvail().x;
             for (auto& [section_key, section_val] : settings_edit.items()) {
                 bool skip = false;
@@ -898,6 +953,26 @@ int main(int argc, char** argv) {
                 }
             }
 
+            // ----- Save directory (folder picker) -----
+            if (ImGui::CollapsingHeader("Save Directory", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Indent(8.0f);
+                std::string save_dir_val = settings_edit.value("save_dir", "");
+                const float browse_w = 70.0f;
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - browse_w - ImGui::GetStyle().ItemSpacing.x);
+                if (ImGui::InputText("##save_dir", &save_dir_val))
+                    settings_edit["save_dir"] = save_dir_val;
+                ImGui::SameLine();
+                if (ImGui::Button("Browse##sd", {browse_w, 0})) {
+                    nfdchar_t* out = nullptr;
+                    const std::string cur_dir = settings_edit.value("save_dir", "");
+                    if (NFD::PickFolder(out, cur_dir.empty() ? nullptr : cur_dir.c_str()) == NFD_OKAY) {
+                        settings_edit["save_dir"] = std::string(out);
+                        NFD::FreePath(out);
+                    }
+                }
+                ImGui::Unindent(8.0f);
+            }
+
             ImGui::Separator();
             const float btn_w = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
             if (ImGui::Button("Apply & Save", {btn_w, 0})) {
@@ -921,6 +996,8 @@ int main(int argc, char** argv) {
                     if (c.contains("connect_config_file") && c["connect_config_file"].is_string()) cap_cfg.connect_config_file = c["connect_config_file"].get<std::string>();
                     if (c.contains("capture_config_file") && c["capture_config_file"].is_string()) cap_cfg.capture_config_file = c["capture_config_file"].get<std::string>();
                 }
+                if (settings_edit.contains("save_dir") && settings_edit["save_dir"].is_string())
+                    cap_cfg.save_dir = settings_edit["save_dir"].get<std::string>();
                 capture_config::save("visionstudio.json", cap_cfg);
                 // Sync conn_buf so the capture panel reflects the new values.
                 conn_buf = make_conn_edit(cap_cfg);
@@ -999,14 +1076,14 @@ int main(int argc, char** argv) {
         const float spacing_x = ImGui::GetStyle().ItemSpacing.x;
         const float avail_x   = ImGui::GetContentRegionAvail().x;
 
-        const float left_w  = (mode == app_mode::capture) ? capture_panel_w + spacing_x : 0.0f;
+        const float left_w  = (imode == input_mode::remote_capture) ? capture_panel_w + spacing_x : 0.0f;
         const float right_w = show_pixel_panel ? panel_w + spacing_x : 0.0f;
         const float viewer_w = (left_w > 0.0f || right_w > 0.0f)
             ? avail_x - left_w - right_w
             : 0.0f;
 
         // ----- Left capture control panel -----
-        if (mode == app_mode::capture) {
+        if (imode == input_mode::remote_capture) {
             if (ImGui::BeginChild("##capture_ctrl", {capture_panel_w, viewer_h},
                                   ImGuiChildFlags_Borders)) {
                 // SSE status indicator
@@ -1109,17 +1186,20 @@ int main(int argc, char** argv) {
                 const bool cap_settings_open = ImGui::CollapsingHeader("Capture Settings");
                 ImGui::PopStyleColor(3);
                 if (cap_settings_open) {
-                    constexpr const char* kCaptureModes[] = {"Capture (Single)", "Mode1 (Split)", "Mode2 (Compare)"};
-                    ImGui::TextDisabled("Capture Mode");
+                    constexpr const char* kCaptureModes[] = {"Single", "Split", "Compare"};
+                    ImGui::TextDisabled("View Mode");
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                    const int prev_capture_mode = capture_mode;
+                    const int prev_cap_mode = capture_mode;
                     if (ImGui::Combo("##cap_mode", &capture_mode, kCaptureModes, 3)) {
-                        if (prev_capture_mode == 2 && capture_mode != 2) {
-                            // Leaving Mode2: clear ref image so it doesn't bleed into Mode1
+                        if (prev_cap_mode == 2 && capture_mode != 2) {
                             ref_img_path.clear();
                             compare.unload_left();
                         }
+                        vmode = capture_mode == 2 ? view_mode::compare
+                              : capture_mode == 1 ? view_mode::split
+                                                  : view_mode::single;
                     }
+                    ImGui::Separator();
 
                     ImGui::TextDisabled("Image Acquisition");
                     if (ImGui::RadioButton("Enable##acq",  image_acquisition))  image_acquisition = true;
@@ -1136,7 +1216,7 @@ int main(int argc, char** argv) {
                     ImGui::SameLine();
                     if (ImGui::RadioButton("Disable##ad", !auto_detect)) auto_detect = false;
 
-                    ImGui::BeginDisabled(capture_mode != 2);
+                    ImGui::BeginDisabled(vmode != view_mode::compare);
                     ImGui::TextDisabled("Ref Img");
                     {
                         const auto pos = ref_img_path.find_last_of("/\\");
@@ -1224,7 +1304,7 @@ int main(int argc, char** argv) {
 
         const ImVec2 viewer_origin = ImGui::GetCursorScreenPos();
 
-        if (mode == app_mode::capture && capture_mode == 0 && preview_tex != 0) {
+        if (imode == input_mode::remote_capture && use_single && preview_tex != 0) {
             // Full-viewer live preview (single mode)
             const float aspect = static_cast<float>(preview_tex_w) / static_cast<float>(preview_tex_h);
             float dw = viewer_w, dh = viewer_w / aspect;
@@ -1239,8 +1319,8 @@ int main(int argc, char** argv) {
             compare.render(viewer_w, viewer_h);
         }
 
-        // For capture_mode 1/2: overlay live preview on the right panel
-        if (mode == app_mode::capture && capture_mode != 0 && preview_tex != 0) {
+        // For split/compare capture: overlay live preview on the right panel
+        if (imode == input_mode::remote_capture && !use_single && preview_tex != 0) {
             const float spacing  = ImGui::GetStyle().ItemSpacing.x;
             const float half_w   = std::floor((viewer_w - spacing) * 0.5f);
             const ImVec2 rmin    = {viewer_origin.x + half_w + spacing, viewer_origin.y};
@@ -1376,7 +1456,7 @@ int main(int argc, char** argv) {
             }
 
             // ----- Overlay file selector -----
-            if (mode != app_mode::capture) {
+            if (imode == input_mode::read_img) {
                 ImGui::Separator();
                 ImGui::TextDisabled("Overlay");
 
@@ -1384,7 +1464,7 @@ int main(int argc, char** argv) {
                 const float path_w = ImGui::GetContentRegionAvail().x
                                      - load_w - ImGui::GetStyle().ItemSpacing.x;
 
-                if (mode == app_mode::compare) {
+                if (vmode == view_mode::compare) {
                     // Left
                     ImGui::TextDisabled("L");
                     ImGui::SetNextItemWidth(path_w);
@@ -1692,12 +1772,12 @@ int main(int argc, char** argv) {
         glfwSwapBuffers(window);
     }
 
-    // Save window size to visionstudio.json.
+    // Save window size and imgui layout to visionstudio.json.
     {
         int cur_w, cur_h;
         glfwGetWindowSize(window, &cur_w, &cur_h);
+        const std::string imgui_ini = ImGui::SaveIniSettingsToMemory();
 
-        // Load existing JSON to preserve other keys.
         nlohmann::json j = nlohmann::json::object();
         {
             std::ifstream jf("visionstudio.json");
@@ -1705,7 +1785,8 @@ int main(int argc, char** argv) {
                 try { j = nlohmann::json::parse(jf); } catch (...) {}
             }
         }
-        j["window"] = {{"width", cur_w}, {"height", cur_h}};
+        j["window"]    = {{"width", cur_w}, {"height", cur_h}};
+        j["imgui_ini"] = imgui_ini;
         std::ofstream jf("visionstudio.json");
         if (jf.is_open()) jf << j.dump(2) << '\n';
     }

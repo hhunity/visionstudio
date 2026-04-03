@@ -1,3 +1,46 @@
+
+Get-ChildItem C:\VSLayout\certificates\* | ForEach-Object {
+    certutil -addstore -f "Root" $_.FullName
+    certutil -addstore -f "TrustedPublisher" $_.FullName
+}
+
+
+
+Get-ChildItem -Path C:\VSLayout -Filter *.vsix -Recurse |
+    Get-AuthenticodeSignature |
+    Select-Object -First 1 -ExpandProperty SignerCertificate |
+    Export-Certificate -FilePath C:\certs\ms_signer.cer
+
+
+
+# レイアウト内のvsixファイルを1つ選んで署名情報を確認
+Get-AuthenticodeSignature "C:\VSLayout\*.vsix" | 
+    Select-Object -First 1 -ExpandProperty SignerCertificate |
+    Export-Certificate -FilePath C:\certs\ms_signer.cer
+
+
+certutil -store Root > C:\certs\root_list.txt
+certutil -store TrustedPublisher > C:\certs\pub_list.txt
+
+
+
+certutil -addstore -f "Root" ms_root.cer
+certutil -addstore -f "TrustedPublisher" ms_signer.cer
+# certificates フォルダの分も全部
+Get-ChildItem C:\VSLayout\certificates\* | ForEach-Object {
+    certutil -addstore -f "Root" $_.FullName
+    certutil -addstore -f "TrustedPublisher" $_.FullName
+}
+
+
+
+
+Get-ChildItem C:\VSLayout\certificates\*.p12 | ForEach-Object {
+    certutil -addstore -f "TrustedPublisher" $_.FullName
+    certutil -addstore -f "Root" $_.FullName
+}
+
+
 {"roi":{"x":0,"y":0,"w":476,"h":714},"info":{"dx":0.0,"dy":0.0,"angle":0.000},"label":"c0r0"}
 {"roi":{"x":0,"y":714,"w":476,"h":714},"info":{"dx":0.0,"dy":0.0,"angle":0.000},"label":"c0r1"}
 {"roi":{"x":0,"y":1428,"w":476,"h":714},"info":{"dx":0.0,"dy":0.0,"angle":0.000},"label":"c0r2"}

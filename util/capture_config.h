@@ -18,6 +18,7 @@ struct capture_config {
     // App-level capture settings (stored under "capture" in visionstudio.json)
     std::string connect_config_file; // path to connection config file
     std::string capture_config_file; // path to capture config file (JSON)
+    std::string save_dir;            // local directory to save downloaded captures (empty = default)
 
     bool operator==(const capture_config&) const = default;
     bool operator!=(const capture_config& o) const { return !(*this == o); }
