@@ -865,9 +865,13 @@ int main(int argc, char** argv) {
             ImGui::Separator();
             const float text_h = ImGui::GetContentRegionAvail().y
                                 - ImGui::GetFrameHeightWithSpacing() - 4;
+            // Use a mutable buffer: constexpr data lives in .rdata (read-only) in
+            // Release builds, and ImGui may write to the buffer internally.
+            static std::string s_license_buf(kThirdPartyLicenses,
+                                             sizeof(kThirdPartyLicenses) - 1);
             ImGui::InputTextMultiline("##about_text",
-                const_cast<char*>(kThirdPartyLicenses),
-                sizeof(kThirdPartyLicenses),
+                s_license_buf.data(),
+                s_license_buf.size() + 1,
                 {-1, text_h},
                 ImGuiInputTextFlags_ReadOnly);
             if (ImGui::Button("Close")) { show_about = false; ImGui::CloseCurrentPopup(); }
