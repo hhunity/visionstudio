@@ -26,6 +26,15 @@
 #include <future>
 #include <optional>
 #include <string>
+#ifdef _WIN32
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+static void fatal_error(const char* msg) {
+    MessageBoxA(nullptr, msg, "VisionStudio - Fatal Error", MB_OK | MB_ICONERROR);
+}
+#else
+static void fatal_error(const char* msg) { fprintf(stderr, "Fatal: %s\n", msg); }
+#endif
 
 static void glfw_error_cb(int error, const char* desc) {
     fprintf(stderr, "GLFW Error %d: %s\n", error, desc);
@@ -354,7 +363,7 @@ int main(int argc, char** argv) {
     // GLFW + OpenGL + ImGui init
     // -------------------------------------------------------------------------
     glfwSetErrorCallback(glfw_error_cb);
-    if (!glfwInit()) return 1;
+    if (!glfwInit()) { fatal_error("glfwInit() failed."); return 1; }
 
     const char* glsl_version = "#version 330";
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -381,14 +390,14 @@ int main(int argc, char** argv) {
     }
 
     GLFWwindow* window = glfwCreateWindow(saved_w, saved_h, "VisionStudio  v" VS_VERSION_STRING, nullptr, nullptr);
-    if (!window) { glfwTerminate(); return 1; }
+    if (!window) { fatal_error("glfwCreateWindow() failed.\nOpenGL 3.3 Core Profile may not be supported."); glfwTerminate(); return 1; }
 
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
     glfwSetDropCallback(window, drop_callback);
 
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
-        fprintf(stderr, "Failed to initialize GLAD\n");
+        fatal_error("gladLoadGLLoader() failed.");
         return 1;
     }
 
