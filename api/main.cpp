@@ -416,10 +416,18 @@ int main(int argc, char** argv) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImPlot::CreateContext();
+    ImGui::GetIO().IniFilename = nullptr; // Disable auto imgui.ini; layout saved in visionstudio.json
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
+
+    // Restore imgui layout from visionstudio.json.
+    {
+        const std::string ini = capture_config::load_imgui_ini("visionstudio.json");
+        if (!ini.empty())
+            ImGui::LoadIniSettingsFromMemory(ini.c_str(), ini.size());
+    }
 
     // -------------------------------------------------------------------------
     // Application state
@@ -1753,12 +1761,12 @@ int main(int argc, char** argv) {
         glfwSwapBuffers(window);
     }
 
-    // Save window size to visionstudio.json.
+    // Save window size and imgui layout to visionstudio.json.
     {
         int cur_w, cur_h;
         glfwGetWindowSize(window, &cur_w, &cur_h);
+        const std::string imgui_ini = ImGui::SaveIniSettingsToMemory();
 
-        // Load existing JSON to preserve other keys.
         nlohmann::json j = nlohmann::json::object();
         {
             std::ifstream jf("visionstudio.json");
@@ -1766,7 +1774,8 @@ int main(int argc, char** argv) {
                 try { j = nlohmann::json::parse(jf); } catch (...) {}
             }
         }
-        j["window"] = {{"width", cur_w}, {"height", cur_h}};
+        j["window"]    = {{"width", cur_w}, {"height", cur_h}};
+        j["imgui_ini"] = imgui_ini;
         std::ofstream jf("visionstudio.json");
         if (jf.is_open()) jf << j.dump(2) << '\n';
     }
