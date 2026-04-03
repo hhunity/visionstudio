@@ -106,9 +106,6 @@ if(BUILD_CAPTURE_CLI)
 endif()
 
 if(WIN32)
-    set_target_properties(visionstudio PROPERTIES
-        WIN32_EXECUTABLE $<IF:$<CONFIG:Release>,TRUE,FALSE>
-    )
     target_link_options(visionstudio PRIVATE
         $<$<CONFIG:Debug>:/SUBSYSTEM:CONSOLE>
         $<$<CONFIG:Release>:/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup>
