@@ -86,9 +86,18 @@ configure_file(
     "${CMAKE_BINARY_DIR}/generated/third_party_licenses.h"
 )
 
+# ----- Application icon (Windows only) -----
+if(WIN32)
+    configure_file(
+        "${CMAKE_SOURCE_DIR}/generated/app.rc.in"
+        "${CMAKE_BINARY_DIR}/generated/app.rc"
+    )
+endif()
+
 # ----- visionstudio: main application -----
 add_executable(visionstudio
     api/main.cpp
+    $<$<BOOL:${WIN32}>:${CMAKE_BINARY_DIR}/generated/app.rc>
 )
 target_include_directories(visionstudio PRIVATE ${CMAKE_BINARY_DIR})
 target_link_libraries(visionstudio PRIVATE vs_gui vs_io vs_capture CLI11::CLI11 implot::implot nfd::nfd)

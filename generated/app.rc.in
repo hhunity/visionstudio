@@ -1,0 +1,1 @@
+IDI_APPICON ICON "@CMAKE_SOURCE_DIR@/generated/app.ico"
