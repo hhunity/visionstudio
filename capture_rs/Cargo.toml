@@ -1,0 +1,12 @@
+[package]
+name = "capture_rs"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "capture_rs"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+ureq = "2"
+serde_json = "1"
