@@ -19,7 +19,7 @@ static void expand_strip_rows(const uint8_t* strip_buf, uint8_t* out_pixels,
     const bool is_gray = (photometric == PHOTOMETRIC_MINISBLACK ||
                           photometric == PHOTOMETRIC_MINISWHITE);
     for (uint32_t r = row0; r < row1; ++r) {
-        uint8_t* dst = out_pixels + r * w * 4;
+        uint8_t* dst = out_pixels + static_cast<size_t>(r) * w * 4;
         if (is_gray) {
             const bool invert = (photometric == PHOTOMETRIC_MINISWHITE);
             const uint8_t* src = strip_buf + (r - row0) * w;
@@ -95,7 +95,7 @@ static void expand_tile_rows(const uint8_t* tile_buf, uint8_t* out_pixels,
     const bool is_gray = (photometric == PHOTOMETRIC_MINISBLACK ||
                           photometric == PHOTOMETRIC_MINISWHITE);
     for (uint32_t r = 0; r < copy_h; ++r) {
-        uint8_t* dst = out_pixels + (ty + r) * img_w * 4 + tx * 4;
+        uint8_t* dst = out_pixels + (static_cast<size_t>(ty) + r) * img_w * 4 + static_cast<size_t>(tx) * 4;
         if (is_gray) {
             const bool invert = (photometric == PHOTOMETRIC_MINISWHITE);
             const uint8_t* src = tile_buf + r * tile_w;
@@ -175,8 +175,8 @@ static bool read_strips_generic(const std::string& /*path*/, TIFF* tif,
 
         // TIFFReadRGBAStrip stores rows bottom-up within the strip; flip to top-down.
         for (uint32_t r = 0; r < rows; ++r) {
-            const uint32_t* src = rgba.data() + (rows - 1 - r) * w;
-            uint8_t* dst = out.pixels.data() + (row0 + r) * w * 4;
+            const uint32_t* src = rgba.data() + static_cast<size_t>(rows - 1 - r) * w;
+            uint8_t* dst = out.pixels.data() + static_cast<size_t>(row0 + r) * w * 4;
             for (uint32_t x = 0; x < w; ++x) {
                 dst[x*4+0] = TIFFGetR(src[x]);
                 dst[x*4+1] = TIFFGetG(src[x]);
@@ -215,8 +215,8 @@ static bool read_tiles_generic(const std::string& path, TIFF* tif,
 
         // TIFFReadRGBATile stores rows bottom-up within the tile; flip to top-down.
         for (uint32_t r = 0; r < copy_h; ++r) {
-            const uint32_t* src = rgba.data() + (tile_h - 1 - r) * tile_w;
-            uint8_t* dst = out.pixels.data() + (ty + r) * w * 4 + tx * 4;
+            const uint32_t* src = rgba.data() + static_cast<size_t>(tile_h - 1 - r) * tile_w;
+            uint8_t* dst = out.pixels.data() + (static_cast<size_t>(ty) + r) * w * 4 + static_cast<size_t>(tx) * 4;
             for (uint32_t x = 0; x < copy_w; ++x) {
                 dst[x*4+0] = TIFFGetR(src[x]);
                 dst[x*4+1] = TIFFGetG(src[x]);
