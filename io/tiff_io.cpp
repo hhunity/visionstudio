@@ -58,14 +58,25 @@ static bool read_strips_8bit(const std::string& /*path*/, TIFF* tif,
 
     const uint32_t num_strips  = TIFFNumberOfStrips(tif);
     const tmsize_t strip_bytes = TIFFStripSize(tif);
+    fprintf(stderr, "[tiff_io] strips: num=%u rps=%u strip_bytes=%lld total_rows_covered=%llu h=%u\n",
+            num_strips, rows_per_strip, (long long)strip_bytes,
+            (unsigned long long)num_strips * rows_per_strip, h);
     std::vector<uint8_t> buf(static_cast<size_t>(strip_bytes));
 
+    const uint32_t bytes_per_row = w * static_cast<uint32_t>(spp > 0 ? spp : 1);
     for (uint32_t s = 0; s < num_strips; ++s) {
-        if (TIFFReadEncodedStrip(tif, s, buf.data(), strip_bytes) < 0)
-            return false;
+        const tmsize_t decoded = TIFFReadEncodedStrip(tif, s, buf.data(), strip_bytes);
+        if (decoded < 0) return false;
 
         const uint32_t row0 = s * rows_per_strip;
-        const uint32_t row1 = std::min(row0 + rows_per_strip, h);
+        // Use actual decoded byte count to determine rows (handles truncated strips).
+        const uint32_t actual_rows = bytes_per_row > 0
+            ? static_cast<uint32_t>(static_cast<uint64_t>(decoded) / bytes_per_row)
+            : rows_per_strip;
+        const uint32_t row1 = std::min(row0 + actual_rows, h);
+        if (actual_rows < rows_per_strip && row1 < h)
+            fprintf(stderr, "[tiff_io] strip %u: decoded %u rows (expected %u) — truncated TIFF?\n",
+                    s, actual_rows, rows_per_strip);
         expand_strip_rows(buf.data(), out.pixels.data(), w, row0, row1, photometric, spp);
 
         if (progress) progress->store(static_cast<float>(s + 1) / num_strips);
@@ -241,9 +252,17 @@ static bool read_strips_gray16(const std::string& path, TIFF* tif,
     std::vector<uint16_t> raw(static_cast<size_t>(w) * h, 0);
     std::vector<uint8_t>  buf(static_cast<size_t>(sbytes));
     for (uint32_t s = 0; s < num_strips; ++s) {
-        if (TIFFReadEncodedStrip(tif, s, buf.data(), sbytes) < 0) return false;
+        const tmsize_t decoded = TIFFReadEncodedStrip(tif, s, buf.data(), sbytes);
+        if (decoded < 0) return false;
         const uint32_t row0 = s * rps;
-        const uint32_t row1 = std::min(row0 + rps, h);
+        // Clamp to actually decoded rows (2 bytes per uint16 sample).
+        const uint32_t actual_rows = (w > 0)
+            ? static_cast<uint32_t>(static_cast<uint64_t>(decoded) / (w * 2))
+            : rps;
+        const uint32_t row1 = std::min(row0 + actual_rows, h);
+        if (actual_rows < rps && row1 < h)
+            fprintf(stderr, "[tiff_io] strip %u: decoded %u rows (expected %u) — truncated TIFF?\n",
+                    s, actual_rows, rps);
         for (uint32_t r = row0; r < row1; ++r) {
             const auto* src = reinterpret_cast<const uint16_t*>(buf.data()) + (r - row0) * w;
             std::memcpy(raw.data() + r * w, src, w * sizeof(uint16_t));

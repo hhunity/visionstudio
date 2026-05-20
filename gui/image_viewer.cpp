@@ -45,11 +45,19 @@ static uint32_t upload_tile(const image_data& img, int y0, int y1) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    while (glGetError() != GL_NO_ERROR) {} // flush any pre-existing errors
     const uint8_t* src = img.pixels.data() + static_cast<size_t>(y0) * img.width * 4;
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width, y1 - y0, 0,
                  GL_RGBA, GL_UNSIGNED_BYTE, src);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     glBindTexture(GL_TEXTURE_2D, 0);
+    const GLenum err = glGetError();
+    if (err != GL_NO_ERROR) {
+        fprintf(stderr, "[image_viewer] glTexImage2D failed (rows %d-%d, %dx%d, err=0x%x) — out of VRAM?\n",
+                y0, y1, img.width, y1 - y0, err);
+        glDeleteTextures(1, &tex);
+        return 0; // sentinel: upload failed
+    }
     return static_cast<uint32_t>(tex);
 }
 
@@ -86,9 +94,13 @@ void image_viewer::create_texture(const image_data& img) {
     GLint max_tex = 0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex);
 
-    // Split image into vertical tiles, each at most max_tex rows tall.
-    // Width is assumed to fit (line cameras are typically 2048 px wide).
-    const int tile_h  = max_tex;
+    // Split image into vertical tiles.
+    // Cap tile height so each tile stays within ~128 MB of VRAM (32M RGBA pixels),
+    // AND within GL_MAX_TEXTURE_SIZE in both dimensions.
+    const int max_tile_pixels = 32 * 1024 * 1024;
+    int tile_h = max_tex;
+    if (img.width > 0)
+        tile_h = std::min(tile_h, std::max(1, max_tile_pixels / img.width));
     const int n_tiles = (img.height + tile_h - 1) / tile_h;
 
     tiles_.reserve(n_tiles);
@@ -334,6 +346,7 @@ void image_viewer::draw_content(ImDrawList* dl, const ImVec2& canvas_pos,
 
     // Draw each tile that intersects the visible canvas area.
     for (const auto& tile : tiles_) {
+        if (tile.id == 0) continue; // upload failed (VRAM OOM)
         const float ty0 = img_sy + tile.y0 * state.zoom;
         const float ty1 = img_sy + tile.y1 * state.zoom;
         if (ty1 < canvas_pos.y || ty0 > canvas_pos.y + canvas_size.y) continue;
