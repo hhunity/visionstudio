@@ -17,6 +17,19 @@ image_viewer::~image_viewer() { destroy_texture(); }
 bool image_viewer::load_image(const image_data& img) {
     if (img.empty()) return false;
     destroy_texture();
+
+    // Diagnostic: verify dimensions and pixel data in RAM before GPU upload.
+    fprintf(stderr, "[image_viewer] load_image: %dx%d (%.0f MB in RAM)\n",
+            img.width, img.height,
+            static_cast<double>(img.pixels.size()) / (1024.0 * 1024.0));
+    if (img.width > 0 && img.height > 0) {
+        // Probe near the very end to see if pixel data is non-zero there.
+        const int probe = std::max(0, img.height - 500);
+        const uint8_t* p = img.pixels.data() + static_cast<size_t>(probe) * img.width * 4;
+        fprintf(stderr, "[image_viewer] pixel at row %d col 0: RGBA=(%u,%u,%u,%u)\n",
+                probe, p[0], p[1], p[2], p[3]);
+    }
+
     create_texture(img);
     img_w_       = img.width;
     img_h_       = img.height;
@@ -103,11 +116,15 @@ void image_viewer::create_texture(const image_data& img) {
         tile_h = std::min(tile_h, std::max(1, max_tile_pixels / img.width));
     const int n_tiles = (img.height + tile_h - 1) / tile_h;
 
+    fprintf(stderr, "[image_viewer] create_texture: %dx%d max_tex=%d tile_h=%d n_tiles=%d\n",
+            img.width, img.height, max_tex, tile_h, n_tiles);
     tiles_.reserve(n_tiles);
     for (int t = 0; t < n_tiles; ++t) {
         const int y0 = t * tile_h;
         const int y1 = std::min(y0 + tile_h, img.height);
-        tiles_.push_back({ upload_tile(img, y0, y1), y0, y1 });
+        const uint32_t tid = upload_tile(img, y0, y1);
+        fprintf(stderr, "[image_viewer] tile %d: y0=%d y1=%d id=%u\n", t, y0, y1, tid);
+        tiles_.push_back({ tid, y0, y1 });
     }
 
     // Minimap thumbnail.
