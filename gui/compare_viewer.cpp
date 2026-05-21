@@ -120,11 +120,19 @@ void compare_viewer::apply_split() {
                   right_half.pixels.begin() + static_cast<ptrdiff_t>(y) * right_w * 4);
     }
 
-    right_orig_      = right_half;
-    diff_applied_    = false;
+    right_orig_   = right_half;
+    diff_applied_ = false;
+
+    const bool first_load = (split_x_applied_ < 0);
     split_x_applied_ = split_x;
-    left_viewer_.load_image(left_half);
-    right_viewer_.load_image(right_half);
+
+    if (first_load) {
+        left_viewer_.load_image(left_half);
+        right_viewer_.load_image(right_half);
+    } else {
+        left_viewer_.load_image_keep_view(left_half);
+        right_viewer_.load_image_keep_view(right_half);
+    }
     apply_split_overlays();
 }
 

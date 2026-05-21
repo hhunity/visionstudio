@@ -22,6 +22,8 @@ public:
 
     // Upload image to GPU. Returns false if img is empty.
     bool load_image(const image_data& img);
+    // Like load_image but preserves current zoom/pan (for split-position updates).
+    bool load_image_keep_view(const image_data& img);
     void unload_image();
     bool has_image() const { return !tiles_.empty(); }
 
