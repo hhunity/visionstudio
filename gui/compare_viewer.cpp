@@ -222,18 +222,28 @@ void compare_viewer::render(float width, float height) {
     if (width  < 2.0f)  width  = 2.0f;
     if (height < 1.0f)  height = 1.0f;
 
-    // When sync is turned off, seed each viewer's owned state from the shared state
-    // so the view doesn't jump to zoom=1/pan=0.
-    if (prev_sync_views_ && !sync_views) {
-        left_viewer_.get_view_state()  = shared_state_;
-        right_viewer_.get_view_state() = shared_state_;
+    // In split mode, sync ON = show left/right halves; sync OFF = show full image in
+    // both panels so the user can navigate each panel to any arbitrary region.
+    if (is_split_) {
+        const bool want_full = !sync_views;
+        if (prev_sync_views_ != sync_views) {
+            if (want_full) {
+                // Switching to independent mode: load full image into both panels.
+                // Inherit the current shared view so position doesn't jump.
+                left_viewer_.load_image_keep_view(split_src_);
+                right_viewer_.load_image_keep_view(split_src_);
+                left_viewer_.get_view_state()  = shared_state_;
+                right_viewer_.get_view_state() = shared_state_;
+            } else {
+                // Switching back to sync/split mode: force re-slice.
+                split_x_applied_ = -1;
+            }
+        }
+        if (!want_full && split_x != split_x_applied_ && !split_dragging) {
+            apply_split();
+        }
     }
     prev_sync_views_ = sync_views;
-
-    // Re-slice if split position changed and not currently dragging.
-    if (is_split_ && split_x != split_x_applied_ && !split_dragging) {
-        apply_split();
-    }
 
     // Reload right viewer if diff_mode or amplify changed.
     if (diff_mode != diff_applied_ ||
