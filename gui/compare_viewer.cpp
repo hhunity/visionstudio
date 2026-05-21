@@ -192,10 +192,10 @@ void compare_viewer::update_right_viewer() {
     if (diff_mode) {
         compute_diff();
         if (!diff_data_.empty())
-            right_viewer_.load_image(diff_data_);
+            right_viewer_.load_image_keep_view(diff_data_);
     } else {
         if (!right_orig_.empty())
-            right_viewer_.load_image(right_orig_);
+            right_viewer_.load_image_keep_view(right_orig_);
     }
     diff_applied_ = diff_mode;
 }
