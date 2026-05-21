@@ -65,6 +65,7 @@ public:
 
     // Access the internally owned view_state (used by compare_viewer when sync is off).
     const view_state& get_view_state() const { return owned_state_; }
+          view_state& get_view_state()       { return owned_state_; }
 
     // Read-only access to the CPU image data (used by compare_viewer for diff).
     const image_data& get_image_data() const { return cpu_image_; }

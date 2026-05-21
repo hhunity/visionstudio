@@ -69,6 +69,7 @@ private:
     image_viewer left_viewer_;
     image_viewer right_viewer_;
     view_state   shared_state_;
+    bool         prev_sync_views_ = true;
 
     image_data right_orig_;       // original right image (needed to restore when diff is toggled off)
     image_data diff_data_;        // computed diff image

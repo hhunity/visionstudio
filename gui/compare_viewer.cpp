@@ -222,6 +222,14 @@ void compare_viewer::render(float width, float height) {
     if (width  < 2.0f)  width  = 2.0f;
     if (height < 1.0f)  height = 1.0f;
 
+    // When sync is turned off, seed each viewer's owned state from the shared state
+    // so the view doesn't jump to zoom=1/pan=0.
+    if (prev_sync_views_ && !sync_views) {
+        left_viewer_.get_view_state()  = shared_state_;
+        right_viewer_.get_view_state() = shared_state_;
+    }
+    prev_sync_views_ = sync_views;
+
     // Re-slice if split position changed and not currently dragging.
     if (is_split_ && split_x != split_x_applied_ && !split_dragging) {
         apply_split();
