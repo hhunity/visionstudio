@@ -446,6 +446,7 @@ int main(int argc, char** argv) {
     bool        show_connect_config   = false;
     bool        show_about            = false;
     bool        show_version          = false;
+    std::string error_msg;
     bool        show_settings         = false;
     bool        settings_fresh        = false;
     nlohmann::json settings_edit;
@@ -623,6 +624,7 @@ int main(int argc, char** argv) {
             image_data tmp;
             if (left_loader.poll(tmp)) {
                 if (tmp.empty()) {
+                    error_msg  = "Failed to open:\n" + left_loader.path;
                     status_msg = "Load failed: " + left_loader.path;
                 } else {
                     left_image = std::move(tmp);
@@ -648,6 +650,7 @@ int main(int argc, char** argv) {
             }
             if (right_loader.poll(tmp)) {
                 if (tmp.empty()) {
+                    error_msg  = "Failed to open:\n" + right_loader.path;
                     status_msg = "Load failed: " + right_loader.path;
                 } else {
                     right_image = std::move(tmp);
@@ -811,17 +814,25 @@ int main(int argc, char** argv) {
         if (open_file) {
             constexpr nfdfilteritem_t kTiffFilter[] = {{"TIFF Image", "tiff,tif"}};
             if (vmode == view_mode::compare) {
-                nfdchar_t* out = nullptr;
-                if (NFD::OpenDialog(out, kTiffFilter, 1) == NFD_OKAY) {
-                    std::strncpy(left_path_buf, out, sizeof(left_path_buf) - 1);
-                    NFD::FreePath(out);
-                    out = nullptr;
-                    if (NFD::OpenDialog(out, kTiffFilter, 1) == NFD_OKAY) {
-                        std::strncpy(right_path_buf, out, sizeof(right_path_buf) - 1);
-                        NFD::FreePath(out);
+                const nfdpathset_t* pathset = nullptr;
+                if (NFD::OpenDialogMultiple(pathset, kTiffFilter, 1) == NFD_OKAY) {
+                    nfdpathsetsize_t n = 0;
+                    NFD::PathSet::Count(pathset, n);
+                    if (n >= 1) {
+                        nfdchar_t* p = nullptr;
+                        NFD::PathSet::GetPath(pathset, 0, p);
+                        std::strncpy(left_path_buf, p, sizeof(left_path_buf) - 1);
+                        NFD::PathSet::FreePath(p);
+                        left_loader.start(left_path_buf);
                     }
-                    left_loader.start(left_path_buf);
-                    if (right_path_buf[0]) right_loader.start(right_path_buf);
+                    if (n >= 2) {
+                        nfdchar_t* p = nullptr;
+                        NFD::PathSet::GetPath(pathset, 1, p);
+                        std::strncpy(right_path_buf, p, sizeof(right_path_buf) - 1);
+                        NFD::PathSet::FreePath(p);
+                        right_loader.start(right_path_buf);
+                    }
+                    NFD::PathSet::Free(pathset);
                     status_msg = "Loading...";
                 }
             } else {
@@ -888,6 +899,18 @@ int main(int argc, char** argv) {
                 {-1, text_h},
                 ImGuiInputTextFlags_ReadOnly);
             if (ImGui::Button("Close")) { show_about = false; ImGui::CloseCurrentPopup(); }
+            ImGui::EndPopup();
+        }
+
+        // ----- Error dialog -----
+        if (!error_msg.empty()) ImGui::OpenPopup("Error##err_modal");
+        if (ImGui::BeginPopupModal("Error##err_modal", nullptr,
+                                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize)) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{1.0f, 0.4f, 0.4f, 1.0f});
+            ImGui::TextUnformatted(error_msg.c_str());
+            ImGui::PopStyleColor();
+            ImGui::Spacing();
+            if (ImGui::Button("OK", {120, 0})) { error_msg.clear(); ImGui::CloseCurrentPopup(); }
             ImGui::EndPopup();
         }
 
