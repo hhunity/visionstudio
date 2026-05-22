@@ -1,0 +1,17 @@
+// Project-local debug tasks
+//
+// For more documentation on how to configure debug tasks,
+// see: https://zed.dev/docs/debugger
+[
+  {
+    "label": "Debug native binary",
+    "build": {
+      "command": "cmake",
+      "args": ["--build", "--preset", "debug"],
+      "cwd": "$ZED_WORKTREE_ROOT",
+    },
+    "program": "$ZED_WORKTREE_ROOT/out/debug/visionstudio",
+    "request": "launch",
+    "adapter": "CodeLLDB",
+  },
+]

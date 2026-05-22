@@ -1,23 +1,24 @@
 {
-  "window": {
-    "width": 1470,
-    "height": 891
-  },
   "capture": {
-    "connect_config_file": "camera_config_a.json",
-    "capture_config_file": "camera_config_b.json"
+    "capture_config_file": "camera_config_b.json",
+    "connect_config_file": "camera_config_a.json"
   },
   "capture_client": {
+    "connect_path": "/connect",
+    "disconnect_path": "/disconnect",
     "host": "localhost",
     "port": 8080,
-    "connect_path": "/connect",
+    "preview_path": "/preview",
+    "preview_raw": false,
+    "preview_raw_path": "/preview_raw",
+    "sse_path": "/events",
     "start_path": "/start",
     "stop_path": "/stop",
-    "disconnect_path": "/disconnect",
-    "sse_path": "/events",
-    "preview_path": "/preview",
-    "preview_raw_path": "/preview_raw",
-    "preview_raw": false,
     "timeout_ms": 5000
+  },
+  "imgui_ini": "[Window][##root]\nPos=0,0\nSize=1470,891\n\n[Window][Debug##Default]\nPos=60,60\nSize=400,400\n\n[Window][Settings##modal]\nPos=495,215\nSize=480,460\n\n[Window][Version##modal]\nPos=575,372\nSize=320,147\n\n[Window][About VisionStudio##modal]\nPos=425,185\nSize=620,520\n\n",
+  "window": {
+    "height": 891,
+    "width": 1470
   }
 }
