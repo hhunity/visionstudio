@@ -125,6 +125,14 @@ add_executable(visionstudio
 target_include_directories(visionstudio PRIVATE ${CMAKE_BINARY_DIR})
 target_link_libraries(visionstudio PRIVATE vs_gui vs_io vs_capture CLI11::CLI11 implot::implot nfd::nfd)
 
+# ----- tiff_to_gray: test utility to convert TIFF to grayscale (opt-in) -----
+option(BUILD_TIFF_TO_GRAY "Build tiff_to_gray conversion utility" OFF)
+if(BUILD_TIFF_TO_GRAY)
+    add_executable(tiff_to_gray tools/tiff_to_gray.cpp)
+    target_link_libraries(tiff_to_gray PRIVATE cpplib_io)
+    target_include_directories(tiff_to_gray PRIVATE ${CMAKE_SOURCE_DIR})
+endif()
+
 # ----- capture_cli: debug sandbox (opt-in, cmake -DBUILD_CAPTURE_CLI=ON) -----
 option(BUILD_CAPTURE_CLI "Build capture_cli debug sandbox" OFF)
 if(BUILD_CAPTURE_CLI)

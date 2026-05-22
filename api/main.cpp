@@ -76,7 +76,10 @@ struct async_loader {
         auto* prog = &progress;
         future = std::async(std::launch::async, [p = std::move(p), prog]() {
             image_data img;
-            if (!tiff_io::read(p, img, prog, tiff_io::ReadOptions{.output_format = PixelFormat::rgba}))
+            const PixelFormat native = tiff_io::detect_format(p);
+            const PixelFormat fmt    = (native == PixelFormat::gray) ? PixelFormat::gray
+                                                                      : PixelFormat::rgba;
+            if (!tiff_io::read(p, img, prog, tiff_io::ReadOptions{.output_format = fmt}))
                 img.pixels.clear(); // ensure empty() == true so caller knows load failed
             return img;
         });
@@ -1361,13 +1364,17 @@ int main(int argc, char** argv) {
         }
 
         // ----- Shared helpers for profile panels -----
-        auto draw_rgba = [](const char* id, const std::array<uint8_t, 4>& rgba) {
+        auto draw_rgba = [](const char* id, const std::array<uint8_t, 4>& rgba,
+                            PixelFormat fmt = PixelFormat::rgba) {
             const ImVec4 cv{rgba[0]/255.f, rgba[1]/255.f, rgba[2]/255.f, rgba[3]/255.f};
             ImGui::ColorButton(id, cv,
                 ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, {16, 16});
             ImGui::SameLine();
-            ImGui::Text("R:%3d  G:%3d  B:%3d  A:%3d",
-                        rgba[0], rgba[1], rgba[2], rgba[3]);
+            if (fmt == PixelFormat::gray)
+                ImGui::Text("Gray: %3d", rgba[0]);
+            else
+                ImGui::Text("R:%3d  G:%3d  B:%3d  A:%3d",
+                            rgba[0], rgba[1], rgba[2], rgba[3]);
         };
 
         struct series_entry { const image_data* img; ImU32 color; int cursor; };
@@ -1460,7 +1467,7 @@ int main(int argc, char** argv) {
                     ImGui::Text("pos  : (%d, %d)", hi.img_x, hi.img_y);
                     ImGui::Text("zoom : %.2fx", static_cast<double>(hi.zoom));
                     ImGui::Separator();
-                    draw_rgba("##swatch", hi.rgba);
+                    draw_rgba("##swatch", hi.rgba, single_viewer.get_image_data().format);
                 }
             } else {
                 const auto& hi = compare.get_hover_info();
@@ -1471,10 +1478,12 @@ int main(int argc, char** argv) {
                     ImGui::Text("zoom : %.2fx", static_cast<double>(hi.zoom));
                     ImGui::Separator();
                     ImGui::TextDisabled("Left");
-                    draw_rgba("##lswatch", hi.left_rgba);
+                    draw_rgba("##lswatch", hi.left_rgba,
+                              compare.left_viewer_ref().get_image_data().format);
                     ImGui::Spacing();
                     ImGui::TextDisabled(compare.diff_mode ? "Diff" : "Right");
-                    draw_rgba("##rswatch", hi.right_rgba);
+                    draw_rgba("##rswatch", hi.right_rgba,
+                              compare.right_viewer_ref().get_image_data().format);
                 }
             }
 

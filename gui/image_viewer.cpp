@@ -47,26 +47,35 @@ static uint32_t upload_tile(const image_data& img, int y0, int y1) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    const uint8_t* src = img.pixels.data() + static_cast<size_t>(y0) * img.width * 4;
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width, y1 - y0, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE, src);
+    const int      ch  = img.channels();
+    const uint8_t* src = img.pixels.data() + static_cast<size_t>(y0) * img.width * ch;
+    if (img.format == PixelFormat::gray) {
+        const GLint swizzle[] = {GL_RED, GL_RED, GL_RED, GL_ONE};
+        glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, img.width, y1 - y0, 0,
+                     GL_RED, GL_UNSIGNED_BYTE, src);
+    } else {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width, y1 - y0, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, src);
+    }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     glBindTexture(GL_TEXTURE_2D, 0);
     return static_cast<uint32_t>(tex);
 }
 
-// Build a nearest-neighbour downscaled RGBA thumbnail and upload it.
+// Build a nearest-neighbour downscaled thumbnail and upload it.
 static uint32_t upload_thumbnail(const image_data& img, int tw, int th) {
-    std::vector<uint8_t> buf(static_cast<size_t>(tw) * th * 4);
+    const int ch = img.channels();
+    std::vector<uint8_t> buf(static_cast<size_t>(tw) * th * ch);
     const float sx = static_cast<float>(img.width)  / tw;
     const float sy = static_cast<float>(img.height) / th;
     for (int y = 0; y < th; ++y) {
         for (int x = 0; x < tw; ++x) {
             const int src_x = std::min(static_cast<int>(x * sx), img.width  - 1);
             const int src_y = std::min(static_cast<int>(y * sy), img.height - 1);
-            const uint8_t* s = img.pixels.data() + (static_cast<size_t>(src_y) * img.width + src_x) * 4;
-            uint8_t*       d = buf.data()        + (static_cast<size_t>(y) * tw + x) * 4;
-            d[0]=s[0]; d[1]=s[1]; d[2]=s[2]; d[3]=s[3];
+            const uint8_t* s = img.pixels.data() + (static_cast<size_t>(src_y) * img.width + src_x) * ch;
+            uint8_t*       d = buf.data()        + (static_cast<size_t>(y) * tw + x) * ch;
+            for (int c = 0; c < ch; ++c) d[c] = s[c];
         }
     }
     GLuint tex = 0;
@@ -77,8 +86,15 @@ static uint32_t upload_thumbnail(const image_data& img, int tw, int th) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tw, th, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+    if (img.format == PixelFormat::gray) {
+        const GLint swizzle[] = {GL_RED, GL_RED, GL_RED, GL_ONE};
+        glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, tw, th, 0,
+                     GL_RED, GL_UNSIGNED_BYTE, buf.data());
+    } else {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tw, th, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+    }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     glBindTexture(GL_TEXTURE_2D, 0);
     return static_cast<uint32_t>(tex);
