@@ -1043,6 +1043,20 @@ int main(int argc, char** argv) {
                 }
                 if (diff_on) ImGui::PopStyleColor(3);
                 ImGui::SameLine();
+                ImGui::BeginDisabled(left_image.empty());
+                if (ImGui::SmallButton("L\xe2\x86\x92R")) {
+                    compare.load_right(left_image);
+                    compare.right_label = compare.left_label;
+                }
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                ImGui::BeginDisabled(right_image.empty());
+                if (ImGui::SmallButton("R\xe2\x86\x92L")) {
+                    compare.load_left(right_image);
+                    compare.left_label = compare.right_label;
+                }
+                ImGui::EndDisabled();
+                ImGui::SameLine();
             }
             ImGui::TextDisabled("|");
             ImGui::SameLine();
