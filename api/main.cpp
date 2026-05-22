@@ -45,7 +45,7 @@ static void glfw_error_cb(int error, const char* desc) {
 // Mode
 // ---------------------------------------------------------------------------
 
-enum class view_mode  { none, single, split, compare };
+enum class view_mode  { none, single, compare };
 enum class input_mode { read_img, remote_capture };
 
 // ---------------------------------------------------------------------------
@@ -305,19 +305,6 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
         *app->status_msg = "Loading...";
         return;
     }
-    case view_mode::split: {
-        for (int i = 0; i < count; ++i) {
-            if (has_ext(paths[i], ".json")) {
-                load_overlay(paths[i], *app->left_overlays,
-                    [&](auto& g){ app->compare->set_split_overlay_groups(g); },
-                    app->overlay_file, app->status_msg);
-            } else {
-                app->left_loader->start(paths[i]);
-                *app->status_msg = "Loading...";
-            }
-        }
-        return;
-    }
     default:
         break;
     }
@@ -338,21 +325,21 @@ int main(int argc, char** argv) {
     float                    arg_amplify = 1.0f;
 
     auto* img_sub = cli.add_subcommand("img", "Load and view image file(s)");
-    img_sub->add_option("--mode", view_mode_str, "View mode: single | split | compare")
-        ->transform(CLI::IsMember({"single", "split", "compare"}, CLI::ignore_case));
-    img_sub->add_option("images", arg_images, "Image file(s). One file: single/split. Two files: compare.")
+    img_sub->add_option("--mode", view_mode_str, "View mode: single | compare")
+        ->transform(CLI::IsMember({"single", "compare"}, CLI::ignore_case));
+    img_sub->add_option("images", arg_images, "Image file(s). One file: single. Two files: compare.")
         ->expected(0, 2);
     img_sub->add_flag("--diff",      arg_diff,    "Enable diff mode on startup");
     img_sub->add_option("--amplify", arg_amplify, "Diff amplification factor (default: 1.0)")
         ->check(CLI::Range(1.0f, 20.0f));
     img_sub->add_option("--overlay", arg_overlays,
-                        "JSONL overlay file(s). One file: single/split. Two files: compare left+right.")
+                        "JSONL overlay file(s). One file: single. Two files: compare left+right.")
         ->expected(1, 2)
         ->check(CLI::ExistingFile);
 
     auto* cap_sub = cli.add_subcommand("capture", "Remote capture mode");
-    cap_sub->add_option("--mode", view_mode_str, "View mode: single | split | compare")
-        ->transform(CLI::IsMember({"single", "split", "compare"}, CLI::ignore_case));
+    cap_sub->add_option("--mode", view_mode_str, "View mode: single | compare")
+        ->transform(CLI::IsMember({"single", "compare"}, CLI::ignore_case));
 
     CLI11_PARSE(cli, argc, argv);
 
@@ -360,7 +347,6 @@ int main(int argc, char** argv) {
     input_mode imode = cap_sub->parsed() ? input_mode::remote_capture : input_mode::read_img;
     view_mode  vmode = view_mode_str.empty()        ? view_mode::none
                      : (view_mode_str == "compare") ? view_mode::compare
-                     : (view_mode_str == "split")   ? view_mode::split
                                                     : view_mode::single;
 
     // -------------------------------------------------------------------------
@@ -463,9 +449,7 @@ int main(int argc, char** argv) {
 
     // Capture settings
     // capture_mode mirrors vmode for remote_capture; changeable at runtime.
-    int  capture_mode      = vmode == view_mode::compare ? 2
-                           : vmode == view_mode::split   ? 1
-                                                         : 0;
+    int  capture_mode      = vmode == view_mode::compare ? 1 : 0;
     bool image_acquisition = true;
     bool live_image        = false;
     bool auto_detect       = true;
@@ -533,8 +517,8 @@ int main(int argc, char** argv) {
     if (imode == input_mode::remote_capture)
         cap_cli->connect();
 
-    // Apply diff flags from args (compare / split mode)
-    if (vmode == view_mode::compare || vmode == view_mode::split) {
+    // Apply diff flags from args (compare mode)
+    if (vmode == view_mode::compare) {
         compare.diff_mode    = arg_diff;
         compare.diff_amplify = arg_amplify;
     }
@@ -552,10 +536,6 @@ int main(int argc, char** argv) {
         if (vmode == view_mode::single) {
             load_overlay(arg_overlays[0], overlays,
                 [&](auto& g){ single_viewer.set_overlay_groups(g); },
-                &overlay_file);
-        } else if (vmode == view_mode::split) {
-            load_overlay(arg_overlays[0], left_overlays,
-                [&](auto& g){ compare.set_split_overlay_groups(g); },
                 &overlay_file);
         } else if (vmode == view_mode::compare) {
             load_overlay(arg_overlays[0], left_overlays,
@@ -596,16 +576,12 @@ int main(int argc, char** argv) {
                 ImGui::TextDisabled("Image File");
                 if (ImGui::Button("Single##img",  {120.0f, 40.0f})) { vmode = view_mode::single;  imode = input_mode::read_img; }
                 ImGui::SameLine();
-                if (ImGui::Button("Split##img",   {120.0f, 40.0f})) { vmode = view_mode::split;   imode = input_mode::read_img; }
-                ImGui::SameLine();
                 if (ImGui::Button("Compare##img", {120.0f, 40.0f})) { vmode = view_mode::compare; imode = input_mode::read_img; }
             }
             if (!input_decided || imode == input_mode::remote_capture) {
                 if (!input_decided) ImGui::Spacing();
                 ImGui::TextDisabled("Remote Capture");
                 if (ImGui::Button("Single##cap",  {120.0f, 40.0f})) { vmode = view_mode::single;  imode = input_mode::remote_capture; cap_cli.emplace(cap_cfg); }
-                ImGui::SameLine();
-                if (ImGui::Button("Split##cap",   {120.0f, 40.0f})) { vmode = view_mode::split;   imode = input_mode::remote_capture; cap_cli.emplace(cap_cfg); }
                 ImGui::SameLine();
                 if (ImGui::Button("Compare##cap", {120.0f, 40.0f})) { vmode = view_mode::compare; imode = input_mode::remote_capture; cap_cli.emplace(cap_cfg); }
             }
@@ -638,11 +614,6 @@ int main(int argc, char** argv) {
                     case view_mode::compare:
                         compare.load_left(left_image);
                         compare.left_label = left_loader.path;
-                        break;
-                    case view_mode::split:
-                        compare.load_split(left_image);
-                        compare.left_label  = left_loader.path;
-                        compare.right_label = left_loader.path;
                         break;
                     default:
                         break;
@@ -764,10 +735,8 @@ int main(int argc, char** argv) {
                 } else {
                     ImGui::MenuItem("Show Grid",     nullptr, &compare.show_grid);
                     ImGui::MenuItem("Show Minimap",  nullptr, &compare.show_minimap);
-                    ImGui::MenuItem("Show Overlays",  nullptr, &compare.show_overlays);
-                    if (compare.show_overlays)
-                        overlay_group_menu_items(compare.left_viewer_ref(), "covg",
-                            compare.is_split() ? &compare.right_viewer_ref() : nullptr);
+                    if (compare.show_left_overlays || compare.show_right_overlays)
+                        overlay_group_menu_items(compare.left_viewer_ref(), "covg", nullptr);
                     ImGui::MenuItem("Show Tooltip",   nullptr, &compare.show_coordinates);
                     ImGui::MenuItem("Show Crosshair", nullptr, &compare.show_crosshair);
                     ImGui::MenuItem("Sync Views",     nullptr, &compare.sync_views);
@@ -777,13 +746,6 @@ int main(int argc, char** argv) {
                         ImGui::SliderFloat("Minimap Aspect##mc", &compare.minimap_force_aspect, 0.0f, 10.0f, "%.1f");
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("0 = image aspect  >0 = forced W/H ratio");
-                    }
-                    if (vmode == view_mode::split && compare.is_split()) {
-                        ImGui::Separator();
-                        ImGui::SetNextItemWidth(200.0f);
-                        ImGui::SliderInt("Split##sp", &compare.split_x,
-                                         1, compare.split_src_width() - 1);
-                        compare.split_dragging = ImGui::IsItemActive();
                     }
                     ImGui::Separator();
                     if (ImGui::MenuItem("Diff Mode", nullptr, &compare.diff_mode))
@@ -1040,11 +1002,11 @@ int main(int argc, char** argv) {
 
         // ----- Toolbar -----
         {
-            bool&  show_grid      = use_single ? single_viewer.show_grid      : compare.show_grid;
-            bool&  show_minimap   = use_single ? single_viewer.show_minimap   : compare.show_minimap;
-            bool&  show_overlays  = use_single ? single_viewer.show_overlays  : compare.show_overlays;
+            bool&  show_grid      = use_single ? single_viewer.show_grid        : compare.show_grid;
+            bool&  show_minimap   = use_single ? single_viewer.show_minimap     : compare.show_minimap;
+            bool&  show_overlays  = use_single ? single_viewer.show_overlays    : compare.show_left_overlays;
             bool&  show_tooltip   = use_single ? single_viewer.show_coordinates : compare.show_coordinates;
-            bool&  show_crosshair = use_single ? single_viewer.show_crosshair : compare.show_crosshair;
+            bool&  show_crosshair = use_single ? single_viewer.show_crosshair   : compare.show_crosshair;
 
             constexpr ImVec4 kOn  = {0.15f, 0.45f, 0.75f, 1.0f};
             constexpr ImVec4 kOnH = {0.25f, 0.55f, 0.85f, 1.0f};
@@ -1212,18 +1174,16 @@ int main(int argc, char** argv) {
                 const bool cap_settings_open = ImGui::CollapsingHeader("Capture Settings");
                 ImGui::PopStyleColor(3);
                 if (cap_settings_open) {
-                    constexpr const char* kCaptureModes[] = {"Single", "Split", "Compare"};
+                    constexpr const char* kCaptureModes[] = {"Single", "Compare"};
                     ImGui::TextDisabled("View Mode");
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
                     const int prev_cap_mode = capture_mode;
-                    if (ImGui::Combo("##cap_mode", &capture_mode, kCaptureModes, 3)) {
-                        if (prev_cap_mode == 2 && capture_mode != 2) {
+                    if (ImGui::Combo("##cap_mode", &capture_mode, kCaptureModes, 2)) {
+                        if (prev_cap_mode == 1 && capture_mode != 1) {
                             ref_img_path.clear();
                             compare.unload_left();
                         }
-                        vmode = capture_mode == 2 ? view_mode::compare
-                              : capture_mode == 1 ? view_mode::split
-                                                  : view_mode::single;
+                        vmode = capture_mode == 1 ? view_mode::compare : view_mode::single;
                     }
                     ImGui::Separator();
 
@@ -1528,14 +1488,13 @@ int main(int argc, char** argv) {
                                 nullptr, &status_msg);
                         else
                             load_overlay(overlay_file, left_overlays,
-                                [&](auto& g){ compare.set_split_overlay_groups(g); },
+                                [&](auto& g){ compare.set_left_overlay_groups(g); },
                                 nullptr, &status_msg);
                     }
                     if (use_single)
                         overlay_group_checkboxes(single_viewer, "ovg");
-                    else // split: left/right share the same groups
-                        overlay_group_checkboxes(compare.left_viewer_ref(), "ovg",
-                            &compare.right_viewer_ref());
+                    else
+                        overlay_group_checkboxes(compare.left_viewer_ref(), "ovg", nullptr);
                 }
             }
 
