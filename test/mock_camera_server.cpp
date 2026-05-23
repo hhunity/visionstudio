@@ -10,6 +10,27 @@
 #include <thread>
 #include <vector>
 
+// class preview_sender {
+//     std::future<void> send_future_;
+
+// public:
+//     void try_send(ImageData img) {
+//         // 送信中なら最新を捨てる
+//         if (send_future_.valid() &&
+//             send_future_.wait_for(std::chrono::seconds(0))
+//                 != std::future_status::ready) return;
+
+//         send_future_ = std::async(std::launch::async,
+//             [img = std::move(img)] {
+//                 send_over_http(img);   // 送信（時間がかかる）
+//             });
+//     }
+// };
+// カメラスレッド（毎フレーム）
+// while (capturing) {
+//     auto frame = camera.grab();
+//     sender.try_send(frame);   // 送信中なら自動スキップ
+// }
 // ---------------------------------------------------------------------------
 // SSE broadcaster — holds one active sink (the connected client).
 // The camera server only supports a single SSE client at a time.
