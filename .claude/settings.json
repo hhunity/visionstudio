@@ -9,7 +9,8 @@
       "Bash(cmake --build build/mac-debug --target VisionStudio)",
       "Bash(cmake --build /Users/hiroyukih/vscode/visionstudio/build/debug --target VisionStudio)",
       "Bash(cmake build/debug -DBUILD_MOCK_SERVER=ON)",
-      "Bash(cmake --build build/debug --target mock_camera_server)"
+      "Bash(cmake --build build/debug --target mock_camera_server)",
+      "Bash(cmake --build build/debug --target vs_capture)"
     ]
   }
 }

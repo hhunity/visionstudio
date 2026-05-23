@@ -50,44 +50,43 @@ struct capture_trigger {
 };
 
 // ---------------------------------------------------------------------------
-// Camera info JSON (GET /info)
+// Camera info state — mutable so PUT /info can update individual values.
 // ---------------------------------------------------------------------------
 
-static nlohmann::json make_camera_info() {
-    return {
-        {"groups", {
-            {{"label", "Sensor"}, {"params", {
-                {{"name","Model"},      {"type","string"}, {"rw_type","readonly"},  {"value","SL-2048-CL"}},
-                {{"name","PixelFormat"},{"type","enum"},   {"rw_type","readwrite"}, {"value","Mono8"},
-                    {"options", {"Mono8","Mono12","Mono16"}}},
-                {{"name","Width"},      {"type","int"},    {"rw_type","readonly"},  {"value","2048"}, {"unit","px"}},
-                {{"name","HeightMax"}, {"type","int"},    {"rw_type","readonly"},  {"value","65536"},{"unit","px"}},
-            }}},
-            {{"label", "Acquisition"}, {"params", {
-                {{"name","LineRate"},   {"type","int"},   {"rw_type","readwrite"}, {"value","10000"},
-                    {"unit","Hz"}, {"min","100"}, {"max","20000"}},
-                {{"name","ExposureTime"},{"type","float"},{"rw_type","readwrite"}, {"value","80.0"},
-                    {"unit","us"}, {"min","1.0"}, {"max","500.0"}},
-                {{"name","TriggerMode"},{"type","enum"},  {"rw_type","readwrite"}, {"value","Off"},
-                    {"options", {"Off","External","Software"}}},
-                {{"name","ScanMode"},   {"type","enum"},  {"rw_type","readwrite"}, {"value","Continuous"},
-                    {"options", {"Continuous","SingleFrame"}}},
-            }}},
-            {{"label", "Transport"}, {"params", {
-                {{"name","Interface"},  {"type","string"},{"rw_type","readonly"},  {"value","CameraLink"}},
-                {{"name","Bandwidth"},  {"type","int"},   {"rw_type","readonly"},  {"value","680"}, {"unit","MB/s"}},
-                {{"name","PacketSize"}, {"type","int"},   {"rw_type","readwrite"}, {"value","8192"},
-                    {"unit","bytes"}, {"min","512"}, {"max","65536"}},
-            }}},
-            {{"label", "Status"}, {"params", {
-                {{"name","Temperature"},{"type","float"},{"rw_type","readonly"},  {"value","42.3"}, {"unit","C"}},
-                {{"name","FrameCount"}, {"type","int"},  {"rw_type","readonly"},  {"value","0"}},
-                {{"name","ErrorCount"}, {"type","int"},  {"rw_type","readonly"},  {"value","0"}},
-                {{"name","TriggerSoftware"},{"type","bool"},{"rw_type","writeonly"},{"value","false"}},
-            }}},
-        }}
-    };
-}
+static std::mutex          cam_info_mtx;
+static nlohmann::json      cam_info_state = {
+    {"groups", {
+        {{"label", "Sensor"}, {"params", {
+            {{"name","Model"},      {"type","string"}, {"rw_type","readonly"},  {"value","SL-2048-CL"}},
+            {{"name","PixelFormat"},{"type","enum"},   {"rw_type","readwrite"}, {"value","Mono8"},
+                {"options", {"Mono8","Mono12","Mono16"}}},
+            {{"name","Width"},      {"type","int"},    {"rw_type","readonly"},  {"value","2048"}, {"unit","px"}},
+            {{"name","HeightMax"},  {"type","int"},    {"rw_type","readonly"},  {"value","65536"},{"unit","px"}},
+        }}},
+        {{"label", "Acquisition"}, {"params", {
+            {{"name","LineRate"},    {"type","int"},   {"rw_type","readwrite"}, {"value","10000"},
+                {"unit","Hz"}, {"min","100"}, {"max","20000"}},
+            {{"name","ExposureTime"},{"type","float"}, {"rw_type","readwrite"}, {"value","80.0"},
+                {"unit","us"}, {"min","1.0"}, {"max","500.0"}},
+            {{"name","TriggerMode"}, {"type","enum"},  {"rw_type","readwrite"}, {"value","Off"},
+                {"options", {"Off","External","Software"}}},
+            {{"name","ScanMode"},    {"type","enum"},  {"rw_type","readwrite"}, {"value","Continuous"},
+                {"options", {"Continuous","SingleFrame"}}},
+        }}},
+        {{"label", "Transport"}, {"params", {
+            {{"name","Interface"},  {"type","string"},{"rw_type","readonly"},  {"value","CameraLink"}},
+            {{"name","Bandwidth"},  {"type","int"},   {"rw_type","readonly"},  {"value","680"}, {"unit","MB/s"}},
+            {{"name","PacketSize"}, {"type","int"},   {"rw_type","readwrite"}, {"value","8192"},
+                {"unit","bytes"}, {"min","512"}, {"max","65536"}},
+        }}},
+        {{"label", "Status"}, {"params", {
+            {{"name","Temperature"},    {"type","float"},{"rw_type","readonly"},  {"value","42.3"}, {"unit","C"}},
+            {{"name","FrameCount"},     {"type","int"},  {"rw_type","readonly"},  {"value","0"}},
+            {{"name","ErrorCount"},     {"type","int"},  {"rw_type","readonly"},  {"value","0"}},
+            {{"name","TriggerSoftware"},{"type","bool"}, {"rw_type","writeonly"}, {"value","false"}},
+        }}},
+    }}
+};
 
 // ---------------------------------------------------------------------------
 // Main
@@ -193,7 +192,30 @@ int main(int argc, char** argv) {
     // GET /info
     svr.Get("/info", [](const httplib::Request&, httplib::Response& res) {
         fprintf(stdout, "[mock] GET /info\n");
-        res.set_content(make_camera_info().dump(2), "application/json");
+        std::lock_guard lock(cam_info_mtx);
+        res.set_content(cam_info_state.dump(2), "application/json");
+    });
+
+    // PUT /info — update a single parameter by name, return full info
+    svr.Put("/info", [](const httplib::Request& req, httplib::Response& res) {
+        try {
+            const auto body = nlohmann::json::parse(req.body);
+            const std::string name  = body.value("name",  "");
+            const std::string value = body.value("value", "");
+            fprintf(stdout, "[mock] PUT /info  name=%s  value=%s\n",
+                    name.c_str(), value.c_str());
+
+            std::lock_guard lock(cam_info_mtx);
+            for (auto& g : cam_info_state["groups"])
+                for (auto& p : g["params"])
+                    if (p.value("name", "") == name)
+                        p["value"] = value;
+
+            res.set_content(cam_info_state.dump(2), "application/json");
+        } catch (...) {
+            res.status = 400;
+            res.set_content("{\"error\":\"bad request\"}", "application/json");
+        }
     });
 
     fprintf(stdout, "[mock] listening on port %d  (tiff=%s  delay=%ds)\n",

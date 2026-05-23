@@ -50,23 +50,41 @@ void capture_client::set_logger(logger_fn fn) {
 }
 
 void capture_client::connect() {
-    push_cmd(cmd::connect);
-    cmd_cv_.notify_one();
+    push_cmd([this] {
+        const sse_state state = sse_state_.load();
+        if (state != sse_state::disconnected && state != sse_state::error) return;
+        join_sse_thread();
+        sse_state_.store(sse_state::connecting);
+        {
+            std::lock_guard lock(sse_exited_mtx_);
+            sse_exited_ = false;
+        }
+        sse_thread_ = std::thread([this] { run_sse(); });
+    });
 }
 
 void capture_client::disconnect() {
-    push_cmd(cmd::disconnect);
     interrupt_sse();
+    push_cmd([this] {
+        if (sse_state_.load() == sse_state::disconnected) return;
+        interrupt_sse();
+        do_simple_post(cfg_.disconnect_path, "disconnect");
+        sse_state_.store(sse_state::disconnected);
+    });
 }
 
 void capture_client::start_capture() {
-    push_cmd(cmd::start_capture);
-    cmd_cv_.notify_one();
+    push_cmd([this] {
+        if (sse_state_.load() != sse_state::connected) return;
+        do_simple_post(cfg_.start_path, "start");
+    });
 }
 
 void capture_client::stop_capture() {
-    push_cmd(cmd::stop_capture);
-    cmd_cv_.notify_one();
+    push_cmd([this] {
+        if (sse_state_.load() != sse_state::connected) return;
+        do_simple_post(cfg_.stop_path, "stop");
+    });
 }
 
 void capture_client::interrupt_sse() {
@@ -142,43 +160,11 @@ void capture_client::worker_thread_func() {
             return;
         }
 
-        const cmd c = cmd_queue_.front();
+        auto task = std::move(cmd_queue_.front());
         cmd_queue_.pop_front();
         lock.unlock();
 
-        const sse_state state = sse_state_.load();
-
-        switch (c) {
-        case cmd::connect:
-            if (state != sse_state::disconnected && state != sse_state::error) break;
-            join_sse_thread();
-            sse_state_.store(sse_state::connecting);
-            {
-                std::lock_guard lock(sse_exited_mtx_);
-                sse_exited_ = false;
-            }
-            sse_thread_ = std::thread([this] { run_sse(); });
-            break;
-
-        case cmd::start_capture:
-            if (state != sse_state::connected) break;
-            do_simple_post(cfg_.start_path, "start");
-            break;
-
-        case cmd::stop_capture:
-            if (state != sse_state::connected) break;
-            do_simple_post(cfg_.stop_path, "stop");
-            break;
-
-        case cmd::disconnect:
-            if (state == sse_state::disconnected) break;
-            interrupt_sse();
-            // Do not join here; httplib stop() may take time to unblock Get().
-            // sse_thread_ is joined on the next connect() or in the destructor.
-            do_simple_post(cfg_.disconnect_path, "disconnect");
-            sse_state_.store(sse_state::disconnected);
-            break;
-        }
+        task();
     }
 }
 
@@ -430,9 +416,12 @@ void capture_client::dispatch_event(const std::string& event_type,
 // Thread-safe helpers
 // ---------------------------------------------------------------------------
 
-void capture_client::push_cmd(cmd c) {
-    std::lock_guard lock(cmd_mtx_);
-    cmd_queue_.push_back(c);
+void capture_client::push_cmd(std::function<void()> task) {
+    {
+        std::lock_guard lock(cmd_mtx_);
+        cmd_queue_.push_back(std::move(task));
+    }
+    cmd_cv_.notify_one();
 }
 
 void capture_client::push_event(server_event ev) {
@@ -654,24 +643,14 @@ httplib::Result capture_client::get(const std::string& url_path) {
     return cli.Get(url_path);
 }
 
-std::vector<cam_info_group> capture_client::fetch_camera_info() {
-    auto res = get(cfg_.info_path);
-    if (!res || res->status < 200 || res->status >= 300) {
-        log("[info] GET " + cfg_.info_path + " failed");
-        return {};
-    }
-    try {
-        const auto j = nlohmann::json::parse(res->body);
-        if (!j.contains("groups") || !j["groups"].is_array()) return {};
-
-        std::vector<cam_info_group> result;
-        for (const auto& g : j["groups"]) {
-            cam_info_group group;
-            group.label = g.value("label", "");
-            if (!g.contains("params") || !g["params"].is_array()) {
-                result.push_back(std::move(group));
-                continue;
-            }
+// Parse the standard groups-array JSON used by both GET and PUT /info responses.
+static std::vector<cam_info_group> parse_groups(const nlohmann::json& j) {
+    if (!j.contains("groups") || !j["groups"].is_array()) return {};
+    std::vector<cam_info_group> result;
+    for (const auto& g : j["groups"]) {
+        cam_info_group group;
+        group.label = g.value("label", "");
+        if (g.contains("params") && g["params"].is_array()) {
             for (const auto& p : g["params"]) {
                 cam_param param;
                 param.name  = p.value("name",  "");
@@ -692,21 +671,55 @@ std::vector<cam_info_group> capture_client::fetch_camera_info() {
                 else if (rw_str == "writeonly") param.rw_type = cam_param_rw::writeonly;
                 else                            param.rw_type = cam_param_rw::readwrite;
 
-                if (p.contains("options") && p["options"].is_array()) {
+                if (p.contains("options") && p["options"].is_array())
                     for (const auto& opt : p["options"])
                         if (opt.is_string()) param.options.push_back(opt);
-                }
+
                 group.params.push_back(std::move(param));
             }
-            result.push_back(std::move(group));
         }
+        result.push_back(std::move(group));
+    }
+    return result;
+}
+
+std::vector<cam_info_group> capture_client::fetch_camera_info() {
+    auto res = get(cfg_.info_path);
+    if (!res || res->status < 200 || res->status >= 300) {
+        log("[info] GET " + cfg_.info_path + " failed");
+        return {};
+    }
+    try {
+        auto groups = parse_groups(nlohmann::json::parse(res->body));
         log("[info] GET " + cfg_.info_path + " -> " +
-            std::to_string(result.size()) + " groups");
-        return result;
+            std::to_string(groups.size()) + " groups");
+        return groups;
     } catch (...) {
         log("[info] GET " + cfg_.info_path + " parse error");
         return {};
     }
+}
+
+void capture_client::update_param(const std::string& name, const std::string& value) {
+    push_cmd([this, name, value] {
+        nlohmann::json body;
+        body["name"]  = name;
+        body["value"] = value;
+        auto cli = make_cli();
+        auto res = cli.Put(cfg_.info_path, body.dump(), "application/json");
+        if (!res || res->status < 200 || res->status >= 300) {
+            log("[info] PUT " + cfg_.info_path + " failed");
+            return;
+        }
+        try {
+            auto groups = parse_groups(nlohmann::json::parse(res->body));
+            log("[info] PUT " + cfg_.info_path + " -> " +
+                std::to_string(groups.size()) + " groups");
+            if (!groups.empty()) push_event(evt_camera_info{std::move(groups)});
+        } catch (...) {
+            log("[info] PUT " + cfg_.info_path + " parse error");
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------

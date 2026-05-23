@@ -1359,6 +1359,7 @@ int main(int argc, char** argv) {
                                                     p.value = opt;
                                                     cam_edit_key.clear();
                                                     ImGui::CloseCurrentPopup();
+                                                    cap_cli->update_param(p.name, p.value);
                                                 }
                                             }
                                             ImGui::EndPopup();
@@ -1407,6 +1408,7 @@ int main(int argc, char** argv) {
                                                 p.value = raw;
                                             }
                                             cam_edit_key.clear();
+                                            cap_cli->update_param(p.name, p.value);
                                         }
                                     }
                                 } else {

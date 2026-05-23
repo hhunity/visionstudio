@@ -79,6 +79,10 @@ public:
     // Fetch camera info from GET /info. Returns empty vector on failure.
     std::vector<cam_info_group> fetch_camera_info();
 
+    // Update a single parameter via PUT /info (async). On success the updated
+    // full param list is pushed as evt_camera_info into the event queue.
+    void update_param(const std::string& name, const std::string& value);
+
     // File download (async). is_downloading() goes false on completion or error.
     void start_download(const std::string& url_path, const std::string& dest_path);
     bool is_downloading() const { return download_active_.load(); }
@@ -91,8 +95,6 @@ public:
     bool  is_uploading()    const { return upload_active_.load(); }
 
 private:
-    enum class cmd { connect, start_capture, stop_capture, disconnect };
-
     void worker_thread_func();
     void run_sse();
 
@@ -100,7 +102,7 @@ private:
     bool do_connect_post();
     bool do_simple_post(const std::string& path, const std::string& label);
 
-    void push_cmd(cmd c);
+    void push_cmd(std::function<void()> task);
     void interrupt_sse();
     void dispatch_event(const std::string& event_type, const std::string& data);
     void push_event(server_event ev);
@@ -162,10 +164,10 @@ private:
     preview_frame  latest_frame_;
     bool           preview_ready_{false};
 
-    std::mutex              cmd_mtx_;
-    std::condition_variable cmd_cv_;
-    std::deque<cmd>         cmd_queue_;
-    bool                    shutdown_{false};
+    std::mutex                           cmd_mtx_;
+    std::condition_variable              cmd_cv_;
+    std::deque<std::function<void()>>    cmd_queue_;
+    bool                                 shutdown_{false};
 
     std::atomic<sse_state> sse_state_{sse_state::disconnected};
 
