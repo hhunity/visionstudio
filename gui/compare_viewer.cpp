@@ -292,14 +292,31 @@ void compare_viewer::render(float width, float height) {
     dl->AddText({origin.x + half_w + spacing + 4.0f, origin.y + 2.0f}, rtxt_col, rtxt.c_str());
     dl->PopClipRect();
 
+    // Advance ImGui's cursor to the offset-controls row. The label row above was
+    // drawn via dl->AddText which does not advance the cursor, so without this
+    // dummy item ImGui's layout state is uninitialised when the LEFT controls call
+    // SetCursorScreenPos as the first ImGui item — causing them to render at the
+    // wrong Y. The Dummy renders zero pixels but initialises DC.PrevLineSize.y.
+    if (has_offset) {
+        ImGui::SetCursorScreenPos({origin.x, origin.y + label_h});
+        ImGui::Dummy({0.0f, 0.0f});
+    }
+
     // ----- Offset controls (above each canvas) -----
     // Returns true when the offset value was committed (drag released / enter / reset).
+    // DragInt width: fit two drags + two "X:" labels + Reset button within half_w.
+    const float kLabelW  = ImGui::CalcTextSize("X:").x + 4.0f;
+    const float kResetW  = ImGui::CalcTextSize("Reset").x
+                         + ImGui::GetStyle().FramePadding.x * 2.0f;
+    const float kSpacing = ImGui::GetStyle().ItemSpacing.x;
+    const float drag_w   = std::max(60.0f,
+        (half_w - kLabelW * 2.0f - kResetW - kSpacing * 4.0f) * 0.5f);
+
     auto draw_offset_controls = [&](float panel_x, int& ox, int& oy,
                                     int max_x, int max_y,
                                     const char* id_x, const char* id_y,
                                     const char* id_reset) -> bool {
         bool apply = false;
-        const float drag_w  = 130.0f;
         ImGui::SetCursorScreenPos({panel_x, origin.y + label_h});
         ImGui::TextDisabled("X:");
         ImGui::SameLine(0, 2.0f);
