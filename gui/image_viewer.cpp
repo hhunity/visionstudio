@@ -245,13 +245,19 @@ void image_viewer::render(const char* id, float width, float height,
     dl->PushClipRect(canvas_pos, clip_max, true);
     draw_content(dl, canvas_pos, canvas_size, *state);
 
-    // Crosshair (use slice-local coords: subtract display offset)
-    if (show_crosshair && last_hover_.valid) {
-        const float cx = canvas_pos.x + state->pan_x + (last_hover_.img_x - display_offset_x_ + 0.5f) * state->zoom;
-        const float cy = canvas_pos.y + state->pan_y + (last_hover_.img_y - display_offset_y_ + 0.5f) * state->zoom;
-        constexpr ImU32 ch_col = IM_COL32(255, 60, 60, 210);
-        draw_dashed_line(dl, {canvas_pos.x, cy}, {clip_max.x, cy}, ch_col, 1.0f);
-        draw_dashed_line(dl, {cx, canvas_pos.y}, {cx, clip_max.y}, ch_col, 1.0f);
+    // Crosshair: draw at local hover position, or at peer panel's position when synced.
+    if (show_crosshair) {
+        const bool   use_local = last_hover_.valid;
+        const bool   use_peer  = !use_local && peer_crosshair_valid_;
+        const int    ch_img_x  = use_local ? last_hover_.img_x : peer_crosshair_x_;
+        const int    ch_img_y  = use_local ? last_hover_.img_y : peer_crosshair_y_;
+        if (use_local || use_peer) {
+            const float cx = canvas_pos.x + state->pan_x + (ch_img_x - display_offset_x_ + 0.5f) * state->zoom;
+            const float cy = canvas_pos.y + state->pan_y + (ch_img_y - display_offset_y_ + 0.5f) * state->zoom;
+            constexpr ImU32 ch_col = IM_COL32(255, 60, 60, 210);
+            draw_dashed_line(dl, {canvas_pos.x, cy}, {clip_max.x, cy}, ch_col, 1.0f);
+            draw_dashed_line(dl, {cx, canvas_pos.y}, {cx, clip_max.y}, ch_col, 1.0f);
+        }
     }
 
     dl->PopClipRect();

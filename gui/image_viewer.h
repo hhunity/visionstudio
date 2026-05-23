@@ -44,6 +44,14 @@ public:
     // Clamp pan so no image edge passes the canvas center (Photoshop behaviour).
     void clamp_pan(view_state& state, float canvas_w, float canvas_h) const;
 
+    // Set a crosshair position from a synchronized peer panel.
+    // When valid, the crosshair is drawn at (img_x, img_y) even without local hover.
+    void set_peer_crosshair(int img_x, int img_y, bool valid) {
+        peer_crosshair_x_     = img_x;
+        peer_crosshair_y_     = img_y;
+        peer_crosshair_valid_ = valid;
+    }
+
     // Pixel under the mouse — updated every frame in render().
     struct hover_info {
         bool                   valid = false;
@@ -138,5 +146,8 @@ private:
     std::vector<roi_group> overlay_groups_;
     float                  overlay_max_mag_ = 1.0f; // for color normalization
     hover_info             last_hover_;
-    bool                   minimap_dragging_ = false;
+    bool                   minimap_dragging_    = false;
+    int                    peer_crosshair_x_    = 0;
+    int                    peer_crosshair_y_    = 0;
+    bool                   peer_crosshair_valid_ = false;
 };

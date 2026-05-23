@@ -356,9 +356,19 @@ void compare_viewer::render(float width, float height) {
     const float canvas_top = origin.y + label_h + offset_h;
 
     ImGui::SetCursorScreenPos({origin.x, canvas_top});
+    {
+        const auto& rh = right_viewer_.get_hover_info();
+        left_viewer_.set_peer_crosshair(rh.img_x, rh.img_y,
+                                        show_crosshair && rh.valid);
+    }
     left_viewer_.render("left_canvas", half_w, canvas_h, left_state);
 
     ImGui::SetCursorScreenPos({origin.x + half_w + spacing, canvas_top});
+    {
+        const auto& lh = left_viewer_.get_hover_info();
+        right_viewer_.set_peer_crosshair(lh.img_x, lh.img_y,
+                                         show_crosshair && lh.valid);
+    }
     right_viewer_.render("right_canvas", half_w, canvas_h, right_state);
 
     ImGui::SetCursorScreenPos({origin.x, origin.y + height});
