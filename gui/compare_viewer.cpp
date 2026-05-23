@@ -24,24 +24,45 @@ void compare_viewer::clear_overlays() {
 }
 
 bool compare_viewer::load_left(const image_data& img) {
-    diff_applied_ = false;
+    left_src_             = img;
+    left_offset_x         = 0;
+    left_offset_y         = 0;
+    left_offset_applied_x = 0;
+    left_offset_applied_y = 0;
+    diff_applied_         = false;
     return left_viewer_.load_image(img);
 }
 
 void compare_viewer::unload_left() {
+    left_src_ = {};
     diff_applied_ = false;
     left_viewer_.unload_image();
 }
 
 bool compare_viewer::load_right(const image_data& img) {
-    right_orig_   = img;
-    diff_applied_ = false;
+    right_src_             = img;
+    right_orig_            = img;
+    right_offset_x         = 0;
+    right_offset_y         = 0;
+    right_offset_applied_x = 0;
+    right_offset_applied_y = 0;
+    diff_applied_          = false;
     return right_viewer_.load_image(img);
 }
 
 bool compare_viewer::load_single(const image_data& img) {
-    right_orig_   = img;
-    diff_applied_ = false;
+    left_src_              = img;
+    left_offset_x          = 0;
+    left_offset_y          = 0;
+    left_offset_applied_x  = 0;
+    left_offset_applied_y  = 0;
+    right_src_             = img;
+    right_orig_            = img;
+    right_offset_x         = 0;
+    right_offset_y         = 0;
+    right_offset_applied_x = 0;
+    right_offset_applied_y = 0;
+    diff_applied_          = false;
     const bool ok_l = left_viewer_.load_image(img);
     const bool ok_r = right_viewer_.load_image(img);
     return ok_l && ok_r;
@@ -108,6 +129,63 @@ void compare_viewer::compute_diff() {
     for (auto& th : threads) th.join();
 }
 
+void compare_viewer::apply_left_offset() {
+    if (left_src_.empty()) return;
+    const int ox = std::max(0, std::min(left_offset_x, left_src_.width  - 1));
+    const int oy = std::max(0, std::min(left_offset_y, left_src_.height - 1));
+    left_offset_applied_x = ox;
+    left_offset_applied_y = oy;
+
+    if (ox == 0 && oy == 0) {
+        left_viewer_.load_image(left_src_, false);
+    } else {
+        image_data sliced;
+        sliced.width  = left_src_.width  - ox;
+        sliced.height = left_src_.height - oy;
+        sliced.format = left_src_.format;
+        const int ch = left_src_.channels();
+        sliced.pixels.resize(static_cast<size_t>(sliced.width) * sliced.height * ch);
+        for (int y = 0; y < sliced.height; ++y) {
+            const uint8_t* src = left_src_.pixels.data()
+                               + (static_cast<size_t>(oy + y) * left_src_.width + ox) * ch;
+            uint8_t* dst = sliced.pixels.data()
+                         + static_cast<size_t>(y) * sliced.width * ch;
+            std::memcpy(dst, src, static_cast<size_t>(sliced.width) * ch);
+        }
+        left_viewer_.load_image(sliced, false);
+    }
+    diff_applied_ = false;
+}
+
+void compare_viewer::apply_right_offset() {
+    if (right_src_.empty()) return;
+    const int ox = std::max(0, std::min(right_offset_x, right_src_.width  - 1));
+    const int oy = std::max(0, std::min(right_offset_y, right_src_.height - 1));
+    right_offset_applied_x = ox;
+    right_offset_applied_y = oy;
+
+    if (ox == 0 && oy == 0) {
+        right_orig_ = right_src_;
+    } else {
+        image_data sliced;
+        sliced.width  = right_src_.width  - ox;
+        sliced.height = right_src_.height - oy;
+        sliced.format = right_src_.format;
+        const int ch = right_src_.channels();
+        sliced.pixels.resize(static_cast<size_t>(sliced.width) * sliced.height * ch);
+        for (int y = 0; y < sliced.height; ++y) {
+            const uint8_t* src = right_src_.pixels.data()
+                               + (static_cast<size_t>(oy + y) * right_src_.width + ox) * ch;
+            uint8_t* dst = sliced.pixels.data()
+                         + static_cast<size_t>(y) * sliced.width * ch;
+            std::memcpy(dst, src, static_cast<size_t>(sliced.width) * ch);
+        }
+        right_orig_ = std::move(sliced);
+    }
+    right_viewer_.load_image(right_orig_, false);
+    diff_applied_ = false;
+}
+
 void compare_viewer::update_right_viewer() {
     if (diff_mode) {
         compute_diff();
@@ -142,6 +220,9 @@ void compare_viewer::render(float width, float height) {
     if (width  < 2.0f)  width  = 2.0f;
     if (height < 1.0f)  height = 1.0f;
 
+    // Offset is applied after the DragInt controls (below), not here, so that
+    // re-slicing is skipped while dragging and only fires on release.
+
     // Reload right viewer if diff_mode or amplify changed.
     if (diff_mode != diff_applied_ ||
         (diff_mode && diff_amplify != amplify_applied_)) {
@@ -149,10 +230,14 @@ void compare_viewer::render(float width, float height) {
         amplify_applied_ = diff_amplify;
     }
 
-    const float spacing  = ImGui::GetStyle().ItemSpacing.x;
-    const float half_w   = std::floor((width - spacing) * 0.5f);
-    const float label_h  = ImGui::GetTextLineHeightWithSpacing();
-    const float canvas_h = height - label_h;
+    const float spacing    = ImGui::GetStyle().ItemSpacing.x;
+    const float half_w     = std::floor((width - spacing) * 0.5f);
+    const float label_h    = ImGui::GetTextLineHeightWithSpacing();
+    const bool  has_left_offset  = !left_src_.empty();
+    const bool  has_right_offset = !right_src_.empty();
+    const bool  has_offset       = has_left_offset || has_right_offset;
+    const float offset_h         = has_offset ? ImGui::GetFrameHeightWithSpacing() : 0.0f;
+    const float canvas_h   = height - label_h - offset_h;
 
     left_viewer_.show_grid             = show_grid;
     left_viewer_.grid_spacing          = grid_spacing;
@@ -199,18 +284,64 @@ void compare_viewer::render(float width, float height) {
     dl->AddText({origin.x + half_w + spacing + 4.0f, origin.y + 2.0f}, rtxt_col, rtxt.c_str());
     dl->PopClipRect();
 
-    ImGui::SetCursorScreenPos({origin.x, origin.y + label_h});
+    // ----- Offset controls (above each canvas) -----
+    // Returns true when the offset value was committed (drag released / enter / reset).
+    auto draw_offset_controls = [&](float panel_x, int& ox, int& oy,
+                                    int max_x, int max_y,
+                                    const char* id_x, const char* id_y,
+                                    const char* id_reset) -> bool {
+        bool apply = false;
+        const float drag_w  = 130.0f;
+        ImGui::SetCursorScreenPos({panel_x, origin.y + label_h});
+        ImGui::TextDisabled("X:");
+        ImGui::SameLine(0, 2.0f);
+        ImGui::SetNextItemWidth(drag_w);
+        ImGui::DragInt(id_x, &ox, 1.0f, 0, max_x, "%d");
+        if (ImGui::IsItemDeactivatedAfterEdit()) apply = true;
+        ImGui::SameLine();
+        ImGui::TextDisabled("Y:");
+        ImGui::SameLine(0, 2.0f);
+        ImGui::SetNextItemWidth(drag_w);
+        ImGui::DragInt(id_y, &oy, 1.0f, 0, max_y, "%d");
+        if (ImGui::IsItemDeactivatedAfterEdit()) apply = true;
+        ImGui::SameLine();
+        ImGui::BeginDisabled(ox == 0 && oy == 0);
+        if (ImGui::SmallButton(id_reset)) { ox = 0; oy = 0; apply = true; }
+        ImGui::EndDisabled();
+        return apply;
+    };
+
+    if (has_left_offset &&
+            draw_offset_controls(origin.x, left_offset_x, left_offset_y,
+                                 left_src_.width - 1, left_src_.height - 1,
+                                 "##lox", "##loy", "Reset##loff")) {
+        apply_left_offset();
+        if (diff_mode) { update_right_viewer(); amplify_applied_ = diff_amplify; }
+    }
+
+    if (has_right_offset &&
+            draw_offset_controls(origin.x + half_w + spacing,
+                                 right_offset_x, right_offset_y,
+                                 right_src_.width - 1, right_src_.height - 1,
+                                 "##rox", "##roy", "Reset##roff")) {
+        apply_right_offset();
+        if (diff_mode) { update_right_viewer(); amplify_applied_ = diff_amplify; }
+    }
+
+    const float canvas_top = origin.y + label_h + offset_h;
+
+    ImGui::SetCursorScreenPos({origin.x, canvas_top});
     left_viewer_.render("left_canvas", half_w, canvas_h, left_state);
 
-    ImGui::SetCursorScreenPos({origin.x + half_w + spacing, origin.y + label_h});
+    ImGui::SetCursorScreenPos({origin.x + half_w + spacing, canvas_top});
     right_viewer_.render("right_canvas", half_w, canvas_h, right_state);
 
     ImGui::SetCursorScreenPos({origin.x, origin.y + height});
 
     // ----- Combined pixel info (tooltip + pixel panel) -----
     const ImVec2 canvas_size      = {half_w, canvas_h};
-    const ImVec2 left_canvas_pos  = {origin.x,                    origin.y + label_h};
-    const ImVec2 right_canvas_pos = {origin.x + half_w + spacing, origin.y + label_h};
+    const ImVec2 left_canvas_pos  = {origin.x,                    canvas_top};
+    const ImVec2 right_canvas_pos = {origin.x + half_w + spacing, canvas_top};
 
     const view_state& lstateref = sync_views ? shared_state_ : left_viewer_.get_view_state();
     const view_state& rstateref = sync_views ? shared_state_ : right_viewer_.get_view_state();

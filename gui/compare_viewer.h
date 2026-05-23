@@ -22,6 +22,12 @@ public:
     const image_data& get_left_image_data()  const;
     const image_data& get_right_image_data() const;
 
+    // Dimensions of the unsliced source images (for offset slider range).
+    int left_src_width()   const { return left_src_.width;   }
+    int left_src_height()  const { return left_src_.height;  }
+    int right_src_width()  const { return right_src_.width;  }
+    int right_src_height() const { return right_src_.height; }
+
     // Viewer access for per-group overlay visibility UI.
     image_viewer& left_viewer_ref()  { return left_viewer_; }
     image_viewer& right_viewer_ref() { return right_viewer_; }
@@ -54,21 +60,34 @@ public:
     bool        sync_views           = true;
     bool        diff_mode            = false;
     float       diff_amplify         = 1.0f;
+    // Offset applied to each panel's start position (pixels).
+    int         left_offset_x        = 0;
+    int         left_offset_y        = 0;
+    int         right_offset_x       = 0;
+    int         right_offset_y       = 0;
     std::string left_label;
     std::string right_label;
 
 private:
     void compute_diff();
     void update_right_viewer();
+    void apply_left_offset();
+    void apply_right_offset();
 
     image_viewer left_viewer_;
     image_viewer right_viewer_;
     view_state   shared_state_;
 
-    image_data right_orig_;
+    image_data left_src_;             // full left image before offset
+    image_data right_src_;            // full right image before offset
+    image_data right_orig_;           // offset-applied right slice (input to diff)
     image_data diff_data_;
-    bool       diff_applied_    = false;
-    float      amplify_applied_ = 1.0f;
+    bool       diff_applied_          = false;
+    float      amplify_applied_       = 1.0f;
+    int        left_offset_applied_x  = 0;
+    int        left_offset_applied_y  = 0;
+    int        right_offset_applied_x = 0;
+    int        right_offset_applied_y = 0;
 
     combined_hover_info combined_hover_;
 };
