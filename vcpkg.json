@@ -14,6 +14,11 @@
     "implot",
     "cpp-httplib",
     "nativefiledialog-extended",
-    "libjpeg-turbo"
+    "libjpeg-turbo",
+    {
+      "name": "opencv4",
+      "default-features": false,
+      "features": ["core", "imgproc"]
+    }
   ]
 }

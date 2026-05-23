@@ -23,6 +23,7 @@ find_package(implot CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 find_package(nfd CONFIG REQUIRED)
 find_package(libjpeg-turbo CONFIG REQUIRED)
+find_package(OpenCV CONFIG REQUIRED COMPONENTS core imgproc)
 
 # ----- Version metadata (set before configure_file so all platforms get them) -----
 set(VS_COMPANY_NAME   "YourCompany" CACHE STRING "Company name embedded in the exe")
@@ -123,7 +124,21 @@ add_executable(visionstudio
     $<$<BOOL:${WIN32}>:${CMAKE_BINARY_DIR}/generated/app.rc>
 )
 target_include_directories(visionstudio PRIVATE ${CMAKE_BINARY_DIR})
-target_link_libraries(visionstudio PRIVATE vs_gui vs_io vs_capture CLI11::CLI11 implot::implot nfd::nfd)
+target_link_libraries(visionstudio PRIVATE vs_gui vs_io vs_capture vs_analysis CLI11::CLI11 implot::implot nfd::nfd)
+
+# ----- vs_analysis: circle/ellipse detection tool -----
+add_library(vs_analysis STATIC
+    gui/circle_ellipse_tool.cpp
+)
+target_include_directories(vs_analysis PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>
+)
+target_link_libraries(vs_analysis PUBLIC
+    vs_gui
+    opencv_core
+    opencv_imgproc
+    nfd::nfd
+)
 
 # ----- tiff_to_gray: test utility to convert TIFF to grayscale (opt-in) -----
 option(BUILD_TIFF_TO_GRAY "Build tiff_to_gray conversion utility" OFF)
