@@ -553,10 +553,14 @@ static void draw_arrow(ImDrawList* dl, ImVec2 from, ImVec2 to, ImU32 color, floa
 
 void image_viewer::draw_overlays(ImDrawList* dl, const ImVec2& canvas_pos,
                                   const view_state& state) const {
-    // Image → screen coordinate transform
+    // Image → screen coordinate transform.
+    // Subtract display_offset so overlay coords (in original image space) align
+    // correctly when the viewer is showing a cropped slice.
+    const float off_x = static_cast<float>(display_offset_x_);
+    const float off_y = static_cast<float>(display_offset_y_);
     auto to_screen = [&](float ix, float iy) -> ImVec2 {
-        return {canvas_pos.x + state.pan_x + ix * state.zoom,
-                canvas_pos.y + state.pan_y + iy * state.zoom};
+        return {canvas_pos.x + state.pan_x + (ix - off_x) * state.zoom,
+                canvas_pos.y + state.pan_y + (iy - off_y) * state.zoom};
     };
 
     for (size_t gi = 0; gi < overlay_groups_.size(); ++gi) {

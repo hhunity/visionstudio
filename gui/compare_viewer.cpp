@@ -30,12 +30,14 @@ bool compare_viewer::load_left(const image_data& img) {
     left_offset_applied_x = 0;
     left_offset_applied_y = 0;
     diff_applied_         = false;
+    left_viewer_.set_display_offset(0, 0);
     return left_viewer_.load_image(img);
 }
 
 void compare_viewer::unload_left() {
     left_src_ = {};
     diff_applied_ = false;
+    left_viewer_.set_display_offset(0, 0);
     left_viewer_.unload_image();
 }
 
@@ -47,6 +49,7 @@ bool compare_viewer::load_right(const image_data& img) {
     right_offset_applied_x = 0;
     right_offset_applied_y = 0;
     diff_applied_          = false;
+    right_viewer_.set_display_offset(0, 0);
     return right_viewer_.load_image(img);
 }
 
@@ -63,6 +66,8 @@ bool compare_viewer::load_single(const image_data& img) {
     right_offset_applied_x = 0;
     right_offset_applied_y = 0;
     diff_applied_          = false;
+    left_viewer_.set_display_offset(0, 0);
+    right_viewer_.set_display_offset(0, 0);
     const bool ok_l = left_viewer_.load_image(img);
     const bool ok_r = right_viewer_.load_image(img);
     return ok_l && ok_r;
@@ -137,7 +142,8 @@ void compare_viewer::apply_left_offset() {
     left_offset_applied_y = oy;
 
     if (ox == 0 && oy == 0) {
-        left_viewer_.load_image(left_src_, false);
+        left_viewer_.set_display_offset(ox, oy);
+    left_viewer_.load_image(left_src_, false);
     } else {
         image_data sliced;
         sliced.width  = left_src_.width  - ox;
@@ -152,6 +158,7 @@ void compare_viewer::apply_left_offset() {
                          + static_cast<size_t>(y) * sliced.width * ch;
             std::memcpy(dst, src, static_cast<size_t>(sliced.width) * ch);
         }
+        left_viewer_.set_display_offset(ox, oy);
         left_viewer_.load_image(sliced, false);
     }
     diff_applied_ = false;
@@ -182,6 +189,7 @@ void compare_viewer::apply_right_offset() {
         }
         right_orig_ = std::move(sliced);
     }
+    right_viewer_.set_display_offset(ox, oy);
     right_viewer_.load_image(right_orig_, false);
     diff_applied_ = false;
 }

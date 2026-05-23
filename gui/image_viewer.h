@@ -68,6 +68,9 @@ public:
     // Read-only access to the CPU image data (used by compare_viewer for diff).
     const image_data& get_image_data() const { return cpu_image_; }
 
+    // Overlay coordinate offset: set when viewer displays a cropped slice of a larger image.
+    void set_display_offset(int ox, int oy) { display_offset_x_ = ox; display_offset_y_ = oy; }
+
     // Overlay: load ROI groups for heatmap display.
     void set_overlay_groups(std::vector<roi_group> groups);
     void clear_overlays();
@@ -120,6 +123,8 @@ private:
 
     int img_w_ = 0;
     int img_h_ = 0;
+    int display_offset_x_ = 0;     // subtracted from overlay coords when a slice is displayed
+    int display_offset_y_ = 0;
     image_data cpu_image_;          // CPU copy kept for pixel inspection
     view_state             owned_state_;
     bool                   needs_fit_ = false;  // fit view on first render after load
