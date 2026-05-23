@@ -1320,7 +1320,11 @@ int main(int argc, char** argv) {
                 }
                 ImGui::EndDisabled();
             }
-            for (const auto& g : cam_info) {
+            static std::string cam_edit_key;
+            static char        cam_edit_buf[256] = {};
+            static bool        cam_edit_focus    = false;
+
+            for (auto& g : cam_info) {
                 if (ImGui::CollapsingHeader(g.label.c_str())) {
                     if (ImGui::BeginTable(g.label.c_str(), 2,
                             ImGuiTableFlags_SizingFixedFit |
@@ -1328,21 +1332,102 @@ int main(int argc, char** argv) {
                             ImGuiTableFlags_BordersInnerV)) {
                         ImGui::TableSetupColumn("Name",  ImGuiTableColumnFlags_WidthStretch, 0.5f);
                         ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.5f);
-                        for (const auto& p : g.params) {
+                        for (auto& p : g.params) {
                             ImGui::TableNextRow();
                             ImGui::TableSetColumnIndex(0);
                             ImGui::TextDisabled("%s", p.name.c_str());
                             ImGui::TableSetColumnIndex(1);
+
                             if (p.rw_type == cam_param_rw::writeonly) {
                                 ImGui::TextDisabled("---");
-                            } else {
+                            } else if (p.rw_type == cam_param_rw::readonly) {
                                 const std::string disp = p.unit.empty()
-                                    ? p.value
-                                    : p.value + " " + p.unit;
-                                if (p.rw_type == cam_param_rw::readonly)
-                                    ImGui::TextDisabled("%s", disp.c_str());
-                                else
+                                    ? p.value : p.value + " " + p.unit;
+                                ImGui::TextDisabled("%s", disp.c_str());
+                            } else {
+                                // readwrite: double-click to edit
+                                const std::string key      = g.label + "/" + p.name;
+                                const std::string popup_id = "##ep_" + key;
+
+                                if (cam_edit_key == key) {
+                                    if (p.type == cam_param_type::bool_ ||
+                                        p.type == cam_param_type::enum_) {
+                                        // Popup with selectable options
+                                        if (ImGui::BeginPopup(popup_id.c_str())) {
+                                            for (const auto& opt : p.options) {
+                                                if (ImGui::Selectable(opt.c_str(), opt == p.value)) {
+                                                    p.value = opt;
+                                                    cam_edit_key.clear();
+                                                    ImGui::CloseCurrentPopup();
+                                                }
+                                            }
+                                            ImGui::EndPopup();
+                                        } else {
+                                            cam_edit_key.clear();
+                                        }
+                                        // Show current value in table cell below popup
+                                        const std::string disp = p.unit.empty()
+                                            ? p.value : p.value + " " + p.unit;
+                                        ImGui::TextUnformatted(disp.c_str());
+                                    } else {
+                                        // InputText for int_ / float_ / string_
+                                        if (cam_edit_focus) {
+                                            ImGui::SetKeyboardFocusHere();
+                                            cam_edit_focus = false;
+                                        }
+                                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                                        const bool enter = ImGui::InputText(
+                                            ("##camedit_" + p.name).c_str(),
+                                            cam_edit_buf, sizeof(cam_edit_buf),
+                                            ImGuiInputTextFlags_EnterReturnsTrue);
+                                        if (enter || ImGui::IsItemDeactivated()) {
+                                            const std::string raw = cam_edit_buf;
+                                            if (p.type == cam_param_type::int_) {
+                                                try {
+                                                    int v = std::stoi(raw);
+                                                    if (!p.min.empty())
+                                                        v = std::max(v, std::stoi(p.min));
+                                                    if (!p.max.empty())
+                                                        v = std::min(v, std::stoi(p.max));
+                                                    p.value = std::to_string(v);
+                                                } catch (...) {}
+                                            } else if (p.type == cam_param_type::float_) {
+                                                try {
+                                                    float v = std::stof(raw);
+                                                    if (!p.min.empty())
+                                                        v = std::max(v, std::stof(p.min));
+                                                    if (!p.max.empty())
+                                                        v = std::min(v, std::stof(p.max));
+                                                    char fb[64];
+                                                    std::snprintf(fb, sizeof(fb), "%g",
+                                                                  static_cast<double>(v));
+                                                    p.value = fb;
+                                                } catch (...) {}
+                                            } else {
+                                                p.value = raw;
+                                            }
+                                            cam_edit_key.clear();
+                                        }
+                                    }
+                                } else {
+                                    // Display mode — detect double-click to enter edit
+                                    const std::string disp = p.unit.empty()
+                                        ? p.value : p.value + " " + p.unit;
                                     ImGui::TextUnformatted(disp.c_str());
+                                    if (ImGui::IsItemHovered() &&
+                                        ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                                        cam_edit_key = key;
+                                        if (p.type == cam_param_type::bool_ ||
+                                            p.type == cam_param_type::enum_) {
+                                            ImGui::OpenPopup(popup_id.c_str());
+                                        } else {
+                                            std::strncpy(cam_edit_buf, p.value.c_str(),
+                                                         sizeof(cam_edit_buf) - 1);
+                                            cam_edit_buf[sizeof(cam_edit_buf) - 1] = '\0';
+                                            cam_edit_focus = true;
+                                        }
+                                    }
+                                }
                             }
                         }
                         ImGui::EndTable();
