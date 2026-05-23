@@ -41,6 +41,9 @@ public:
     // Set zoom to 1:1 and center the image.
     void zoom_1to1(view_state& state, float canvas_w, float canvas_h) const;
 
+    // Clamp pan so no image edge passes the canvas center (Photoshop behaviour).
+    void clamp_pan(view_state& state, float canvas_w, float canvas_h) const;
+
     // Pixel under the mouse — updated every frame in render().
     struct hover_info {
         bool                   valid = false;

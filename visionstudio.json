@@ -18,7 +18,7 @@
     "stop_path": "/stop",
     "timeout_ms": 5000
   },
-  "imgui_ini": "[Window][##root]\nPos=0,0\nSize=1470,891\n\n[Window][Debug##Default]\nPos=60,60\nSize=400,400\n\n[Window][Settings##modal]\nPos=495,215\nSize=480,460\n\n[Window][Version##modal]\nPos=575,372\nSize=320,147\n\n[Window][About VisionStudio##modal]\nPos=425,185\nSize=620,520\n\n[Window][Error##err_modal]\nPos=551,401\nSize=367,88\n\n",
+  "imgui_ini": "[Window][##root]\nPos=0,0\nSize=1470,891\n\n[Window][Debug##Default]\nPos=60,60\nSize=400,400\n\n[Window][Settings##modal]\nPos=495,215\nSize=480,460\n\n[Window][Version##modal]\nPos=575,372\nSize=320,147\n\n[Window][About VisionStudio##modal]\nPos=425,185\nSize=620,520\n\n[Window][Error##err_modal]\nPos=551,401\nSize=402,88\n\n",
   "window": {
     "height": 891,
     "width": 1470

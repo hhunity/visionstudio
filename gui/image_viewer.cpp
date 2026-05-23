@@ -159,6 +159,16 @@ void image_viewer::fit_view(view_state& state, float canvas_w, float canvas_h) c
     state.pan_y = (canvas_h - img_h_ * state.zoom) * 0.5f;
 }
 
+// Clamp pan so no image edge can move past the center of the canvas.
+// Matches Photoshop behaviour: the image is always at least half-visible.
+void image_viewer::clamp_pan(view_state& state, float canvas_w, float canvas_h) const {
+    if (img_w_ == 0 || img_h_ == 0) return;
+    const float iw = img_w_ * state.zoom;
+    const float ih = img_h_ * state.zoom;
+    state.pan_x = std::min(std::max(state.pan_x, canvas_w * 0.5f - iw), canvas_w * 0.5f);
+    state.pan_y = std::min(std::max(state.pan_y, canvas_h * 0.5f - ih), canvas_h * 0.5f);
+}
+
 void image_viewer::zoom_1to1(view_state& state, float canvas_w, float canvas_h) const {
     if (img_w_ == 0 || img_h_ == 0) return;
     state.zoom  = 1.0f;
@@ -304,6 +314,7 @@ void image_viewer::handle_input(const ImVec2& canvas_pos, const ImVec2& canvas_s
                 const float sy = mh / static_cast<float>(img_h_);
                 state.pan_x -= delta.x / sx * state.zoom;
                 state.pan_y -= delta.y / sy * state.zoom;
+                clamp_pan(state, canvas_size.x, canvas_size.y);
             }
             handled_drag = true;
         }
@@ -314,6 +325,7 @@ void image_viewer::handle_input(const ImVec2& canvas_pos, const ImVec2& canvas_s
         const ImVec2 delta = ImGui::GetIO().MouseDelta;
         state.pan_x += delta.x;
         state.pan_y += delta.y;
+        clamp_pan(state, canvas_size.x, canvas_size.y);
     }
 
     // Scroll wheel: zoom / pan depending on modifier keys
@@ -323,12 +335,14 @@ void image_viewer::handle_input(const ImVec2& canvas_pos, const ImVec2& canvas_s
             const bool ctrl  = ImGui::GetIO().KeyCtrl;
             const bool shift = ImGui::GetIO().KeyShift;
             constexpr float pan_speed = 32.0f; // pixels per scroll step
-            if (ctrl) {
-                // Ctrl + scroll → horizontal pan
+            if (shift) {
+                // Shift + scroll → horizontal pan (Photoshop compatible)
                 state.pan_x += wheel * pan_speed;
-            } else if (shift) {
-                // Shift + scroll → vertical pan
+                clamp_pan(state, canvas_size.x, canvas_size.y);
+            } else if (ctrl) {
+                // Ctrl + scroll → vertical pan (Photoshop compatible)
                 state.pan_y += wheel * pan_speed;
+                clamp_pan(state, canvas_size.x, canvas_size.y);
             } else {
                 // Plain scroll → zoom toward cursor
                 const ImVec2 mouse = ImGui::GetIO().MousePos;
@@ -336,10 +350,13 @@ void image_viewer::handle_input(const ImVec2& canvas_pos, const ImVec2& canvas_s
                 const float rel_y  = mouse.y - canvas_pos.y;
                 const float img_x  = (rel_x - state.pan_x) / state.zoom;
                 const float img_y  = (rel_y - state.pan_y) / state.zoom;
-                const float factor = (wheel > 0.0f) ? 1.1f : (1.0f / 1.1f);
-                state.zoom  = std::min(std::max(state.zoom * factor, 0.001f), 500.0f);
+                const float factor   = (wheel > 0.0f) ? 1.1f : (1.0f / 1.1f);
+                const float zoom_fit = std::min(canvas_size.x / static_cast<float>(img_w_),
+                                                canvas_size.y / static_cast<float>(img_h_));
+                state.zoom  = std::min(std::max(state.zoom * factor, zoom_fit), 500.0f);
                 state.pan_x = rel_x - img_x * state.zoom;
                 state.pan_y = rel_y - img_y * state.zoom;
+                clamp_pan(state, canvas_size.x, canvas_size.y);
             }
         }
 
