@@ -1,7 +1,8 @@
 {
   "capture": {
     "capture_config_file": "camera_config_b.json",
-    "connect_config_file": "camera_config_a.json"
+    "connect_config_file": "camera_config_a.json",
+    "save_dir": "/Users/hiroyukih/VisionStudio/captures"
   },
   "capture_client": {
     "connect_path": "/connect",

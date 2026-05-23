@@ -1073,8 +1073,8 @@ int main(int argc, char** argv) {
         const float viewer_h          = ImGui::GetContentRegionAvail().y - status_h
                                         - profile_panel_h - overlay_graph_h;
 
-        constexpr float panel_w         = 240.0f;  // right pixel panel
-        constexpr float capture_panel_w = 180.0f;  // left capture control panel
+        static float    panel_w         = 240.0f;  // right pixel panel (resizable)
+        static float    capture_panel_w = 180.0f;  // left capture control panel (resizable)
         const float spacing_x = ImGui::GetStyle().ItemSpacing.x;
         const float avail_x   = ImGui::GetContentRegionAvail().x;
 
@@ -1427,6 +1427,26 @@ int main(int argc, char** argv) {
                 ImPlot::EndPlot();
             }
         };
+
+        // ----- Resize handles -----
+        if (imode == input_mode::remote_capture) {
+            const float handle_x = viewer_origin.x - spacing_x * 0.5f - 2.0f;
+            ImGui::SetCursorScreenPos({handle_x, viewer_origin.y});
+            ImGui::InvisibleButton("##capture_resize", {4.0f, viewer_h});
+            if (ImGui::IsItemHovered() || ImGui::IsItemActive())
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+            if (ImGui::IsItemActive())
+                capture_panel_w = std::clamp(capture_panel_w + ImGui::GetIO().MouseDelta.x, 120.0f, 400.0f);
+        }
+        if (show_pixel_panel) {
+            const float handle_x = viewer_origin.x + viewer_w + spacing_x * 0.5f - 2.0f;
+            ImGui::SetCursorScreenPos({handle_x, viewer_origin.y});
+            ImGui::InvisibleButton("##panel_resize", {4.0f, viewer_h});
+            if (ImGui::IsItemHovered() || ImGui::IsItemActive())
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+            if (ImGui::IsItemActive())
+                panel_w = std::clamp(panel_w - ImGui::GetIO().MouseDelta.x, 160.0f, 600.0f);
+        }
 
         // ----- Pixel panel -----
         if (show_pixel_panel) {
