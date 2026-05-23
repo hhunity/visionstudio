@@ -441,6 +441,8 @@ int main(int argc, char** argv) {
     nlohmann::json settings_edit;
     sse_state   cur_sse               = sse_state::disconnected;
     bool        capturing             = false;
+    std::vector<cam_info_group>              cam_info;
+    std::future<std::vector<cam_info_group>> cam_info_future;
 
     // Preview texture (MJPEG live preview)
     GLuint preview_tex   = 0;
@@ -664,8 +666,15 @@ int main(int argc, char** argv) {
                     conn_buf   = make_conn_edit(cap_cfg);
                     capture_config::save("visionstudio.json", cap_cfg);
                     status_msg = "Config updated by server";
+                } else if (auto* e = std::get_if<evt_camera_info>(&*ev)) {
+                    cam_info = std::move(e->groups);
                 }
             }
+
+            // ----- Poll camera info future (Refresh button) -----
+            if (cam_info_future.valid() &&
+                cam_info_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+                cam_info = cam_info_future.get();
 
             // ----- Upload preview frame to GPU -----
             preview_frame pf;
@@ -1298,6 +1307,49 @@ int main(int argc, char** argv) {
                 }
                 ImGui::EndDisabled();
             }
+
+            // ----- Camera Info -----
+            ImGui::Separator();
+            {
+                const bool fetching = cam_info_future.valid() &&
+                    cam_info_future.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
+                ImGui::BeginDisabled(fetching || cur_sse != sse_state::connected);
+                if (ImGui::SmallButton(fetching ? "Fetching..." : "Refresh Info")) {
+                    cam_info_future = std::async(std::launch::async,
+                        [&cap_cli]{ return cap_cli->fetch_camera_info(); });
+                }
+                ImGui::EndDisabled();
+            }
+            for (const auto& g : cam_info) {
+                if (ImGui::CollapsingHeader(g.label.c_str())) {
+                    if (ImGui::BeginTable(g.label.c_str(), 2,
+                            ImGuiTableFlags_SizingFixedFit |
+                            ImGuiTableFlags_RowBg          |
+                            ImGuiTableFlags_BordersInnerV)) {
+                        ImGui::TableSetupColumn("Name",  ImGuiTableColumnFlags_WidthStretch, 0.5f);
+                        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.5f);
+                        for (const auto& p : g.params) {
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::TextDisabled("%s", p.name.c_str());
+                            ImGui::TableSetColumnIndex(1);
+                            if (p.rw_type == cam_param_rw::writeonly) {
+                                ImGui::TextDisabled("---");
+                            } else {
+                                const std::string disp = p.unit.empty()
+                                    ? p.value
+                                    : p.value + " " + p.unit;
+                                if (p.rw_type == cam_param_rw::readonly)
+                                    ImGui::TextDisabled("%s", disp.c_str());
+                                else
+                                    ImGui::TextUnformatted(disp.c_str());
+                            }
+                        }
+                        ImGui::EndTable();
+                    }
+                }
+            }
+
             ImGui::EndChild();
             ImGui::SameLine();
         }

@@ -410,6 +410,9 @@ void capture_client::dispatch_event(const std::string& event_type,
         } else {
             sse_state_.store(sse_state::connected);
             push_event(evt_connected{});
+            auto groups = fetch_camera_info();
+            if (!groups.empty())
+                push_event(evt_camera_info{std::move(groups)});
         }
     } else if (event_type == "disconnected") {
         sse_state_.store(sse_state::disconnected);
@@ -649,6 +652,61 @@ httplib::Result capture_client::get(const std::string& url_path) {
         cli.set_read_timeout(sec, usec);
     }
     return cli.Get(url_path);
+}
+
+std::vector<cam_info_group> capture_client::fetch_camera_info() {
+    auto res = get(cfg_.info_path);
+    if (!res || res->status < 200 || res->status >= 300) {
+        log("[info] GET " + cfg_.info_path + " failed");
+        return {};
+    }
+    try {
+        const auto j = nlohmann::json::parse(res->body);
+        if (!j.contains("groups") || !j["groups"].is_array()) return {};
+
+        std::vector<cam_info_group> result;
+        for (const auto& g : j["groups"]) {
+            cam_info_group group;
+            group.label = g.value("label", "");
+            if (!g.contains("params") || !g["params"].is_array()) {
+                result.push_back(std::move(group));
+                continue;
+            }
+            for (const auto& p : g["params"]) {
+                cam_param param;
+                param.name  = p.value("name",  "");
+                param.value = p.value("value", "");
+                param.unit  = p.value("unit",  "");
+                param.min   = p.value("min",   "");
+                param.max   = p.value("max",   "");
+
+                const std::string type_str = p.value("type", "string");
+                if      (type_str == "int")   param.type = cam_param_type::int_;
+                else if (type_str == "float") param.type = cam_param_type::float_;
+                else if (type_str == "bool")  param.type = cam_param_type::bool_;
+                else if (type_str == "enum")  param.type = cam_param_type::enum_;
+                else                          param.type = cam_param_type::string_;
+
+                const std::string rw_str = p.value("rw_type", "readwrite");
+                if      (rw_str == "readonly")  param.rw_type = cam_param_rw::readonly;
+                else if (rw_str == "writeonly") param.rw_type = cam_param_rw::writeonly;
+                else                            param.rw_type = cam_param_rw::readwrite;
+
+                if (p.contains("options") && p["options"].is_array()) {
+                    for (const auto& opt : p["options"])
+                        if (opt.is_string()) param.options.push_back(opt);
+                }
+                group.params.push_back(std::move(param));
+            }
+            result.push_back(std::move(group));
+        }
+        log("[info] GET " + cfg_.info_path + " -> " +
+            std::to_string(result.size()) + " groups");
+        return result;
+    } catch (...) {
+        log("[info] GET " + cfg_.info_path + " parse error");
+        return {};
+    }
 }
 
 // ---------------------------------------------------------------------------

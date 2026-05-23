@@ -13,12 +13,36 @@
 
 enum class sse_state { disconnected, connecting, connected, error };
 
+// ---------------------------------------------------------------------------
+// Camera info (GET /info response types)
+// ---------------------------------------------------------------------------
+
+enum class cam_param_type { string_, int_, float_, bool_, enum_ };
+enum class cam_param_rw   { readwrite, readonly, writeonly };
+
+struct cam_param {
+    std::string              name;
+    cam_param_type           type    = cam_param_type::string_;
+    cam_param_rw             rw_type = cam_param_rw::readwrite;
+    std::string              value;
+    std::string              unit;
+    std::string              min;
+    std::string              max;
+    std::vector<std::string> options; // valid values for enum type
+};
+
+struct cam_info_group {
+    std::string            label;
+    std::vector<cam_param> params;
+};
+
 struct evt_connected    {};
 struct evt_disconnected {};
 struct evt_error        { std::string message; };
 struct evt_capture_done { std::string path; };
 struct evt_config_updated { capture_config cfg; }; // server returned updated config on connect
-using server_event = std::variant<evt_connected, evt_disconnected, evt_error, evt_capture_done, evt_config_updated>;
+struct evt_camera_info  { std::vector<cam_info_group> groups; }; // fetched from GET /info on connect
+using server_event = std::variant<evt_connected, evt_disconnected, evt_error, evt_capture_done, evt_config_updated, evt_camera_info>;
 
 struct preview_frame {
     std::vector<uint8_t> pixels; // grayscale, w*h bytes
@@ -51,6 +75,9 @@ public:
 
     // Synchronous GET, returns httplib::Result (has status, headers, body).
     httplib::Result get(const std::string& url_path);
+
+    // Fetch camera info from GET /info. Returns empty vector on failure.
+    std::vector<cam_info_group> fetch_camera_info();
 
     // File download (async). is_downloading() goes false on completion or error.
     void start_download(const std::string& url_path, const std::string& dest_path);

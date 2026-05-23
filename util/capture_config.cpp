@@ -57,6 +57,7 @@ capture_config capture_config::load(const std::string& json_path) {
         if (c.contains("preview_path")     && c["preview_path"].is_string())      cfg.preview_path     = c["preview_path"];
         if (c.contains("preview_raw_path") && c["preview_raw_path"].is_string())  cfg.preview_raw_path = c["preview_raw_path"];
         if (c.contains("preview_raw")      && c["preview_raw"].is_boolean())      cfg.preview_raw      = c["preview_raw"];
+        if (c.contains("info_path")        && c["info_path"].is_string())         cfg.info_path        = c["info_path"];
         if (c.contains("timeout_ms")       && c["timeout_ms"].is_number_integer()) cfg.timeout_ms      = c["timeout_ms"];
     }
 
@@ -93,6 +94,7 @@ void capture_config::save(const std::string& json_path,
         {"preview_path",     cfg.preview_path},
         {"preview_raw_path", cfg.preview_raw_path},
         {"preview_raw",      cfg.preview_raw},
+        {"info_path",        cfg.info_path},
         {"timeout_ms",       cfg.timeout_ms},
     };
 

@@ -145,6 +145,19 @@ if(BUILD_CAPTURE_CLI)
     )
 endif()
 
+# ----- mock_camera_server: test HTTP server for capture client (opt-in) -----
+option(BUILD_MOCK_SERVER "Build mock camera server for testing" OFF)
+if(BUILD_MOCK_SERVER)
+    add_executable(mock_camera_server test/mock_camera_server.cpp)
+    target_link_libraries(mock_camera_server PRIVATE
+        httplib::httplib
+        nlohmann_json::nlohmann_json
+        CLI11::CLI11
+        Threads::Threads
+    )
+    target_include_directories(mock_camera_server PRIVATE ${CMAKE_SOURCE_DIR})
+endif()
+
 if(WIN32)
     # Use main() entry point (not WinMain). /ENTRY:mainCRTStartup tells the linker
     # to use the CRT startup stub that calls main(), while /SUBSYSTEM:WINDOWS hides

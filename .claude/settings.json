@@ -3,7 +3,13 @@
     "allow": [
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(cmake --build --preset debug --target visionstudio)"
+      "Bash(cmake --build --preset debug --target visionstudio)",
+      "Bash(awk 'NR>=1100 && NR<=1130' /Users/hiroyukih/vscode/visionstudio/api/main.cpp)",
+      "Bash(awk 'NR>=1050 && NR<=1100' /Users/hiroyukih/vscode/visionstudio/api/main.cpp)",
+      "Bash(cmake --build build/mac-debug --target VisionStudio)",
+      "Bash(cmake --build /Users/hiroyukih/vscode/visionstudio/build/debug --target VisionStudio)",
+      "Bash(cmake build/debug -DBUILD_MOCK_SERVER=ON)",
+      "Bash(cmake --build build/debug --target mock_camera_server)"
     ]
   }
 }

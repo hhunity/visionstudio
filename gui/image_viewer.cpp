@@ -195,10 +195,12 @@ void image_viewer::render(const char* id, float width, float height,
         const float fx = (mouse.x - canvas_pos.x - state->pan_x) / state->zoom;
         const float fy = (mouse.y - canvas_pos.y - state->pan_y) / state->zoom;
         if (fx >= 0.0f && fx < img_w_ && fy >= 0.0f && fy < img_h_) {
+            const int lx = static_cast<int>(fx);
+            const int ly = static_cast<int>(fy);
             last_hover_.valid = true;
-            last_hover_.img_x = static_cast<int>(fx);
-            last_hover_.img_y = static_cast<int>(fy);
-            last_hover_.rgba  = cpu_image_.pixel_at(last_hover_.img_x, last_hover_.img_y);
+            last_hover_.img_x = lx + display_offset_x_;
+            last_hover_.img_y = ly + display_offset_y_;
+            last_hover_.rgba  = cpu_image_.pixel_at(lx, ly);
             last_hover_.zoom  = state->zoom;
         } else {
             last_hover_.valid = false;
@@ -213,10 +215,10 @@ void image_viewer::render(const char* id, float width, float height,
     dl->PushClipRect(canvas_pos, clip_max, true);
     draw_content(dl, canvas_pos, canvas_size, *state);
 
-    // Crosshair
+    // Crosshair (use slice-local coords: subtract display offset)
     if (show_crosshair && last_hover_.valid) {
-        const float cx = canvas_pos.x + state->pan_x + (last_hover_.img_x + 0.5f) * state->zoom;
-        const float cy = canvas_pos.y + state->pan_y + (last_hover_.img_y + 0.5f) * state->zoom;
+        const float cx = canvas_pos.x + state->pan_x + (last_hover_.img_x - display_offset_x_ + 0.5f) * state->zoom;
+        const float cy = canvas_pos.y + state->pan_y + (last_hover_.img_y - display_offset_y_ + 0.5f) * state->zoom;
         constexpr ImU32 ch_col = IM_COL32(255, 60, 60, 210);
         draw_dashed_line(dl, {canvas_pos.x, cy}, {clip_max.x, cy}, ch_col, 1.0f);
         draw_dashed_line(dl, {cx, canvas_pos.y}, {cx, clip_max.y}, ch_col, 1.0f);
@@ -403,7 +405,7 @@ void image_viewer::draw_coordinate_tooltip(const ImVec2& canvas_pos,
     const auto rgba = cpu_image_.pixel_at(px, py);
 
     ImGui::BeginTooltip();
-    ImGui::Text("pos  : (%d, %d)", px, py);
+    ImGui::Text("pos  : (%d, %d)", px + display_offset_x_, py + display_offset_y_);
     ImGui::Text("zoom : %.2fx", static_cast<double>(state.zoom));
     ImGui::Separator();
     ImGui::ColorButton("##swatch",
@@ -426,10 +428,12 @@ image_viewer::mouse_query image_viewer::query_mouse_pixel(
     const float fx = (mouse.x - canvas_pos.x - state.pan_x) / state.zoom;
     const float fy = (mouse.y - canvas_pos.y - state.pan_y) / state.zoom;
     if (fx < 0.0f || fx >= img_w_ || fy < 0.0f || fy >= img_h_) return q;
+    const int lx = static_cast<int>(fx);
+    const int ly = static_cast<int>(fy);
     q.valid = true;
-    q.img_x = static_cast<int>(fx);
-    q.img_y = static_cast<int>(fy);
-    q.rgba  = cpu_image_.pixel_at(q.img_x, q.img_y);
+    q.img_x = lx + display_offset_x_;
+    q.img_y = ly + display_offset_y_;
+    q.rgba  = cpu_image_.pixel_at(lx, ly);
     return q;
 }
 

@@ -13,6 +13,7 @@ struct capture_config {
     std::string preview_path    = "/preview";
     std::string preview_raw_path = "/preview_raw";
     bool        preview_raw     = false;  // true = raw pixel stream, false = MJPEG
+    std::string info_path       = "/info";
     int         timeout_ms      = 5000;
 
     // App-level capture settings (stored under "capture" in visionstudio.json)

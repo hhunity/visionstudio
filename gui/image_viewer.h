@@ -21,7 +21,7 @@ public:
     image_viewer& operator=(const image_viewer&) = delete;
 
     // Upload image to GPU. Returns false if img is empty.
-    // reset_view=false keeps the current zoom/pan (useful when re-slicing a split image).
+    // reset_view=false keeps the current zoom/pan (useful when reloading a sliced region).
     bool load_image(const image_data& img, bool reset_view = true);
     void unload_image();
     bool has_image() const { return !tiles_.empty(); }
