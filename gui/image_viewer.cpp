@@ -159,6 +159,13 @@ void image_viewer::fit_view(view_state& state, float canvas_w, float canvas_h) c
     state.pan_y = (canvas_h - img_h_ * state.zoom) * 0.5f;
 }
 
+void image_viewer::zoom_1to1(view_state& state, float canvas_w, float canvas_h) const {
+    if (img_w_ == 0 || img_h_ == 0) return;
+    state.zoom  = 1.0f;
+    state.pan_x = (canvas_w - static_cast<float>(img_w_)) * 0.5f;
+    state.pan_y = (canvas_h - static_cast<float>(img_h_)) * 0.5f;
+}
+
 // ---------------------------------------------------------------------------
 // Render
 // ---------------------------------------------------------------------------
@@ -185,6 +192,19 @@ void image_viewer::render(const char* id, float width, float height,
         ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
     const bool hovered = ImGui::IsItemHovered();
     const bool active  = ImGui::IsItemActive();
+
+    // Right-click context menu
+    if (!tiles_.empty()) {
+        const std::string ctx_id = std::string("##ctx_") + id;
+        ImGui::OpenPopupOnItemClick(ctx_id.c_str(), ImGuiPopupFlags_MouseButtonRight);
+        if (ImGui::BeginPopup(ctx_id.c_str())) {
+            if (ImGui::MenuItem("Fit to window"))
+                fit_view(*state, canvas_size.x, canvas_size.y);
+            if (ImGui::MenuItem("1:1  (100%)"))
+                zoom_1to1(*state, canvas_size.x, canvas_size.y);
+            ImGui::EndPopup();
+        }
+    }
 
     handle_input(canvas_pos, canvas_size, *state);
     (void)active; // input handling checks internally
