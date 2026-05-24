@@ -12,6 +12,11 @@
 // State management
 // ---------------------------------------------------------------------------
 
+remote_overlay_tool::~remote_overlay_tool() {
+    if (worker_.joinable())
+        worker_.join();
+}
+
 void remote_overlay_tool::set_image_path(const std::string& path) {
     image_path_ = path;
 }

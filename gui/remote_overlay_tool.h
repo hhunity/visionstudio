@@ -19,6 +19,8 @@ public:
     // Parameter JSON file path (editable in UI)
     char param_path[512] = "";
 
+    ~remote_overlay_tool();
+
     std::string_view name() const override { return "Remote Overlay"; }
 
     // Not pixel-based; image path is set separately via set_image_path().
