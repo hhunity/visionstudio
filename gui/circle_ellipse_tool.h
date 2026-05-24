@@ -60,15 +60,18 @@ public:
 private:
     std::vector<detected_shape>              shapes_;
     std::future<std::vector<detected_shape>> analyze_future_;
+    std::atomic<float>                       analyze_progress_{0.0f};
 
     // Run detection with explicit params (safe to call from background thread).
+    // progress: updated 0.0→1.0 as work proceeds; nullable.
     static std::vector<detected_shape> run_detection(
         const image_data& img,
         float canny_t1, float canny_t2,
         float min_radius, float max_radius,
         float hough_dp, float hough_min_dist, float hough_param2,
         float min_axis_ratio, int min_contour_px,
-        bool detect_circles, bool detect_ellipses);
+        bool detect_circles, bool detect_ellipses,
+        std::atomic<float>* progress);
 
     static void draw_rotated_ellipse(ImDrawList* dl, ImVec2 center,
                                      float rx, float ry, float angle_deg,

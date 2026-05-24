@@ -36,14 +36,19 @@ std::vector<detected_shape> circle_ellipse_tool::run_detection(
     float min_radius, float max_radius,
     float hough_dp, float hough_min_dist, float hough_param2,
     float min_axis_ratio, int min_contour_px,
-    bool detect_circles, bool detect_ellipses)
+    bool detect_circles, bool detect_ellipses,
+    std::atomic<float>* progress)
 {
+    auto set_progress = [&](float v) { if (progress) progress->store(v); };
+
     std::vector<detected_shape> shapes;
     if (img.empty()) return shapes;
 
+    set_progress(0.0f);
     cv::Mat gray = to_gray_mat(img);
     cv::Mat blurred;
     cv::GaussianBlur(gray, blurred, {5, 5}, 1.5);
+    set_progress(0.1f);
 
     // ----- HoughCircles -----
     if (detect_circles) {
@@ -66,16 +71,23 @@ std::vector<detected_shape> circle_ellipse_tool::run_detection(
             shapes.push_back(s);
         }
     }
+    set_progress(0.4f);
 
     // ----- Contour-based ellipse fitting -----
     if (detect_ellipses) {
         cv::Mat edges;
         cv::Canny(blurred, edges, canny_t1, canny_t2);
+        set_progress(0.55f);
 
         std::vector<std::vector<cv::Point>> contours;
         cv::findContours(edges, contours, cv::RETR_LIST, cv::CHAIN_APPROX_NONE);
 
-        for (const auto& contour : contours) {
+        const float n = static_cast<float>(contours.size());
+        for (size_t ci = 0; ci < contours.size(); ++ci) {
+            // 輪郭ループは本物の進捗（55%→100%）
+            set_progress(0.55f + 0.45f * (static_cast<float>(ci) / std::max(n, 1.0f)));
+
+            const auto& contour = contours[ci];
             if (contour.size() < 5) continue;
             if (cv::contourArea(contour) < min_contour_px) continue;
 
@@ -111,6 +123,7 @@ std::vector<detected_shape> circle_ellipse_tool::run_detection(
             shapes.push_back(s);
         }
     }
+    set_progress(1.0f);
     return shapes;
 }
 
@@ -123,19 +136,22 @@ void circle_ellipse_tool::analyze(const image_data& img) {
         canny_t1, canny_t2, min_radius, max_radius,
         hough_dp, hough_min_dist, hough_param2,
         min_axis_ratio, min_contour_px,
-        detect_circles, detect_ellipses);
+        detect_circles, detect_ellipses,
+        nullptr);
 }
 
 void circle_ellipse_tool::start_analyze(const image_data& img) {
     if (is_analyzing()) return;  // skip if already running
 
+    analyze_progress_.store(0.0f);
     analyze_future_ = std::async(std::launch::async,
         run_detection,
         img,  // copied into the async task
         canny_t1, canny_t2, min_radius, max_radius,
         hough_dp, hough_min_dist, hough_param2,
         min_axis_ratio, min_contour_px,
-        detect_circles, detect_ellipses);
+        detect_circles, detect_ellipses,
+        &analyze_progress_);
 }
 
 bool circle_ellipse_tool::is_analyzing() const {
@@ -224,9 +240,12 @@ void circle_ellipse_tool::render_panel() {
 
     // ----- Progress bar -----
     if (is_analyzing()) {
-        ImGui::ProgressBar(-1.0f * static_cast<float>(ImGui::GetTime()),
-                           {-1.0f, 0.0f}, "Detecting...");
-        return;  // パラメータや結果は処理中は表示しない
+        const float p = analyze_progress_.load();
+        char label[32];
+        std::snprintf(label, sizeof(label), "Detecting... %d%%",
+                      static_cast<int>(p * 100.0f));
+        ImGui::ProgressBar(p, {-1.0f, 0.0f}, label);
+        return;
     }
 
     // ----- Parameters -----
