@@ -338,42 +338,36 @@ void circle_ellipse_tool::render_panel() {
         ImGui::SameLine();
         ImGui::Checkbox("Ellipses (Contours)",  &detect_ellipses);
 
-        ImGui::SetNextItemWidth(fw * 0.45f);
-        ImGui::SliderFloat("Canny lo##c1",   &canny_t1,        1.0f,  300.0f);
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(fw * 0.45f);
-        ImGui::SliderFloat("Canny hi##c2",   &canny_t2,        1.0f,  500.0f);
+        const float col_w = (fw - ImGui::GetStyle().ItemSpacing.x * 3.0f) * 0.25f;
+        auto slider4 = [&](auto&&... args) {
+            ImGui::SetNextItemWidth(col_w);
+            ImGui::SliderFloat(std::forward<decltype(args)>(args)...);
+        };
+        auto slideri4 = [&](auto&&... args) {
+            ImGui::SetNextItemWidth(col_w);
+            ImGui::SliderInt(std::forward<decltype(args)>(args)...);
+        };
 
-        ImGui::SetNextItemWidth(fw * 0.45f);
-        ImGui::SliderFloat("R min##rmin",    &min_radius,      1.0f, 1000.0f);
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(fw * 0.45f);
-        ImGui::SliderFloat("R max##rmax",    &max_radius,      1.0f, 5000.0f);
+        // row 1: edge detection
+        slider4("Canny lo##c1",  &canny_t1,       1.0f,  300.0f); ImGui::SameLine();
+        slider4("Canny hi##c2",  &canny_t2,       1.0f,  500.0f); ImGui::SameLine();
+        slider4("R min##rmin",   &min_radius,      1.0f, 1000.0f); ImGui::SameLine();
+        slider4("R max##rmax",   &max_radius,      1.0f, 5000.0f);
 
-        ImGui::SetNextItemWidth(fw * 0.45f);
-        ImGui::SliderFloat("Hough dp##dp",   &hough_dp,        0.5f,    4.0f);
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(fw * 0.45f);
-        ImGui::SliderFloat("Hough minDist",  &hough_min_dist,  1.0f, 1000.0f);
+        // row 2: hough + shape quality
+        slider4("Hough dp##dp",  &hough_dp,        0.5f,    4.0f); ImGui::SameLine();
+        slider4("minDist##md",   &hough_min_dist,  1.0f, 1000.0f); ImGui::SameLine();
+        slider4("Hough acc##p2", &hough_param2,    5.0f,  100.0f); ImGui::SameLine();
+        slider4("Min b/a##rat",  &min_axis_ratio,  0.1f,    1.0f);
 
-        ImGui::SetNextItemWidth(fw * 0.45f);
-        ImGui::SliderFloat("Hough acc##p2",  &hough_param2,    5.0f,  100.0f);
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(fw * 0.45f);
-        ImGui::SliderFloat("Min b/a##rat",   &min_axis_ratio,  0.1f,   1.0f);
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(fw * 0.45f);
-        ImGui::SliderFloat("Max fit err##fe", &max_fit_error,  0.01f,  1.0f);
+        // row 3: fit quality + size
+        slider4("Max fit err##fe", &max_fit_error, 0.01f,   1.0f);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Lower = stricter ellipse fit.\n"
                               "0.05: very strict  0.2: default  0.5: loose");
-
-        ImGui::SetNextItemWidth(fw * 0.45f);
-        ImGui::SliderInt("Min area (px)",    &min_contour_px,  10, 10000);
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(fw * 0.45f);
-        ImGui::SliderInt("Max detect size",  &max_detect_size, 128, 4096);
-        ImGui::SameLine();
+        slideri4("Min area##mca",  &min_contour_px,  10, 10000); ImGui::SameLine();
+        slideri4("Detect size##ds",&max_detect_size, 128,  4096); ImGui::SameLine();
         ImGui::TextDisabled("px");
     }
 
