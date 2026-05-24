@@ -1,5 +1,6 @@
 #pragma once
 #include "util/analysis_tool.h"
+#include <opencv2/core.hpp>
 #include <atomic>
 #include <future>
 #include <vector>
@@ -32,6 +33,7 @@ public:
     float hough_min_dist  = 50.0f;
     float hough_param2    = 30.0f;   // HoughCircles accumulator threshold
     float min_axis_ratio  = 0.5f;    // reject shapes whose minor/major < this
+    float max_fit_error   = 0.2f;    // max mean distance from fitted ellipse (normalized)
     int   min_contour_px  = 300;     // min contour area in pixels
     bool  detect_circles  = true;
     bool  detect_ellipses = true;
@@ -72,8 +74,11 @@ private:
         float hough_dp, float hough_min_dist, float hough_param2,
         float min_axis_ratio, int min_contour_px,
         bool detect_circles, bool detect_ellipses,
-        int max_detect_size,
+        int max_detect_size, float max_fit_error,
         std::atomic<float>* progress);
+
+    static float ellipse_fit_error(const std::vector<cv::Point>& contour,
+                                   const cv::RotatedRect& ell);
 
     static void draw_rotated_ellipse(ImDrawList* dl, ImVec2 center,
                                      float rx, float ry, float angle_deg,

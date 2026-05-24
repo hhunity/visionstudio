@@ -30,6 +30,29 @@ static cv::Mat to_gray_mat(const image_data& img) {
 // Core detection logic (static — safe to call from background thread)
 // ---------------------------------------------------------------------------
 
+// Normalized mean distance between contour points and the fitted ellipse.
+// Returns 0 for a perfect fit, larger values for poor fits.
+float circle_ellipse_tool::ellipse_fit_error(
+    const std::vector<cv::Point>& contour, const cv::RotatedRect& ell)
+{
+    const float a   = ell.size.width  * 0.5f;
+    const float b   = ell.size.height * 0.5f;
+    if (a <= 0.0f || b <= 0.0f) return 1e9f;
+    const float rad = ell.angle * (static_cast<float>(std::numbers::pi) / 180.0f);
+    const float ca  = std::cos(rad);
+    const float sa  = std::sin(rad);
+    float err = 0.0f;
+    for (const auto& pt : contour) {
+        const float dx =  static_cast<float>(pt.x) - ell.center.x;
+        const float dy =  static_cast<float>(pt.y) - ell.center.y;
+        const float rx =  dx * ca + dy * sa;
+        const float ry = -dx * sa + dy * ca;
+        // Distance from the unit ellipse surface (|value - 1| where value == 1 on the ellipse)
+        err += std::abs(std::sqrt((rx / a) * (rx / a) + (ry / b) * (ry / b)) - 1.0f);
+    }
+    return err / static_cast<float>(contour.size());
+}
+
 std::vector<detected_shape> circle_ellipse_tool::run_detection(
     const image_data& img,
     float canny_t1, float canny_t2,
@@ -37,7 +60,7 @@ std::vector<detected_shape> circle_ellipse_tool::run_detection(
     float hough_dp, float hough_min_dist, float hough_param2,
     float min_axis_ratio, int min_contour_px,
     bool detect_circles, bool detect_ellipses,
-    int max_detect_size,
+    int max_detect_size, float max_fit_error,
     std::atomic<float>* progress)
 {
     auto set_progress = [&](float v) { if (progress) progress->store(v); };
@@ -119,6 +142,7 @@ std::vector<detected_shape> circle_ellipse_tool::run_detection(
             const float minor = std::min(rx, ry);
             if (major < s_min_r || major > s_max_r) continue;
             if (minor / major < min_axis_ratio) continue;
+            if (ellipse_fit_error(contour, ell) > max_fit_error) continue;
 
             bool dup = false;
             for (const auto& existing : shapes) {
@@ -156,7 +180,7 @@ void circle_ellipse_tool::analyze(const image_data& img) {
         hough_dp, hough_min_dist, hough_param2,
         min_axis_ratio, min_contour_px,
         detect_circles, detect_ellipses,
-        max_detect_size, nullptr);
+        max_detect_size, max_fit_error, nullptr);
 }
 
 void circle_ellipse_tool::start_analyze(const image_data& img) {
@@ -170,7 +194,7 @@ void circle_ellipse_tool::start_analyze(const image_data& img) {
         hough_dp, hough_min_dist, hough_param2,
         min_axis_ratio, min_contour_px,
         detect_circles, detect_ellipses,
-        max_detect_size, &analyze_progress_);
+        max_detect_size, max_fit_error, &analyze_progress_);
 }
 
 bool circle_ellipse_tool::is_analyzing() const {
@@ -302,7 +326,13 @@ void circle_ellipse_tool::render_panel() {
         ImGui::SliderFloat("Hough acc##p2",  &hough_param2,    5.0f,  100.0f);
         ImGui::SameLine();
         ImGui::SetNextItemWidth(fw * 0.45f);
-        ImGui::SliderFloat("Min b/a##rat",   &min_axis_ratio,  0.1f,    1.0f);
+        ImGui::SliderFloat("Min b/a##rat",   &min_axis_ratio,  0.1f,   1.0f);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(fw * 0.45f);
+        ImGui::SliderFloat("Max fit err##fe", &max_fit_error,  0.01f,  1.0f);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Lower = stricter ellipse fit.\n"
+                              "0.05: very strict  0.2: default  0.5: loose");
 
         ImGui::SetNextItemWidth(fw * 0.45f);
         ImGui::SliderInt("Min area (px)",    &min_contour_px,  10, 10000);
