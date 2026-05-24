@@ -9,6 +9,7 @@
 #include "capture/capture_client.h"
 #include "util/capture_config.h"
 #include "gui/circle_ellipse_tool.h"
+#include "gui/remote_overlay_tool.h"
 #include "gui/compare_viewer.h"
 #include "gui/image_viewer.h"
 #include <implot.h>
@@ -434,6 +435,8 @@ int main(int argc, char** argv) {
     bool        show_overlay_graph    = false;
     bool        show_detection_panel  = false;
     circle_ellipse_tool ce_tool;
+    remote_overlay_tool rot;
+    bool        show_remote_overlay_panel = false;
     bool        show_camera_config    = false;
     bool        show_connect_config   = false;
     bool        show_about            = false;
@@ -623,6 +626,7 @@ int main(int argc, char** argv) {
                     default:
                         break;
                     }
+                    rot.set_image_path(left_loader.path);
                     if (!right_loader.active)
                         status_msg = "Loaded: " + left_loader.path;
                 }
@@ -637,6 +641,21 @@ int main(int argc, char** argv) {
                     compare.right_label = right_loader.path;
                     status_msg          = "Loaded";
                 }
+            }
+        }
+
+        // ----- Poll remote overlay result -----
+        {
+            std::vector<roi_group> remote_groups;
+            if (rot.poll_result(remote_groups)) {
+                if (use_single) {
+                    overlays = remote_groups;
+                    single_viewer.set_overlay_groups(std::move(remote_groups));
+                } else {
+                    left_overlays = remote_groups;
+                    compare.set_left_overlay_groups(std::move(remote_groups));
+                }
+                status_msg = "Remote overlay loaded";
             }
         }
 
@@ -774,6 +793,7 @@ int main(int argc, char** argv) {
                 ImGui::MenuItem("Profile Panel",    nullptr, &show_profile_panel);
                 ImGui::MenuItem("Overlay Graph",    nullptr, &show_overlay_graph);
                 ImGui::MenuItem("Circle/Ellipse",   nullptr, &show_detection_panel);
+                ImGui::MenuItem("Remote Overlay",   nullptr, &show_remote_overlay_panel);
                 ImGui::EndMenu();
             }
             if (ImGui::MenuItem("Settings")) {
@@ -1077,6 +1097,7 @@ int main(int argc, char** argv) {
             toggle_btn("Profile", show_profile_panel);
             toggle_btn("OvGraph", show_overlay_graph);
             toggle_btn("Detect",  show_detection_panel);
+            toggle_btn("Remote",  show_remote_overlay_panel);
             ImGui::NewLine();
         }
 
@@ -1084,10 +1105,11 @@ int main(int argc, char** argv) {
         const float status_h          = ImGui::GetFrameHeightWithSpacing();
         const float profile_panel_h   = show_profile_panel  ? 180.0f : 0.0f;
         const float overlay_graph_h   = show_overlay_graph  ? 360.0f : 0.0f;
-        const float detection_panel_h = show_detection_panel ? 260.0f : 0.0f;
+        const float detection_panel_h      = show_detection_panel      ? 260.0f : 0.0f;
+        const float remote_overlay_panel_h = show_remote_overlay_panel ? 200.0f : 0.0f;
         const float viewer_h          = ImGui::GetContentRegionAvail().y - status_h
                                         - profile_panel_h - overlay_graph_h
-                                        - detection_panel_h;
+                                        - detection_panel_h - remote_overlay_panel_h;
 
         static float    panel_w         = 240.0f;  // right pixel panel (resizable)
         static float    capture_panel_w = 180.0f;  // left capture control panel (resizable)
@@ -1965,9 +1987,24 @@ int main(int argc, char** argv) {
             ImGui::EndChild();
         }
 
+        // ----- Remote Overlay panel -----
+        if (show_remote_overlay_panel) {
+            const float content_left_x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
+            ImGui::SetCursorScreenPos({content_left_x,
+                viewer_origin.y + viewer_h + profile_panel_h + overlay_graph_h + detection_panel_h});
+            ImGui::BeginChild("##remote_overlay_panel",
+                              {ImGui::GetContentRegionAvail().x, remote_overlay_panel_h},
+                              ImGuiChildFlags_Borders);
+            ImGui::TextUnformatted("Remote Overlay");
+            ImGui::Separator();
+            rot.render_panel();
+            ImGui::EndChild();
+        }
+
         // Reset cursor to below all panels so the status bar sits correctly.
         ImGui::SetCursorScreenPos({viewer_origin.x,
-            viewer_origin.y + viewer_h + profile_panel_h + overlay_graph_h + detection_panel_h});
+            viewer_origin.y + viewer_h + profile_panel_h + overlay_graph_h
+            + detection_panel_h + remote_overlay_panel_h});
 
         // ----- Status bar -----
         ImGui::Separator();

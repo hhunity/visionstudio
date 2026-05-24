@@ -9,7 +9,7 @@
     "delay_us": 10
   },
   "output": {
-    "bit_depth": 8,
+    "bit_depth": 18,
     "format": "tiff"
   }
 }

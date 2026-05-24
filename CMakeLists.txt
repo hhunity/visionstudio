@@ -126,9 +126,10 @@ add_executable(visionstudio
 target_include_directories(visionstudio PRIVATE ${CMAKE_BINARY_DIR})
 target_link_libraries(visionstudio PRIVATE vs_gui vs_io vs_capture vs_analysis CLI11::CLI11 implot::implot nfd::nfd)
 
-# ----- vs_analysis: circle/ellipse detection tool -----
+# ----- vs_analysis: image analysis tools (circle/ellipse, remote overlay) -----
 add_library(vs_analysis STATIC
     gui/circle_ellipse_tool.cpp
+    gui/remote_overlay_tool.cpp
 )
 target_include_directories(vs_analysis PUBLIC
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>
@@ -138,6 +139,8 @@ target_link_libraries(vs_analysis PUBLIC
     opencv_core
     opencv_imgproc
     nfd::nfd
+    httplib::httplib
+    nlohmann_json::nlohmann_json
 )
 
 # ----- tiff_to_gray: test utility to convert TIFF to grayscale (opt-in) -----
