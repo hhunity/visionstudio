@@ -1317,7 +1317,16 @@ int main(int argc, char** argv) {
 
             // ----- Camera Info -----
             ImGui::Separator();
-            {
+            static std::string cam_edit_key;
+            static char        cam_edit_buf[256] = {};
+            static bool        cam_edit_focus    = false;
+
+            ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4{0.35f, 0.35f, 0.35f, 1.0f});
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4{0.45f, 0.45f, 0.45f, 1.0f});
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4{0.28f, 0.28f, 0.28f, 1.0f});
+            const bool cam_info_open = ImGui::CollapsingHeader("Camera Info");
+            ImGui::PopStyleColor(3);
+            if (cam_info_open) {
                 const bool fetching = cam_info_future.valid() &&
                     cam_info_future.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
                 ImGui::BeginDisabled(fetching || cur_sse != sse_state::connected);
@@ -1326,10 +1335,6 @@ int main(int argc, char** argv) {
                         [&cap_cli]{ return cap_cli->fetch_camera_info(); });
                 }
                 ImGui::EndDisabled();
-            }
-            static std::string cam_edit_key;
-            static char        cam_edit_buf[256] = {};
-            static bool        cam_edit_focus    = false;
 
             for (auto& g : cam_info) {
                 if (ImGui::CollapsingHeader(g.label.c_str())) {
@@ -1442,7 +1447,8 @@ int main(int argc, char** argv) {
                         ImGui::EndTable();
                     }
                 }
-            }
+            } // end group loop
+            } // end CollapsingHeader "Camera Info"
 
             ImGui::EndChild();
             ImGui::SameLine();
