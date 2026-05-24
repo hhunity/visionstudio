@@ -66,6 +66,7 @@ private:
     std::atomic<float>                       analyze_progress_{0.0f};
     std::atomic<bool>                        cancel_requested_{false};
     bool                                     last_cancelled_{false};
+    bool                                     show_graph_{false};
 
     // Run detection with explicit params (safe to call from background thread).
     // progress: updated 0.0→1.0 as work proceeds; nullable.

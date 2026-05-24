@@ -2,6 +2,7 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <imgui.h>
+#include <implot.h>
 #include <nfd.hpp>
 #include <algorithm>
 #include <cmath>
@@ -383,6 +384,9 @@ void circle_ellipse_tool::render_panel() {
 
     if (!shapes_.empty()) {
         ImGui::SameLine();
+        if (ImGui::SmallButton("Show Graph"))
+            show_graph_ = !show_graph_;
+        ImGui::SameLine();
         if (ImGui::SmallButton("Export CSV")) {
             constexpr nfdfilteritem_t kFilter[] = {{"CSV", "csv"}};
             nfdchar_t* out_path = nullptr;
@@ -436,4 +440,48 @@ void circle_ellipse_tool::render_panel() {
             ImGui::EndTable();
         }
     }
+
+    // ----- Graph window -----
+    if (!show_graph_ || shapes_.empty()) return;
+
+    ImGui::SetNextWindowSize({520.0f, 380.0f}, ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Circle/Ellipse – Major Diameter vs Y", &show_graph_)) {
+        ImGui::End();
+        return;
+    }
+
+    // Split shapes into two series for different colors
+    std::vector<double> cx_cir, cy_cir, cx_ell, cy_ell;
+    for (const auto& s : shapes_) {
+        if (s.kind == detected_shape::kind_t::circle) {
+            cx_cir.push_back(static_cast<double>(s.cy));
+            cy_cir.push_back(static_cast<double>(s.major_diameter()));
+        } else {
+            cx_ell.push_back(static_cast<double>(s.cy));
+            cy_ell.push_back(static_cast<double>(s.major_diameter()));
+        }
+    }
+
+    if (ImPlot::BeginPlot("##diam_plot", {-1.0f, -1.0f})) {
+        ImPlot::SetupAxes("Image Y (px)", "Major diameter (px)");
+        ImPlot::SetupLegend(ImPlotLocation_NorthEast);
+
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 5.0f,
+                                   ImVec4{0.3f, 0.9f, 0.3f, 0.9f}, 1.0f,
+                                   ImVec4{0.3f, 0.9f, 0.3f, 0.9f});
+        if (!cx_cir.empty())
+            ImPlot::PlotScatter("Circle", cx_cir.data(), cy_cir.data(),
+                                static_cast<int>(cx_cir.size()));
+
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 5.0f,
+                                   ImVec4{0.3f, 0.7f, 1.0f, 0.9f}, 1.0f,
+                                   ImVec4{0.3f, 0.7f, 1.0f, 0.9f});
+        if (!cx_ell.empty())
+            ImPlot::PlotScatter("Ellipse", cx_ell.data(), cy_ell.data(),
+                                static_cast<int>(cx_ell.size()));
+
+        ImPlot::EndPlot();
+    }
+
+    ImGui::End();
 }
