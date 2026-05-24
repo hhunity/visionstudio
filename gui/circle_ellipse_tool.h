@@ -35,6 +35,7 @@ public:
     int   min_contour_px  = 300;     // min contour area in pixels
     bool  detect_circles  = true;
     bool  detect_ellipses = true;
+    int   max_detect_size = 1024;    // downsample longest side to this before detection
 
     std::string_view name() const override { return "Circle/Ellipse"; }
 
@@ -71,6 +72,7 @@ private:
         float hough_dp, float hough_min_dist, float hough_param2,
         float min_axis_ratio, int min_contour_px,
         bool detect_circles, bool detect_ellipses,
+        int max_detect_size,
         std::atomic<float>* progress);
 
     static void draw_rotated_ellipse(ImDrawList* dl, ImVec2 center,

@@ -37,6 +37,7 @@ std::vector<detected_shape> circle_ellipse_tool::run_detection(
     float hough_dp, float hough_min_dist, float hough_param2,
     float min_axis_ratio, int min_contour_px,
     bool detect_circles, bool detect_ellipses,
+    int max_detect_size,
     std::atomic<float>* progress)
 {
     auto set_progress = [&](float v) { if (progress) progress->store(v); };
@@ -46,29 +47,48 @@ std::vector<detected_shape> circle_ellipse_tool::run_detection(
 
     set_progress(0.0f);
     cv::Mat gray = to_gray_mat(img);
+
+    // Downsample to max_detect_size on the longest side.
+    // Detected coords/radii are scaled back to original image space.
+    const float scale = (max_detect_size > 0)
+        ? std::min(1.0f, static_cast<float>(max_detect_size)
+                         / static_cast<float>(std::max(img.width, img.height)))
+        : 1.0f;
+    cv::Mat work;
+    if (scale < 1.0f)
+        cv::resize(gray, work, {}, scale, scale, cv::INTER_AREA);
+    else
+        work = gray;
+
     cv::Mat blurred;
-    cv::GaussianBlur(gray, blurred, {5, 5}, 1.5);
+    cv::GaussianBlur(work, blurred, {5, 5}, 1.5);
     set_progress(0.1f);
+
+    // Scaled params for the downsampled image
+    const float s_min_r    = min_radius    * scale;
+    const float s_max_r    = max_radius    * scale;
+    const float s_min_dist = hough_min_dist * scale;
+    const float s_min_area = static_cast<float>(min_contour_px) * scale * scale;
 
     // ----- HoughCircles -----
     if (detect_circles) {
         std::vector<cv::Vec3f> circles;
         cv::HoughCircles(blurred, circles, cv::HOUGH_GRADIENT,
                          static_cast<double>(hough_dp),
-                         static_cast<double>(hough_min_dist),
+                         static_cast<double>(s_min_dist),
                          static_cast<double>(canny_t2),
                          static_cast<double>(hough_param2),
-                         static_cast<int>(min_radius),
-                         static_cast<int>(max_radius));
+                         static_cast<int>(s_min_r),
+                         static_cast<int>(s_max_r));
         for (const auto& c : circles) {
-            detected_shape s;
-            s.kind      = detected_shape::kind_t::circle;
-            s.cx        = c[0];
-            s.cy        = c[1];
-            s.rx        = c[2];
-            s.ry        = c[2];
-            s.angle_deg = 0.0f;
-            shapes.push_back(s);
+            detected_shape sh;
+            sh.kind      = detected_shape::kind_t::circle;
+            sh.cx        = c[0] / scale;   // 元スケールに戻す
+            sh.cy        = c[1] / scale;
+            sh.rx        = c[2] / scale;
+            sh.ry        = c[2] / scale;
+            sh.angle_deg = 0.0f;
+            shapes.push_back(sh);
         }
     }
     set_progress(0.4f);
@@ -84,12 +104,11 @@ std::vector<detected_shape> circle_ellipse_tool::run_detection(
 
         const float n = static_cast<float>(contours.size());
         for (size_t ci = 0; ci < contours.size(); ++ci) {
-            // 輪郭ループは本物の進捗（55%→100%）
             set_progress(0.55f + 0.45f * (static_cast<float>(ci) / std::max(n, 1.0f)));
 
             const auto& contour = contours[ci];
             if (contour.size() < 5) continue;
-            if (cv::contourArea(contour) < min_contour_px) continue;
+            if (cv::contourArea(contour) < s_min_area) continue;
 
             const cv::RotatedRect ell = cv::fitEllipse(contour);
             const float rx = ell.size.width  * 0.5f;
@@ -98,13 +117,13 @@ std::vector<detected_shape> circle_ellipse_tool::run_detection(
 
             const float major = std::max(rx, ry);
             const float minor = std::min(rx, ry);
-            if (major < min_radius || major > max_radius) continue;
+            if (major < s_min_r || major > s_max_r) continue;
             if (minor / major < min_axis_ratio) continue;
 
             bool dup = false;
             for (const auto& existing : shapes) {
-                const float dx = ell.center.x - existing.cx;
-                const float dy = ell.center.y - existing.cy;
+                const float dx = ell.center.x / scale - existing.cx;
+                const float dy = ell.center.y / scale - existing.cy;
                 if (std::sqrt(dx * dx + dy * dy) < hough_min_dist * 0.5f) {
                     dup = true;
                     break;
@@ -112,15 +131,15 @@ std::vector<detected_shape> circle_ellipse_tool::run_detection(
             }
             if (dup) continue;
 
-            detected_shape s;
-            s.kind      = (minor / major >= 0.92f) ? detected_shape::kind_t::circle
-                                                   : detected_shape::kind_t::ellipse;
-            s.cx        = ell.center.x;
-            s.cy        = ell.center.y;
-            s.rx        = rx;
-            s.ry        = ry;
-            s.angle_deg = ell.angle;
-            shapes.push_back(s);
+            detected_shape sh;
+            sh.kind      = (minor / major >= 0.92f) ? detected_shape::kind_t::circle
+                                                    : detected_shape::kind_t::ellipse;
+            sh.cx        = ell.center.x / scale;   // 元スケールに戻す
+            sh.cy        = ell.center.y / scale;
+            sh.rx        = rx / scale;
+            sh.ry        = ry / scale;
+            sh.angle_deg = ell.angle;
+            shapes.push_back(sh);
         }
     }
     set_progress(1.0f);
@@ -137,21 +156,21 @@ void circle_ellipse_tool::analyze(const image_data& img) {
         hough_dp, hough_min_dist, hough_param2,
         min_axis_ratio, min_contour_px,
         detect_circles, detect_ellipses,
-        nullptr);
+        max_detect_size, nullptr);
 }
 
 void circle_ellipse_tool::start_analyze(const image_data& img) {
-    if (is_analyzing()) return;  // skip if already running
+    if (is_analyzing()) return;
 
     analyze_progress_.store(0.0f);
     analyze_future_ = std::async(std::launch::async,
         run_detection,
-        img,  // copied into the async task
+        img,
         canny_t1, canny_t2, min_radius, max_radius,
         hough_dp, hough_min_dist, hough_param2,
         min_axis_ratio, min_contour_px,
         detect_circles, detect_ellipses,
-        &analyze_progress_);
+        max_detect_size, &analyze_progress_);
 }
 
 bool circle_ellipse_tool::is_analyzing() const {
@@ -286,7 +305,12 @@ void circle_ellipse_tool::render_panel() {
         ImGui::SliderFloat("Min b/a##rat",   &min_axis_ratio,  0.1f,    1.0f);
 
         ImGui::SetNextItemWidth(fw * 0.45f);
-        ImGui::SliderInt("Min area (px)", &min_contour_px, 10, 10000);
+        ImGui::SliderInt("Min area (px)",    &min_contour_px,  10, 10000);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(fw * 0.45f);
+        ImGui::SliderInt("Max detect size",  &max_detect_size, 128, 4096);
+        ImGui::SameLine();
+        ImGui::TextDisabled("px");
     }
 
     ImGui::Separator();
