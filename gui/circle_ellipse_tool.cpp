@@ -61,14 +61,18 @@ std::vector<detected_shape> circle_ellipse_tool::run_detection(
     float min_axis_ratio, int min_contour_px,
     bool detect_circles, bool detect_ellipses,
     int max_detect_size, float max_fit_error,
-    std::atomic<float>* progress)
+    std::atomic<float>* progress,
+    std::atomic<bool>*  cancel)
 {
-    auto set_progress = [&](float v) { if (progress) progress->store(v); };
+    auto set_progress  = [&](float v) { if (progress) progress->store(v); };
+    auto is_cancelled  = [&]{ return cancel && cancel->load(); };
 
     std::vector<detected_shape> shapes;
     if (img.empty()) return shapes;
 
     set_progress(0.0f);
+    if (is_cancelled()) return {};
+
     cv::Mat gray = to_gray_mat(img);
 
     // Downsample to max_detect_size on the longest side.
@@ -93,6 +97,8 @@ std::vector<detected_shape> circle_ellipse_tool::run_detection(
     const float s_min_dist = hough_min_dist * scale;
     const float s_min_area = static_cast<float>(min_contour_px) * scale * scale;
 
+    if (is_cancelled()) return {};
+
     // ----- HoughCircles -----
     if (detect_circles) {
         std::vector<cv::Vec3f> circles;
@@ -116,17 +122,22 @@ std::vector<detected_shape> circle_ellipse_tool::run_detection(
     }
     set_progress(0.4f);
 
+    if (is_cancelled()) return {};
+
     // ----- Contour-based ellipse fitting -----
     if (detect_ellipses) {
         cv::Mat edges;
         cv::Canny(blurred, edges, canny_t1, canny_t2);
         set_progress(0.55f);
 
+        if (is_cancelled()) return {};
+
         std::vector<std::vector<cv::Point>> contours;
         cv::findContours(edges, contours, cv::RETR_LIST, cv::CHAIN_APPROX_NONE);
 
         const float n = static_cast<float>(contours.size());
         for (size_t ci = 0; ci < contours.size(); ++ci) {
+            if (is_cancelled()) return {};
             set_progress(0.55f + 0.45f * (static_cast<float>(ci) / std::max(n, 1.0f)));
 
             const auto& contour = contours[ci];
@@ -175,17 +186,20 @@ std::vector<detected_shape> circle_ellipse_tool::run_detection(
 // ---------------------------------------------------------------------------
 
 void circle_ellipse_tool::analyze(const image_data& img) {
+    cancel_requested_.store(false);
     shapes_ = run_detection(img,
         canny_t1, canny_t2, min_radius, max_radius,
         hough_dp, hough_min_dist, hough_param2,
         min_axis_ratio, min_contour_px,
         detect_circles, detect_ellipses,
-        max_detect_size, max_fit_error, nullptr);
+        max_detect_size, max_fit_error, nullptr, nullptr);
 }
 
 void circle_ellipse_tool::start_analyze(const image_data& img) {
     if (is_analyzing()) return;
 
+    cancel_requested_.store(false);
+    last_cancelled_ = false;
     analyze_progress_.store(0.0f);
     analyze_future_ = std::async(std::launch::async,
         run_detection,
@@ -194,7 +208,8 @@ void circle_ellipse_tool::start_analyze(const image_data& img) {
         hough_dp, hough_min_dist, hough_param2,
         min_axis_ratio, min_contour_px,
         detect_circles, detect_ellipses,
-        max_detect_size, max_fit_error, &analyze_progress_);
+        max_detect_size, max_fit_error,
+        &analyze_progress_, &cancel_requested_);
 }
 
 bool circle_ellipse_tool::is_analyzing() const {
@@ -278,17 +293,35 @@ void circle_ellipse_tool::render_panel() {
     // ----- Poll background task -----
     if (analyze_future_.valid() &&
         analyze_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-        shapes_ = analyze_future_.get();
+        auto result    = analyze_future_.get();
+        last_cancelled_ = cancel_requested_.load();
+        if (!last_cancelled_)
+            shapes_ = std::move(result);
     }
 
-    // ----- Progress bar -----
+    // ----- Progress bar + Cancel button -----
     if (is_analyzing()) {
         const float p = analyze_progress_.load();
         char label[32];
         std::snprintf(label, sizeof(label), "Detecting... %d%%",
                       static_cast<int>(p * 100.0f));
-        ImGui::ProgressBar(p, {-1.0f, 0.0f}, label);
+        const float btn_w = 70.0f;
+        ImGui::ProgressBar(p,
+            {ImGui::GetContentRegionAvail().x - btn_w - ImGui::GetStyle().ItemSpacing.x, 0.0f},
+            label);
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.7f, 0.2f, 0.2f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.9f, 0.3f, 0.3f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.5f, 0.1f, 0.1f, 1.0f});
+        if (ImGui::Button("Cancel", {btn_w, 0.0f}))
+            cancel_requested_.store(true);
+        ImGui::PopStyleColor(3);
         return;
+    }
+
+    if (last_cancelled_) {
+        ImGui::TextColored({1.0f, 0.5f, 0.3f, 1.0f}, "Cancelled.");
+        ImGui::SameLine();
     }
 
     // ----- Parameters -----

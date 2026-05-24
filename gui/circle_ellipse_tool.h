@@ -64,6 +64,8 @@ private:
     std::vector<detected_shape>              shapes_;
     std::future<std::vector<detected_shape>> analyze_future_;
     std::atomic<float>                       analyze_progress_{0.0f};
+    std::atomic<bool>                        cancel_requested_{false};
+    bool                                     last_cancelled_{false};
 
     // Run detection with explicit params (safe to call from background thread).
     // progress: updated 0.0→1.0 as work proceeds; nullable.
@@ -75,7 +77,8 @@ private:
         float min_axis_ratio, int min_contour_px,
         bool detect_circles, bool detect_ellipses,
         int max_detect_size, float max_fit_error,
-        std::atomic<float>* progress);
+        std::atomic<float>* progress,
+        std::atomic<bool>*  cancel);
 
     static float ellipse_fit_error(const std::vector<cv::Point>& contour,
                                    const cv::RotatedRect& ell);
