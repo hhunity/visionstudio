@@ -15,10 +15,6 @@
     "cpp-httplib",
     "nativefiledialog-extended",
     "libjpeg-turbo",
-    {
-      "name": "opencv4",
-      "default-features": false,
-      "features": ["imgproc"]
-    }
+    "opencv4"
   ]
 }
