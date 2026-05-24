@@ -340,7 +340,7 @@ void circle_ellipse_tool::render_panel() {
 
         constexpr ImGuiTableFlags kTf = ImGuiTableFlags_SizingStretchSame
                                       | ImGuiTableFlags_NoPadOuterX;
-        if (ImGui::BeginTable("##params", 4, kTf)) {
+        if (ImGui::BeginTable("##params", 4, kTf, {ImGui::GetContentRegionAvail().x, 0.0f})) {
             // row 1
             ImGui::TableNextColumn();
             ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Canny lo##c1",   &canny_t1,        1.0f,  300.0f);

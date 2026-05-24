@@ -1924,7 +1924,9 @@ int main(int argc, char** argv) {
                               ImGuiChildFlags_Borders);
 
             // Detect button (left column) + results (right fills the rest)
-            const float btn_w = 100.0f;
+            // Re-query width *inside* the child (border + padding reduce it).
+            const float inner_w = ImGui::GetContentRegionAvail().x;
+            const float btn_w   = 100.0f;
             const float spacing = ImGui::GetStyle().ItemSpacing.x;
             ImGui::BeginGroup();
             ImGui::TextUnformatted("Circle/Ellipse");
@@ -1948,8 +1950,8 @@ int main(int argc, char** argv) {
 
             // Parameters + results panel fills the rest
             ImGui::BeginChild("##det_inner",
-                              {avail_w - btn_w - spacing * 2.0f,
-                               detection_panel_h - ImGui::GetStyle().WindowPadding.y * 2.0f},
+                              {inner_w - btn_w - spacing,
+                               ImGui::GetContentRegionAvail().y},
                               ImGuiChildFlags_None);
             ce_tool.render_panel();
             ImGui::EndChild();
