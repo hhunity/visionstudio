@@ -8,6 +8,7 @@
 
 #include "capture/capture_client.h"
 #include "util/capture_config.h"
+#include "gui/circle_ellipse_tool.h"
 #include "gui/compare_viewer.h"
 #include "gui/image_viewer.h"
 #include <implot.h>
@@ -431,6 +432,8 @@ int main(int argc, char** argv) {
     bool        show_pixel_panel      = true;
     bool        show_profile_panel    = false;
     bool        show_overlay_graph    = false;
+    bool        show_detection_panel  = false;
+    circle_ellipse_tool ce_tool;
     bool        show_camera_config    = false;
     bool        show_connect_config   = false;
     bool        show_about            = false;
@@ -767,9 +770,10 @@ int main(int argc, char** argv) {
                     }
                 }
                 ImGui::Separator();
-                ImGui::MenuItem("Pixel Panel",   nullptr, &show_pixel_panel);
-                ImGui::MenuItem("Profile Panel", nullptr, &show_profile_panel);
-                ImGui::MenuItem("Overlay Graph", nullptr, &show_overlay_graph);
+                ImGui::MenuItem("Pixel Panel",      nullptr, &show_pixel_panel);
+                ImGui::MenuItem("Profile Panel",    nullptr, &show_profile_panel);
+                ImGui::MenuItem("Overlay Graph",    nullptr, &show_overlay_graph);
+                ImGui::MenuItem("Circle/Ellipse",   nullptr, &show_detection_panel);
                 ImGui::EndMenu();
             }
             if (ImGui::MenuItem("Settings")) {
@@ -1072,6 +1076,7 @@ int main(int argc, char** argv) {
             toggle_btn("Pixel",   show_pixel_panel);
             toggle_btn("Profile", show_profile_panel);
             toggle_btn("OvGraph", show_overlay_graph);
+            toggle_btn("Detect",  show_detection_panel);
             ImGui::NewLine();
         }
 
@@ -1079,8 +1084,10 @@ int main(int argc, char** argv) {
         const float status_h          = ImGui::GetFrameHeightWithSpacing();
         const float profile_panel_h   = show_profile_panel  ? 180.0f : 0.0f;
         const float overlay_graph_h   = show_overlay_graph  ? 360.0f : 0.0f;
+        const float detection_panel_h = show_detection_panel ? 260.0f : 0.0f;
         const float viewer_h          = ImGui::GetContentRegionAvail().y - status_h
-                                        - profile_panel_h - overlay_graph_h;
+                                        - profile_panel_h - overlay_graph_h
+                                        - detection_panel_h;
 
         static float    panel_w         = 240.0f;  // right pixel panel (resizable)
         static float    capture_panel_w = 180.0f;  // left capture control panel (resizable)
@@ -1454,8 +1461,22 @@ int main(int argc, char** argv) {
             ImGui::Image(static_cast<ImTextureID>(preview_tex), {dw, dh});
         } else if (use_single) {
             single_viewer.render("single_canvas", viewer_w, viewer_h);
+            if (show_detection_panel) {
+                const view_state& vs = single_viewer.get_view_state();
+                ce_tool.render_overlay(ImGui::GetWindowDrawList(),
+                                       viewer_origin, {viewer_w, viewer_h},
+                                       vs.zoom, vs.pan_x, vs.pan_y);
+            }
         } else {
             compare.render(viewer_w, viewer_h);
+            if (show_detection_panel) {
+                const view_state& lvs = compare.get_view_state();
+                const float spacing   = ImGui::GetStyle().ItemSpacing.x;
+                const float half_w    = std::floor((viewer_w - spacing) * 0.5f);
+                ce_tool.render_overlay(ImGui::GetWindowDrawList(),
+                                       viewer_origin, {half_w, viewer_h},
+                                       lvs.zoom, lvs.pan_x, lvs.pan_y);
+            }
         }
 
         // For split/compare capture: overlay live preview on the right panel
@@ -1893,8 +1914,54 @@ int main(int argc, char** argv) {
             ImGui::EndChild();
         }
 
+        // ----- Circle/Ellipse detection panel -----
+        if (show_detection_panel) {
+            const float content_left_x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
+            ImGui::SetCursorScreenPos({content_left_x,
+                viewer_origin.y + viewer_h + profile_panel_h + overlay_graph_h});
+            const float avail_w = ImGui::GetContentRegionAvail().x;
+            ImGui::BeginChild("##detection_panel", {avail_w, detection_panel_h},
+                              ImGuiChildFlags_Borders);
+
+            // Detect button (left column) + results (right fills the rest)
+            // Re-query width *inside* the child (border + padding reduce it).
+            const float inner_w = ImGui::GetContentRegionAvail().x;
+            const float btn_w   = 100.0f;
+            const float spacing = ImGui::GetStyle().ItemSpacing.x;
+            ImGui::BeginGroup();
+            ImGui::TextUnformatted("Circle/Ellipse");
+            ImGui::Separator();
+            const bool has_img = use_single ? single_viewer.has_image()
+                                            : compare.get_left_image_data().width > 0;
+            ImGui::BeginDisabled(!has_img || ce_tool.is_analyzing());
+            if (ImGui::Button("Detect", {btn_w, 0})) {
+                const image_data& src = use_single
+                    ? single_viewer.get_image_data()
+                    : compare.get_left_image_data();
+                ce_tool.start_analyze(src);
+            }
+            ImGui::EndDisabled();
+            if (ImGui::Button("Clear", {btn_w, 0})) {
+                ce_tool.clear_results();
+                status_msg = "Detection cleared";
+            }
+            ImGui::EndGroup();
+            ImGui::SameLine();
+
+            // Parameters + results panel fills the rest
+            ImGui::BeginChild("##det_inner",
+                              {inner_w - btn_w - spacing,
+                               ImGui::GetContentRegionAvail().y},
+                              ImGuiChildFlags_None);
+            ce_tool.render_panel();
+            ImGui::EndChild();
+
+            ImGui::EndChild();
+        }
+
         // Reset cursor to below all panels so the status bar sits correctly.
-        ImGui::SetCursorScreenPos({viewer_origin.x, viewer_origin.y + viewer_h + profile_panel_h + overlay_graph_h});
+        ImGui::SetCursorScreenPos({viewer_origin.x,
+            viewer_origin.y + viewer_h + profile_panel_h + overlay_graph_h + detection_panel_h});
 
         // ----- Status bar -----
         ImGui::Separator();
