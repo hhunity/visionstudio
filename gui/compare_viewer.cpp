@@ -4,6 +4,7 @@
 #include <imgui.h>
 #include <thread>
 #include <vector>
+#include <chrono>
 
 compare_viewer::compare_viewer() = default;
 
@@ -24,6 +25,7 @@ void compare_viewer::clear_overlays() {
 }
 
 bool compare_viewer::load_left(const image_data& img) {
+    cancel_diff();
     left_src_             = img;
     left_offset_x         = 0;
     left_offset_y         = 0;
@@ -42,6 +44,7 @@ void compare_viewer::unload_left() {
 }
 
 bool compare_viewer::load_right(const image_data& img) {
+    cancel_diff();
     right_src_             = img;
     right_orig_            = img;
     right_offset_x         = 0;
@@ -54,6 +57,7 @@ bool compare_viewer::load_right(const image_data& img) {
 }
 
 bool compare_viewer::load_single(const image_data& img) {
+    cancel_diff();
     left_src_              = img;
     left_offset_x          = 0;
     left_offset_y          = 0;
@@ -103,7 +107,6 @@ void compare_viewer::compute_diff() {
                 const size_t dst = (static_cast<size_t>(y) * w       + x) * 4;
                 const size_t li  = (static_cast<size_t>(y) * L.width + x) * lch;
                 const size_t ri  = (static_cast<size_t>(y) * R.width + x) * rch;
-                // Compare up to 3 channels; for gray images only channel 0 is used.
                 const int nch = std::min({3, lch, rch});
                 for (int c = 0; c < nch; ++c) {
                     const int diff      = static_cast<int>(L.pixels[li + c])
@@ -111,11 +114,11 @@ void compare_viewer::compute_diff() {
                     const int amplified = static_cast<int>(std::abs(diff) * amplify);
                     diff_data_.pixels[dst + c] = static_cast<uint8_t>(std::min(255, amplified));
                 }
-                // Fill remaining RGB channels with first-channel diff (gray→gray case)
                 for (int c = nch; c < 3; ++c)
                     diff_data_.pixels[dst + c] = diff_data_.pixels[dst];
                 diff_data_.pixels[dst + 3] = 255;
             }
+            diff_rows_done_.fetch_add(1, std::memory_order_relaxed);
         }
     };
 
@@ -190,20 +193,33 @@ void compare_viewer::apply_right_offset() {
         right_orig_ = std::move(sliced);
     }
     right_viewer_.set_display_offset(ox, oy);
-    right_viewer_.load_image(right_orig_, false);
+    // In diff mode the viewer is reloaded by update_right_viewer() after
+    // the async diff finishes — loading the original here would cause a flicker.
+    if (!diff_mode)
+        right_viewer_.load_image(right_orig_, false);
     diff_applied_ = false;
+}
+
+void compare_viewer::cancel_diff() {
+    if (diff_future_.valid())
+        diff_future_.wait();
 }
 
 void compare_viewer::update_right_viewer() {
     if (diff_mode) {
-        compute_diff();
-        if (!diff_data_.empty())
-            right_viewer_.load_image(diff_data_);
+        cancel_diff();
+        const int h = std::min(left_viewer_.get_image_data().height,
+                               right_orig_.empty() ? 0 : right_orig_.height);
+        diff_total_rows_ = h;
+        diff_rows_done_.store(0, std::memory_order_relaxed);
+        diff_future_ = std::async(std::launch::async,
+                                  [this]{ compute_diff(); });
     } else {
+        cancel_diff();
         if (!right_orig_.empty())
             right_viewer_.load_image(right_orig_);
+        diff_applied_ = false;
     }
-    diff_applied_ = diff_mode;
 }
 
 // ---------------------------------------------------------------------------
@@ -231,11 +247,22 @@ void compare_viewer::render(float width, float height) {
     // Offset is applied after the DragInt controls (below), not here, so that
     // re-slicing is skipped while dragging and only fires on release.
 
-    // Reload right viewer if diff_mode or amplify changed.
-    if (diff_mode != diff_applied_ ||
-        (diff_mode && diff_amplify != amplify_applied_)) {
-        update_right_viewer();
+    // Poll async diff completion — load result on the main thread (OpenGL).
+    const bool diff_computing = diff_future_.valid() &&
+        diff_future_.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
+    if (!diff_computing && diff_future_.valid()) {
+        diff_future_.get();
+        if (!diff_data_.empty())
+            right_viewer_.load_image(diff_data_);
+        diff_applied_    = diff_mode;
         amplify_applied_ = diff_amplify;
+    }
+
+    // Trigger async diff when mode or amplify changes (only when no compute in flight).
+    if (!diff_computing &&
+        (diff_mode != diff_applied_ ||
+         (diff_mode && diff_amplify != amplify_applied_))) {
+        update_right_viewer();
     }
 
     const float spacing    = ImGui::GetStyle().ItemSpacing.x;
@@ -341,7 +368,7 @@ void compare_viewer::render(float width, float height) {
                                  left_src_.width - 1, left_src_.height - 1,
                                  "##lox", "##loy", "Reset##loff")) {
         apply_left_offset();
-        if (diff_mode) { update_right_viewer(); amplify_applied_ = diff_amplify; }
+        if (diff_mode) update_right_viewer();
     }
 
     if (has_right_offset &&
@@ -350,7 +377,7 @@ void compare_viewer::render(float width, float height) {
                                  right_src_.width - 1, right_src_.height - 1,
                                  "##rox", "##roy", "Reset##roff")) {
         apply_right_offset();
-        if (diff_mode) { update_right_viewer(); amplify_applied_ = diff_amplify; }
+        if (diff_mode) update_right_viewer();
     }
 
     const float canvas_top = origin.y + label_h + offset_h;
@@ -370,6 +397,25 @@ void compare_viewer::render(float width, float height) {
                                          show_crosshair && lh.valid);
     }
     right_viewer_.render("right_canvas", half_w, canvas_h, right_state);
+
+    // Progress overlay while diff is computing.
+    if (diff_computing) {
+        const float progress = diff_total_rows_ > 0
+            ? std::min(1.0f, static_cast<float>(diff_rows_done_.load(std::memory_order_relaxed))
+                             / diff_total_rows_)
+            : 0.0f;
+        const ImVec2 rp  = {origin.x + half_w + spacing, canvas_top};
+        const ImVec2 rp2 = {rp.x + half_w, rp.y + canvas_h};
+        auto* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(rp, rp2, IM_COL32(0, 0, 0, 110));
+        constexpr float bar_h  = 18.0f;
+        constexpr float bar_pw = 0.55f;
+        const float bar_w  = half_w * bar_pw;
+        const float bar_x  = rp.x + (half_w - bar_w) * 0.5f;
+        const float bar_y  = rp.y + (canvas_h - bar_h) * 0.5f;
+        ImGui::SetCursorScreenPos({bar_x, bar_y});
+        ImGui::ProgressBar(progress, {bar_w, bar_h}, "Computing diff...");
+    }
 
     ImGui::SetCursorScreenPos({origin.x, origin.y + height});
 

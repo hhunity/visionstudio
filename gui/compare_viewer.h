@@ -1,4 +1,6 @@
 #pragma once
+#include <atomic>
+#include <future>
 #include <string>
 #include "gui/image_viewer.h"
 #include "util/image_data.h"
@@ -73,6 +75,7 @@ private:
     void update_right_viewer();
     void apply_left_offset();
     void apply_right_offset();
+    void cancel_diff();  // wait for any in-flight diff to finish
 
     image_viewer left_viewer_;
     image_viewer right_viewer_;
@@ -84,6 +87,10 @@ private:
     image_data diff_data_;
     bool       diff_applied_          = false;
     float      amplify_applied_       = 1.0f;
+
+    std::future<void>  diff_future_;
+    std::atomic<int>   diff_rows_done_{0};
+    int                diff_total_rows_ = 0;
     int        left_offset_applied_x  = 0;
     int        left_offset_applied_y  = 0;
     int        right_offset_applied_x = 0;
