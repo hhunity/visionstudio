@@ -154,6 +154,7 @@ if(BUILD_MOCK_SERVER)
         nlohmann_json::nlohmann_json
         CLI11::CLI11
         Threads::Threads
+        libjpeg-turbo::turbojpeg-static
     )
     target_include_directories(mock_camera_server PRIVATE ${CMAKE_SOURCE_DIR})
 endif()
