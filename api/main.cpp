@@ -1931,13 +1931,12 @@ int main(int argc, char** argv) {
             ImGui::Separator();
             const bool has_img = use_single ? single_viewer.has_image()
                                             : compare.get_left_image_data().width > 0;
-            ImGui::BeginDisabled(!has_img);
+            ImGui::BeginDisabled(!has_img || ce_tool.is_analyzing());
             if (ImGui::Button("Detect", {btn_w, 0})) {
                 const image_data& src = use_single
                     ? single_viewer.get_image_data()
                     : compare.get_left_image_data();
-                ce_tool.analyze(src);
-                status_msg = "Detected " + std::to_string(ce_tool.results().size()) + " shape(s)";
+                ce_tool.start_analyze(src);
             }
             ImGui::EndDisabled();
             if (ImGui::Button("Clear", {btn_w, 0})) {

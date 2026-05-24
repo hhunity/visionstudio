@@ -11,12 +11,11 @@
 #include <string>
 
 // ---------------------------------------------------------------------------
-// Image data → grayscale OpenCV Mat (no pixel copy when already gray)
+// Image data → grayscale OpenCV Mat
 // ---------------------------------------------------------------------------
 
 static cv::Mat to_gray_mat(const image_data& img) {
-    const int ch = img.channels();
-    if (ch == 1) {
+    if (img.channels() == 1) {
         return cv::Mat(img.height, img.width, CV_8UC1,
                        const_cast<uint8_t*>(img.pixels.data())).clone();
     }
@@ -28,12 +27,19 @@ static cv::Mat to_gray_mat(const image_data& img) {
 }
 
 // ---------------------------------------------------------------------------
-// analyze
+// Core detection logic (static — safe to call from background thread)
 // ---------------------------------------------------------------------------
 
-void circle_ellipse_tool::analyze(const image_data& img) {
-    shapes_.clear();
-    if (img.empty()) return;
+std::vector<detected_shape> circle_ellipse_tool::run_detection(
+    const image_data& img,
+    float canny_t1, float canny_t2,
+    float min_radius, float max_radius,
+    float hough_dp, float hough_min_dist, float hough_param2,
+    float min_axis_ratio, int min_contour_px,
+    bool detect_circles, bool detect_ellipses)
+{
+    std::vector<detected_shape> shapes;
+    if (img.empty()) return shapes;
 
     cv::Mat gray = to_gray_mat(img);
     cv::Mat blurred;
@@ -57,7 +63,7 @@ void circle_ellipse_tool::analyze(const image_data& img) {
             s.rx        = c[2];
             s.ry        = c[2];
             s.angle_deg = 0.0f;
-            shapes_.push_back(s);
+            shapes.push_back(s);
         }
     }
 
@@ -74,8 +80,6 @@ void circle_ellipse_tool::analyze(const image_data& img) {
             if (cv::contourArea(contour) < min_contour_px) continue;
 
             const cv::RotatedRect ell = cv::fitEllipse(contour);
-
-            // ell.size.width/height are the FULL axis lengths
             const float rx = ell.size.width  * 0.5f;
             const float ry = ell.size.height * 0.5f;
             if (rx <= 0.0f || ry <= 0.0f) continue;
@@ -85,9 +89,8 @@ void circle_ellipse_tool::analyze(const image_data& img) {
             if (major < min_radius || major > max_radius) continue;
             if (minor / major < min_axis_ratio) continue;
 
-            // Skip if center is already covered by a previously detected shape
             bool dup = false;
-            for (const auto& existing : shapes_) {
+            for (const auto& existing : shapes) {
                 const float dx = ell.center.x - existing.cx;
                 const float dy = ell.center.y - existing.cy;
                 if (std::sqrt(dx * dx + dy * dy) < hough_min_dist * 0.5f) {
@@ -105,13 +108,44 @@ void circle_ellipse_tool::analyze(const image_data& img) {
             s.rx        = rx;
             s.ry        = ry;
             s.angle_deg = ell.angle;
-            shapes_.push_back(s);
+            shapes.push_back(s);
         }
     }
+    return shapes;
 }
 
 // ---------------------------------------------------------------------------
-// Overlay rendering helpers
+// Public analyze API
+// ---------------------------------------------------------------------------
+
+void circle_ellipse_tool::analyze(const image_data& img) {
+    shapes_ = run_detection(img,
+        canny_t1, canny_t2, min_radius, max_radius,
+        hough_dp, hough_min_dist, hough_param2,
+        min_axis_ratio, min_contour_px,
+        detect_circles, detect_ellipses);
+}
+
+void circle_ellipse_tool::start_analyze(const image_data& img) {
+    if (is_analyzing()) return;  // skip if already running
+
+    analyze_future_ = std::async(std::launch::async,
+        run_detection,
+        img,  // copied into the async task
+        canny_t1, canny_t2, min_radius, max_radius,
+        hough_dp, hough_min_dist, hough_param2,
+        min_axis_ratio, min_contour_px,
+        detect_circles, detect_ellipses);
+}
+
+bool circle_ellipse_tool::is_analyzing() const {
+    return analyze_future_.valid() &&
+           analyze_future_.wait_for(std::chrono::seconds(0))
+               != std::future_status::ready;
+}
+
+// ---------------------------------------------------------------------------
+// Overlay rendering
 // ---------------------------------------------------------------------------
 
 void circle_ellipse_tool::draw_rotated_ellipse(ImDrawList* dl, ImVec2 center,
@@ -156,12 +190,10 @@ void circle_ellipse_tool::render_overlay(ImDrawList* dl,
 
         draw_rotated_ellipse(dl, {sx, sy}, rx, ry, s.angle_deg, col, 1.5f);
 
-        // Cross at center
         const float cs = std::max(4.0f, 8.0f * zoom);
         dl->AddLine({sx - cs, sy}, {sx + cs, sy}, col, 1.0f);
         dl->AddLine({sx, sy - cs}, {sx, sy + cs}, col, 1.0f);
 
-        // Major-axis diameter line
         {
             const float mrad = s.angle_deg * (static_cast<float>(std::numbers::pi) / 180.0f);
             const float ma   = s.major_semi() * zoom;
@@ -171,7 +203,6 @@ void circle_ellipse_tool::render_overlay(ImDrawList* dl,
                         IM_COL32(255, 220, 60, 180), 1.0f);
         }
 
-        // Index label
         char buf[16];
         std::snprintf(buf, sizeof(buf), "%zu", i + 1);
         dl->AddText({sx + rx + 4.0f, sy - 8.0f}, lbl_col, buf);
@@ -185,6 +216,19 @@ void circle_ellipse_tool::render_overlay(ImDrawList* dl,
 // ---------------------------------------------------------------------------
 
 void circle_ellipse_tool::render_panel() {
+    // ----- Poll background task -----
+    if (analyze_future_.valid() &&
+        analyze_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        shapes_ = analyze_future_.get();
+    }
+
+    // ----- Progress bar -----
+    if (is_analyzing()) {
+        ImGui::ProgressBar(-1.0f * static_cast<float>(ImGui::GetTime()),
+                           {-1.0f, 0.0f}, "Detecting...");
+        return;  // パラメータや結果は処理中は表示しない
+    }
+
     // ----- Parameters -----
     ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4{0.35f, 0.35f, 0.35f, 1.0f});
     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4{0.45f, 0.45f, 0.45f, 1.0f});
@@ -259,13 +303,13 @@ void circle_ellipse_tool::render_panel() {
         const float table_h = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
         if (ImGui::BeginTable("##det_tbl", 7, kTf, {0.0f, table_h})) {
             ImGui::TableSetupScrollFreeze(0, 1);
-            ImGui::TableSetupColumn("#",          ImGuiTableColumnFlags_WidthFixed,  28.0f);
-            ImGui::TableSetupColumn("Type",       ImGuiTableColumnFlags_WidthFixed,  60.0f);
-            ImGui::TableSetupColumn("cx",         ImGuiTableColumnFlags_WidthFixed,  60.0f);
-            ImGui::TableSetupColumn("cy",         ImGuiTableColumnFlags_WidthFixed,  60.0f);
-            ImGui::TableSetupColumn("Major diam", ImGuiTableColumnFlags_WidthFixed,  90.0f);
-            ImGui::TableSetupColumn("Minor diam", ImGuiTableColumnFlags_WidthFixed,  90.0f);
-            ImGui::TableSetupColumn("Angle (deg)",ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("#",           ImGuiTableColumnFlags_WidthFixed,  28.0f);
+            ImGui::TableSetupColumn("Type",        ImGuiTableColumnFlags_WidthFixed,  60.0f);
+            ImGui::TableSetupColumn("cx",          ImGuiTableColumnFlags_WidthFixed,  60.0f);
+            ImGui::TableSetupColumn("cy",          ImGuiTableColumnFlags_WidthFixed,  60.0f);
+            ImGui::TableSetupColumn("Major diam",  ImGuiTableColumnFlags_WidthFixed,  90.0f);
+            ImGui::TableSetupColumn("Minor diam",  ImGuiTableColumnFlags_WidthFixed,  90.0f);
+            ImGui::TableSetupColumn("Angle (deg)", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableHeadersRow();
 
             for (size_t i = 0; i < shapes_.size(); ++i) {

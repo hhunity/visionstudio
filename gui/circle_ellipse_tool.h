@@ -1,5 +1,7 @@
 #pragma once
 #include "util/analysis_tool.h"
+#include <atomic>
+#include <future>
 #include <vector>
 #include <string>
 
@@ -36,7 +38,13 @@ public:
 
     std::string_view name() const override { return "Circle/Ellipse"; }
 
+    // Synchronous (called by async task internally).
     void analyze(const image_data& img) override;
+
+    // Launch detection in background. Ignored if already running.
+    void start_analyze(const image_data& img);
+    bool is_analyzing() const;
+
     void render_panel() override;
     void render_overlay(ImDrawList* dl,
                         ImVec2      canvas_pos,
@@ -50,9 +58,20 @@ public:
     void clear_results() { shapes_.clear(); }
 
 private:
-    std::vector<detected_shape> shapes_;
+    std::vector<detected_shape>              shapes_;
+    std::future<std::vector<detected_shape>> analyze_future_;
+
+    // Run detection with explicit params (safe to call from background thread).
+    static std::vector<detected_shape> run_detection(
+        const image_data& img,
+        float canny_t1, float canny_t2,
+        float min_radius, float max_radius,
+        float hough_dp, float hough_min_dist, float hough_param2,
+        float min_axis_ratio, int min_contour_px,
+        bool detect_circles, bool detect_ellipses);
 
     static void draw_rotated_ellipse(ImDrawList* dl, ImVec2 center,
                                      float rx, float ry, float angle_deg,
                                      ImU32 col, float thickness);
 };
+
