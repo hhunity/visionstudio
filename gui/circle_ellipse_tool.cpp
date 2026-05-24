@@ -339,12 +339,11 @@ void circle_ellipse_tool::render_panel() {
 
         constexpr ImGuiTableFlags kTf = ImGuiTableFlags_SizingStretchSame
                                       | ImGuiTableFlags_NoPadOuterX;
-        if (ImGui::BeginTable("##params", 2, kTf, {ImGui::GetContentRegionAvail().x, 0.0f})) {
+        if (ImGui::BeginTable("##params", 4, kTf, {ImGui::GetContentRegionAvail().x, 0.0f})) {
             ImGui::TableNextColumn();
             ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##c1",  &canny_t1,        1.0f,  300.0f, "Canny lo: %.0f");
             ImGui::TableNextColumn();
             ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##c2",  &canny_t2,        1.0f,  500.0f, "Canny hi: %.0f");
-
             ImGui::TableNextColumn();
             ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rmin",&min_radius,      1.0f, 1000.0f, "R min: %.0f");
             ImGui::TableNextColumn();
@@ -354,7 +353,6 @@ void circle_ellipse_tool::render_panel() {
             ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##dp",  &hough_dp,        0.5f,    4.0f, "Hough dp: %.2f");
             ImGui::TableNextColumn();
             ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##md",  &hough_min_dist,  1.0f, 1000.0f, "minDist: %.0f");
-
             ImGui::TableNextColumn();
             ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##p2",  &hough_param2,    5.0f,  100.0f, "Hough acc: %.0f");
             ImGui::TableNextColumn();
@@ -367,7 +365,6 @@ void circle_ellipse_tool::render_panel() {
                                   "0.05: very strict  0.2: default  0.5: loose");
             ImGui::TableNextColumn();
             ImGui::SetNextItemWidth(-1); ImGui::SliderInt("##mca",   &min_contour_px,  10, 10000, "Min area: %d px");
-
             ImGui::TableNextColumn();
             ImGui::SetNextItemWidth(-1); ImGui::SliderInt("##ds",    &max_detect_size, 128,  4096, "Detect size: %d px");
             ImGui::TableNextColumn();
