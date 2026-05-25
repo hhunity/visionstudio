@@ -90,51 +90,71 @@ void compare_viewer::compute_diff() {
     const int h = std::min(L.height, R.height);
     diff_data_.width  = w;
     diff_data_.height = h;
-    diff_data_.format = PixelFormat::rgba;
-    diff_data_.pixels.resize(static_cast<size_t>(w) * h * 4);
 
-    const int lch = L.channels();
-    const int rch = R.channels();
+    const int  lch     = L.channels();
+    const int  rch     = R.channels();
+    const bool is_gray = (lch == 1 && rch == 1);
 
-    // Divide rows among threads; each thread writes to a disjoint output region.
+    // Precompute LUT: abs_diff [0,255] -> amplified+clamped byte.
+    // Avoids a float multiply and branch per pixel.
+    uint8_t lut[256];
+    const float amp = diff_amplify;
+    for (int i = 0; i < 256; ++i)
+        lut[i] = static_cast<uint8_t>(std::min(255, static_cast<int>(i * amp)));
+
     const int hw       = static_cast<int>(std::thread::hardware_concurrency());
     const int nthreads = std::max(1, std::min(hw, h));
-    const float amplify = diff_amplify;
 
-    auto compute_rows = [&](int y0, int y1) {
-        for (int y = y0; y < y1; ++y) {
-            for (int x = 0; x < w; ++x) {
-                const size_t dst = (static_cast<size_t>(y) * w       + x) * 4;
-                const size_t li  = (static_cast<size_t>(y) * L.width + x) * lch;
-                const size_t ri  = (static_cast<size_t>(y) * R.width + x) * rch;
-                const int nch = std::min({3, lch, rch});
-                for (int c = 0; c < nch; ++c) {
-                    const int diff      = static_cast<int>(L.pixels[li + c])
-                                        - static_cast<int>(R.pixels[ri + c]);
-                    const int amplified = static_cast<int>(std::abs(diff) * amplify);
-                    diff_data_.pixels[dst + c] = static_cast<uint8_t>(std::min(255, amplified));
-                }
-                for (int c = nch; c < 3; ++c)
-                    diff_data_.pixels[dst + c] = diff_data_.pixels[dst];
-                diff_data_.pixels[dst + 3] = 255;
-            }
-            diff_rows_done_.fetch_add(1, std::memory_order_relaxed);
-        }
+    auto launch = [&](auto compute_rows) {
+        if (nthreads == 1) { compute_rows(0, h); return; }
+        std::vector<std::thread> threads;
+        threads.reserve(nthreads);
+        for (int t = 0; t < nthreads; ++t)
+            threads.emplace_back(compute_rows, t * h / nthreads, (t + 1) * h / nthreads);
+        for (auto& th : threads) th.join();
     };
 
-    if (nthreads == 1) {
-        compute_rows(0, h);
-        return;
-    }
+    if (is_gray) {
+        // Gray fast path: 1 byte/pixel output (4x less data than RGBA).
+        diff_data_.format = PixelFormat::gray;
+        diff_data_.pixels.resize(static_cast<size_t>(w) * h);
 
-    std::vector<std::thread> threads;
-    threads.reserve(nthreads);
-    for (int t = 0; t < nthreads; ++t) {
-        const int y0 = t       * h / nthreads;
-        const int y1 = (t + 1) * h / nthreads;
-        threads.emplace_back(compute_rows, y0, y1);
+        launch([&](int y0, int y1) {
+            for (int y = y0; y < y1; ++y) {
+                if (diff_cancel_.load(std::memory_order_relaxed)) return;
+                const uint8_t* lp = L.pixels.data() + static_cast<size_t>(y) * L.width;
+                const uint8_t* rp = R.pixels.data() + static_cast<size_t>(y) * R.width;
+                uint8_t*       dp = diff_data_.pixels.data() + static_cast<size_t>(y) * w;
+                for (int x = 0; x < w; ++x) {
+                    const int d = static_cast<int>(lp[x]) - static_cast<int>(rp[x]);
+                    dp[x] = lut[d < 0 ? -d : d];
+                }
+                diff_rows_done_.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    } else {
+        diff_data_.format = PixelFormat::rgba;
+        diff_data_.pixels.resize(static_cast<size_t>(w) * h * 4);
+        const int nch = std::min({3, lch, rch});
+
+        launch([&](int y0, int y1) {
+            for (int y = y0; y < y1; ++y) {
+                if (diff_cancel_.load(std::memory_order_relaxed)) return;
+                const uint8_t* lp = L.pixels.data() + static_cast<size_t>(y) * L.width * lch;
+                const uint8_t* rp = R.pixels.data() + static_cast<size_t>(y) * R.width * rch;
+                uint8_t*       dp = diff_data_.pixels.data() + static_cast<size_t>(y) * w * 4;
+                for (int x = 0; x < w; ++x, lp += lch, rp += rch, dp += 4) {
+                    for (int c = 0; c < nch; ++c) {
+                        const int d = static_cast<int>(lp[c]) - static_cast<int>(rp[c]);
+                        dp[c] = lut[d < 0 ? -d : d];
+                    }
+                    for (int c = nch; c < 3; ++c) dp[c] = dp[0];
+                    dp[3] = 255;
+                }
+                diff_rows_done_.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
     }
-    for (auto& th : threads) th.join();
 }
 
 void compare_viewer::apply_left_offset() {
@@ -201,8 +221,11 @@ void compare_viewer::apply_right_offset() {
 }
 
 void compare_viewer::cancel_diff() {
-    if (diff_future_.valid())
+    if (diff_future_.valid()) {
+        diff_cancel_.store(true, std::memory_order_relaxed);
         diff_future_.wait();
+        diff_cancel_.store(false, std::memory_order_relaxed);
+    }
 }
 
 void compare_viewer::update_right_viewer() {
