@@ -90,6 +90,7 @@ private:
 
     std::future<void>  diff_future_;
     std::atomic<int>   diff_rows_done_{0};
+    std::atomic<bool>  diff_cancel_{false};
     int                diff_total_rows_ = 0;
     int        left_offset_applied_x  = 0;
     int        left_offset_applied_y  = 0;
