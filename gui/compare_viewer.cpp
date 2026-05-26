@@ -276,7 +276,7 @@ void compare_viewer::render(float width, float height) {
     if (!diff_computing && diff_future_.valid()) {
         diff_future_.get();
         if (!diff_data_.empty())
-            right_viewer_.load_image(diff_data_);
+            right_viewer_.load_image(diff_data_, false);
         diff_applied_    = diff_mode;
         amplify_applied_ = diff_amplify;
     }
