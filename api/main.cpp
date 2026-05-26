@@ -912,6 +912,28 @@ int main(int argc, char** argv) {
             ImGui::EndPopup();
         }
 
+        // ----- Connecting modal -----
+        if (imode == input_mode::remote_capture && cur_sse == sse_state::connecting)
+            ImGui::OpenPopup("Connecting##conn_modal");
+        if (ImGui::BeginPopupModal("Connecting##conn_modal", nullptr,
+                                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize)) {
+            const int    dot_idx = static_cast<int>(ImGui::GetTime() * 2.0) % 4;
+            const char*  dots[]  = {"   ", ".  ", ".. ", "..."};
+            ImGui::Text("Connecting to camera%s", dots[dot_idx]);
+            ImGui::Spacing();
+            ImGui::TextDisabled("%s:%d", cap_cfg.host.c_str(), cap_cfg.port);
+            ImGui::Spacing();
+            ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x - 120.0f) * 0.5f +
+                                  ImGui::GetCursorPosX());
+            if (ImGui::Button("Cancel", {120, 0})) {
+                cap_cli->disconnect();
+                ImGui::CloseCurrentPopup();
+            }
+            if (cur_sse != sse_state::connecting)
+                ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+
         // ----- Settings modal -----
         // On fresh open: populate settings_edit from cap_cfg so all fields are shown.
         if (show_settings && settings_fresh) {
