@@ -24,6 +24,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <ctime>
 #include <fstream>
 #include <future>
 #include <optional>
@@ -139,6 +140,40 @@ struct config_tab {
         if (!f.is_open()) return;
         f << text;
         modified = false;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Log window
+// ---------------------------------------------------------------------------
+
+struct AppLog {
+    ImGuiTextBuffer buf;
+    bool            scroll_to_bottom = true;
+
+    void add(const char* level, const char* msg) {
+        auto t  = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        struct tm tm_info{};
+#ifdef _WIN32
+        localtime_s(&tm_info, &t);
+#else
+        localtime_r(&t, &tm_info);
+#endif
+        char tbuf[10];
+        std::strftime(tbuf, sizeof(tbuf), "%H:%M:%S", &tm_info);
+        buf.appendf("[%s] %-5s %s\n", tbuf, level, msg);
+        scroll_to_bottom = true;
+    }
+
+    void draw(const char* title, bool* p_open) {
+        if (!ImGui::Begin(title, p_open)) { ImGui::End(); return; }
+        if (ImGui::Button("Clear")) buf.clear();
+        ImGui::Separator();
+        ImGui::BeginChild("scrolling", {0, 0}, false, ImGuiWindowFlags_HorizontalScrollbar);
+        ImGui::TextUnformatted(buf.begin(), buf.end());
+        if (scroll_to_bottom) { ImGui::SetScrollHereY(1.0f); scroll_to_bottom = false; }
+        ImGui::EndChild();
+        ImGui::End();
     }
 };
 
@@ -442,6 +477,8 @@ int main(int argc, char** argv) {
     bool        show_about            = false;
     bool        show_version          = false;
     std::string error_msg;
+    bool        show_log              = false;
+    AppLog      app_log;
     bool        show_settings         = false;
     bool        settings_fresh        = false;
     nlohmann::json settings_edit;
@@ -665,13 +702,16 @@ int main(int argc, char** argv) {
                 if (std::get_if<evt_connected>(&*ev)) {
                     cur_sse    = sse_state::connected;
                     status_msg = "Connected";
+                    app_log.add("INFO", "Connected to server");
                 } else if (std::get_if<evt_disconnected>(&*ev)) {
                     cur_sse    = sse_state::disconnected;
                     capturing  = false;
                     status_msg = "Server disconnected";
+                    app_log.add("INFO", "Server disconnected");
                 } else if (auto* e = std::get_if<evt_error>(&*ev)) {
                     cur_sse    = sse_state::error;
                     status_msg = "Server error: " + e->message;
+                    app_log.add("ERROR", ("Server error: " + e->message).c_str());
                 } else if (auto* e = std::get_if<evt_capture_done>(&*ev)) {
                     capturing = false;
                     if (vmode == view_mode::compare) {
@@ -683,11 +723,13 @@ int main(int argc, char** argv) {
                         left_loader.start(e->path);
                     }
                     status_msg = "Capture complete: " + e->path;
+                    app_log.add("INFO", ("Capture done: " + e->path).c_str());
                 } else if (auto* e = std::get_if<evt_config_updated>(&*ev)) {
                     cap_cfg    = e->cfg;
                     conn_buf   = make_conn_edit(cap_cfg);
                     capture_config::save("visionstudio.json", cap_cfg);
                     status_msg = "Config updated by server";
+                    app_log.add("INFO", "Config updated by server");
                 } else if (auto* e = std::get_if<evt_camera_info>(&*ev)) {
                     cam_info = std::move(e->groups);
                 }
@@ -794,6 +836,7 @@ int main(int argc, char** argv) {
                 ImGui::MenuItem("Overlay Graph",    nullptr, &show_overlay_graph);
                 ImGui::MenuItem("Circle/Ellipse",   nullptr, &show_detection_panel);
                 ImGui::MenuItem("Remote Overlay",   nullptr, &show_remote_overlay_panel);
+                ImGui::MenuItem("Log",              nullptr, &show_log);
                 ImGui::EndMenu();
             }
             if (ImGui::MenuItem("Settings")) {
@@ -2065,6 +2108,10 @@ int main(int argc, char** argv) {
             }
             ImGui::End();
         }
+
+        // ----- Log window -----
+        if (show_log)
+            app_log.draw("Log##log_win", &show_log);
 
         // Render
         ImGui::Render();
