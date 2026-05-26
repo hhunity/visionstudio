@@ -846,6 +846,7 @@ int main(int argc, char** argv) {
 
         // ----- Camera config editor modal -----
         if (show_camera_config) ImGui::OpenPopup("Camera Config##modal");
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, {0.5f, 0.5f});
         ImGui::SetNextWindowSize({700, 540}, ImGuiCond_Always);
         if (ImGui::BeginPopupModal("Camera Config##modal", &show_camera_config,
                                     ImGuiWindowFlags_NoResize)) {
@@ -855,6 +856,7 @@ int main(int argc, char** argv) {
 
         // ----- Connect config editor modal -----
         if (show_connect_config) ImGui::OpenPopup("Connect Config##modal");
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, {0.5f, 0.5f});
         ImGui::SetNextWindowSize({700, 540}, ImGuiCond_Always);
         if (ImGui::BeginPopupModal("Connect Config##modal", &show_connect_config,
                                     ImGuiWindowFlags_NoResize)) {
@@ -864,6 +866,7 @@ int main(int argc, char** argv) {
 
         // ----- Version modal -----
         if (show_version) ImGui::OpenPopup("Version##modal");
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, {0.5f, 0.5f});
         ImGui::SetNextWindowSize({320, 0}, ImGuiCond_Always);
         if (ImGui::BeginPopupModal("Version##modal", &show_version,
                                     ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -880,6 +883,7 @@ int main(int argc, char** argv) {
 
         // ----- About modal -----
         if (show_about) ImGui::OpenPopup("About VisionStudio##modal");
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, {0.5f, 0.5f});
         ImGui::SetNextWindowSize({620, 520}, ImGuiCond_Always);
         if (ImGui::BeginPopupModal("About VisionStudio##modal", &show_about,
                                     ImGuiWindowFlags_NoResize)) {
@@ -902,6 +906,7 @@ int main(int argc, char** argv) {
 
         // ----- Error dialog -----
         if (!error_msg.empty()) ImGui::OpenPopup("Error##err_modal");
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, {0.5f, 0.5f});
         if (ImGui::BeginPopupModal("Error##err_modal", nullptr,
                                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize)) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{1.0f, 0.4f, 0.4f, 1.0f});
@@ -915,6 +920,7 @@ int main(int argc, char** argv) {
         // ----- Connecting modal -----
         if (imode == input_mode::remote_capture && cur_sse == sse_state::connecting)
             ImGui::OpenPopup("Connecting##conn_modal");
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, {0.5f, 0.5f});
         if (ImGui::BeginPopupModal("Connecting##conn_modal", nullptr,
                                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize)) {
             const int    dot_idx = static_cast<int>(ImGui::GetTime() * 2.0) % 4;
@@ -960,6 +966,7 @@ int main(int argc, char** argv) {
             settings_edit["save_dir"] = cap_cfg.save_dir;
         }
         if (show_settings) ImGui::OpenPopup("Settings##modal");
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, {0.5f, 0.5f});
         ImGui::SetNextWindowSize({480, 460}, ImGuiCond_Always);
         if (ImGui::BeginPopupModal("Settings##modal", &show_settings, ImGuiWindowFlags_NoResize)) {
             // Render each JSON section (skip internal keys) dynamically.
