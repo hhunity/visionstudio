@@ -1222,26 +1222,38 @@ int main(int argc, char** argv) {
                 ImGui::PopStyleColor(3);
                 if (conn_open) {
                     ImGui::BeginDisabled(cur_sse == sse_state::connected);
-                    const float fw = ImGui::GetContentRegionAvail().x;
                     bool conn_changed = false;
-                    const float label_w = ImGui::CalcTextSize("Timeout(ms)").x
-                                        + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+                    const float label_col_w = ImGui::CalcTextSize("Timeout(ms)").x
+                                           + ImGui::GetStyle().ItemSpacing.x;
                     auto labeled = [&](const char* label, auto fn) {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
                         ImGui::AlignTextToFramePadding();
                         ImGui::TextDisabled("%s", label);
-                        ImGui::SameLine(label_w);
+                        ImGui::TableSetColumnIndex(1);
                         ImGui::SetNextItemWidth(-1);
                         if (fn()) conn_changed = true;
                     };
-                    labeled("Host",        [&]{ return ImGui::InputText("##host",       conn_buf.host,            sizeof(conn_buf.host)); });
-                    labeled("Port",        [&]{ return ImGui::InputInt ("##port",       &conn_buf.port,           0); });
+                    constexpr ImGuiTableFlags kTblFlags = ImGuiTableFlags_None;
+                    if (ImGui::BeginTable("##conn_host", 2, kTblFlags)) {
+                        ImGui::TableSetupColumn("##lbl1", ImGuiTableColumnFlags_WidthFixed, label_col_w);
+                        ImGui::TableSetupColumn("##val1", ImGuiTableColumnFlags_WidthStretch);
+                        labeled("Host", [&]{ return ImGui::InputText("##host", conn_buf.host, sizeof(conn_buf.host)); });
+                        labeled("Port", [&]{ return ImGui::InputInt ("##port", &conn_buf.port, 0); });
+                        ImGui::EndTable();
+                    }
                     ImGui::Separator();
-                    labeled("Connect",     [&]{ return ImGui::InputText("##conn_path",  conn_buf.connect_path,    sizeof(conn_buf.connect_path)); });
-                    labeled("Start",       [&]{ return ImGui::InputText("##start_path", conn_buf.start_path,      sizeof(conn_buf.start_path)); });
-                    labeled("Stop",        [&]{ return ImGui::InputText("##stop_path",  conn_buf.stop_path,       sizeof(conn_buf.stop_path)); });
-                    labeled("Disconnect",  [&]{ return ImGui::InputText("##disc_path",  conn_buf.disconnect_path, sizeof(conn_buf.disconnect_path)); });
-                    labeled("SSE",         [&]{ return ImGui::InputText("##sse_path",   conn_buf.sse_path,        sizeof(conn_buf.sse_path)); });
-                    labeled("Timeout(ms)", [&]{ return ImGui::InputInt ("##timeout",    &conn_buf.timeout_ms,     0); });
+                    if (ImGui::BeginTable("##conn_paths", 2, kTblFlags)) {
+                        ImGui::TableSetupColumn("##lbl2", ImGuiTableColumnFlags_WidthFixed, label_col_w);
+                        ImGui::TableSetupColumn("##val2", ImGuiTableColumnFlags_WidthStretch);
+                        labeled("Connect",    [&]{ return ImGui::InputText("##conn_path",  conn_buf.connect_path,    sizeof(conn_buf.connect_path)); });
+                        labeled("Start",      [&]{ return ImGui::InputText("##start_path", conn_buf.start_path,      sizeof(conn_buf.start_path)); });
+                        labeled("Stop",       [&]{ return ImGui::InputText("##stop_path",  conn_buf.stop_path,       sizeof(conn_buf.stop_path)); });
+                        labeled("Disconnect", [&]{ return ImGui::InputText("##disc_path",  conn_buf.disconnect_path, sizeof(conn_buf.disconnect_path)); });
+                        labeled("SSE",        [&]{ return ImGui::InputText("##sse_path",   conn_buf.sse_path,        sizeof(conn_buf.sse_path)); });
+                        labeled("Timeout(ms)",[&]{ return ImGui::InputInt ("##timeout",    &conn_buf.timeout_ms,     0); });
+                        ImGui::EndTable();
+                    }
                     if (conn_changed) {
                         cap_cfg.host            = conn_buf.host;
                         cap_cfg.port            = conn_buf.port;
