@@ -1224,9 +1224,13 @@ int main(int argc, char** argv) {
                     ImGui::BeginDisabled(cur_sse == sse_state::connected);
                     const float fw = ImGui::GetContentRegionAvail().x;
                     bool conn_changed = false;
+                    const float label_w = ImGui::CalcTextSize("Timeout(ms)").x
+                                        + ImGui::GetStyle().ItemSpacing.x * 2.0f;
                     auto labeled = [&](const char* label, auto fn) {
+                        ImGui::AlignTextToFramePadding();
                         ImGui::TextDisabled("%s", label);
-                        ImGui::SetNextItemWidth(fw);
+                        ImGui::SameLine(label_w);
+                        ImGui::SetNextItemWidth(-1);
                         if (fn()) conn_changed = true;
                     };
                     labeled("Host",        [&]{ return ImGui::InputText("##host",       conn_buf.host,            sizeof(conn_buf.host)); });
