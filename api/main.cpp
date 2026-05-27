@@ -1439,6 +1439,12 @@ int main(int argc, char** argv) {
                 ImGui::BeginDisabled(cur_sse != sse_state::connected);
                 if (!preview_on) {
                     if (ImGui::Button("Start Preview", {-1, 0})) {
+                        if (preview_tex != 0) {
+                            glDeleteTextures(1, &preview_tex);
+                            preview_tex   = 0;
+                            preview_tex_w = 0;
+                            preview_tex_h = 0;
+                        }
                         cap_cli->start_preview();
                         status_msg = "Preview started";
                     }
