@@ -178,6 +178,28 @@ struct AppLog {
 };
 
 // ---------------------------------------------------------------------------
+// Toggle switch widget (ImGui has no built-in)
+// ---------------------------------------------------------------------------
+
+static bool toggle_switch(const char* str_id, bool* v) {
+    const float h = ImGui::GetFrameHeight() * 0.85f;
+    const float w = h * 1.8f;
+    const float r = h * 0.5f;
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton(str_id, {w, h});
+    const bool clicked = ImGui::IsItemClicked();
+    if (clicked) *v = !*v;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float t = *v ? 1.0f : 0.0f;
+    const ImU32 track = ImGui::IsItemHovered()
+        ? (*v ? IM_COL32( 80,190, 80,255) : IM_COL32(190,190,190,255))
+        : (*v ? IM_COL32( 66,170, 66,255) : IM_COL32(160,160,160,255));
+    dl->AddRectFilled(p, {p.x + w, p.y + h}, track, r);
+    dl->AddCircleFilled({p.x + r + t * (w - r * 2.0f), p.y + r}, r - 2.0f, IM_COL32(255,255,255,255));
+    return clicked;
+}
+
+// ---------------------------------------------------------------------------
 // Static inline helpers shared between drop_callback and the main loop.
 // ---------------------------------------------------------------------------
 
@@ -1327,20 +1349,24 @@ int main(int argc, char** argv) {
                     }
                     ImGui::Separator();
 
-                    ImGui::TextDisabled("Image Acquisition");
-                    if (ImGui::RadioButton("Enable##acq",  image_acquisition))  image_acquisition = true;
-                    ImGui::SameLine();
-                    if (ImGui::RadioButton("Disable##acq", !image_acquisition)) image_acquisition = false;
-
-                    ImGui::TextDisabled("Live Image");
-                    if (ImGui::RadioButton("Enable##live",  live_image))  live_image = true;
-                    ImGui::SameLine();
-                    if (ImGui::RadioButton("Disable##live", !live_image)) live_image = false;
-
-                    ImGui::TextDisabled("Auto Detect");
-                    if (ImGui::RadioButton("Enable##ad",  auto_detect))  auto_detect = true;
-                    ImGui::SameLine();
-                    if (ImGui::RadioButton("Disable##ad", !auto_detect)) auto_detect = false;
+                    if (ImGui::BeginTable("##sw_table", 2, ImGuiTableFlags_None)) {
+                        const float sw_lbl_w = ImGui::CalcTextSize("Image Acquisition").x
+                                             + ImGui::GetStyle().ItemSpacing.x;
+                        ImGui::TableSetupColumn("##sw_lbl", ImGuiTableColumnFlags_WidthFixed, sw_lbl_w);
+                        ImGui::TableSetupColumn("##sw_val", ImGuiTableColumnFlags_WidthFixed);
+                        auto sw_row = [&](const char* label, const char* id, bool* val) {
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::AlignTextToFramePadding();
+                            ImGui::TextDisabled("%s", label);
+                            ImGui::TableSetColumnIndex(1);
+                            toggle_switch(id, val);
+                        };
+                        sw_row("Image Acquisition", "##acq",  &image_acquisition);
+                        sw_row("Live Image",        "##live", &live_image);
+                        sw_row("Auto Detect",       "##ad",   &auto_detect);
+                        ImGui::EndTable();
+                    }
 
                     ImGui::BeginDisabled(vmode != view_mode::compare);
                     ImGui::TextDisabled("Ref Img");
