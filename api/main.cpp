@@ -1682,48 +1682,55 @@ int main(int argc, char** argv) {
         {
             const bool has_guide = cap_cfg.basex >= 0 || cap_cfg.targetx >= 0
                                 || cap_cfg.starty >= 0 || cap_cfg.liney   >= 0;
-            if (has_guide && imode == input_mode::remote_capture) {
+            if (has_guide) {
                 auto* dl = ImGui::GetWindowDrawList();
                 const ImU32 vcol = IM_COL32(255, 80,  80,  200);
                 const ImU32 hcol = IM_COL32( 80, 200, 255, 200);
-                const float clip_x0 = viewer_origin.x;
-                const float clip_y0 = viewer_origin.y;
-                const float clip_x1 = viewer_origin.x + viewer_w;
-                const float clip_y1 = viewer_origin.y + viewer_h;
-                dl->PushClipRect({clip_x0, clip_y0}, {clip_x1, clip_y1}, true);
 
-                // Compute image origin and scale for the current display
-                ImVec2 img_orig;
-                float  img_scale;
-                if (preview_tex != 0 && use_single) {
-                    const float aspect = static_cast<float>(preview_tex_w)
-                                       / static_cast<float>(preview_tex_h);
-                    float dw = viewer_w, dh = viewer_w / aspect;
-                    if (dh > viewer_h) { dh = viewer_h; dw = viewer_h * aspect; }
-                    img_orig  = {viewer_origin.x + (viewer_w - dw) * 0.5f,
-                                 viewer_origin.y + (viewer_h - dh) * 0.5f};
-                    img_scale = dw / static_cast<float>(preview_tex_w);
+                auto draw_guides = [&](ImVec2 img_orig, float img_scale,
+                                       float cx0, float cy0, float cx1, float cy1) {
+                    dl->PushClipRect({cx0, cy0}, {cx1, cy1}, true);
+                    if (cap_cfg.basex   >= 0) dl->AddLine({img_orig.x + cap_cfg.basex   * img_scale, cy0}, {img_orig.x + cap_cfg.basex   * img_scale, cy1}, vcol, 1.5f);
+                    if (cap_cfg.targetx >= 0) dl->AddLine({img_orig.x + cap_cfg.targetx * img_scale, cy0}, {img_orig.x + cap_cfg.targetx * img_scale, cy1}, vcol, 1.5f);
+                    if (cap_cfg.starty  >= 0) dl->AddLine({cx0, img_orig.y + cap_cfg.starty  * img_scale}, {cx1, img_orig.y + cap_cfg.starty  * img_scale}, hcol, 1.5f);
+                    if (cap_cfg.liney   >= 0) dl->AddLine({cx0, img_orig.y + cap_cfg.liney   * img_scale}, {cx1, img_orig.y + cap_cfg.liney   * img_scale}, hcol, 1.5f);
+                    dl->PopClipRect();
+                };
+
+                if (use_single) {
+                    ImVec2 img_orig;
+                    float  img_scale;
+                    if (imode == input_mode::remote_capture && preview_tex != 0) {
+                        const float aspect = static_cast<float>(preview_tex_w)
+                                           / static_cast<float>(preview_tex_h);
+                        float dw = viewer_w, dh = viewer_w / aspect;
+                        if (dh > viewer_h) { dh = viewer_h; dw = viewer_h * aspect; }
+                        img_orig  = {viewer_origin.x + (viewer_w - dw) * 0.5f,
+                                     viewer_origin.y + (viewer_h - dh) * 0.5f};
+                        img_scale = dw / static_cast<float>(preview_tex_w);
+                    } else {
+                        const view_state& vs = single_viewer.get_view_state();
+                        img_orig  = {viewer_origin.x + vs.pan_x, viewer_origin.y + vs.pan_y};
+                        img_scale = vs.zoom;
+                    }
+                    draw_guides(img_orig, img_scale,
+                                viewer_origin.x, viewer_origin.y,
+                                viewer_origin.x + viewer_w, viewer_origin.y + viewer_h);
                 } else {
-                    const view_state& vs = single_viewer.get_view_state();
-                    img_orig  = {viewer_origin.x + vs.pan_x,
-                                 viewer_origin.y + vs.pan_y};
-                    img_scale = vs.zoom;
+                    // Compare mode: draw on both panels
+                    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+                    const float half_w  = std::floor((viewer_w - spacing) * 0.5f);
+                    const view_state& vs = compare.get_view_state();
+                    const ImVec2 img_orig = {viewer_origin.x + vs.pan_x, viewer_origin.y + vs.pan_y};
+                    draw_guides(img_orig, vs.zoom,
+                                viewer_origin.x, viewer_origin.y,
+                                viewer_origin.x + half_w, viewer_origin.y + viewer_h);
+                    const ImVec2 rimg_orig = {viewer_origin.x + half_w + spacing + vs.pan_x,
+                                             viewer_origin.y + vs.pan_y};
+                    draw_guides(rimg_orig, vs.zoom,
+                                viewer_origin.x + half_w + spacing, viewer_origin.y,
+                                viewer_origin.x + viewer_w,         viewer_origin.y + viewer_h);
                 }
-
-                auto vline = [&](int px) {
-                    const float sx = img_orig.x + px * img_scale;
-                    dl->AddLine({sx, clip_y0}, {sx, clip_y1}, vcol, 1.5f);
-                };
-                auto hline = [&](int py) {
-                    const float sy = img_orig.y + py * img_scale;
-                    dl->AddLine({clip_x0, sy}, {clip_x1, sy}, hcol, 1.5f);
-                };
-                if (cap_cfg.basex   >= 0) vline(cap_cfg.basex);
-                if (cap_cfg.targetx >= 0) vline(cap_cfg.targetx);
-                if (cap_cfg.starty  >= 0) hline(cap_cfg.starty);
-                if (cap_cfg.liney   >= 0) hline(cap_cfg.liney);
-
-                dl->PopClipRect();
             }
         }
 
