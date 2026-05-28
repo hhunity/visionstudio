@@ -261,6 +261,12 @@ static std::string label_text(const std::string& path, const char* fallback) {
 // Render
 // ---------------------------------------------------------------------------
 
+float compare_viewer::get_header_height() const {
+    const float label_h  = ImGui::GetTextLineHeightWithSpacing();
+    const bool  has_offset = !left_src_.empty() || !right_src_.empty();
+    return label_h + (has_offset ? ImGui::GetFrameHeightWithSpacing() : 0.0f);
+}
+
 void compare_viewer::render(float width, float height) {
     if (width  <= 0.0f) width  = ImGui::GetContentRegionAvail().x;
     if (height <= 0.0f) height = ImGui::GetContentRegionAvail().y;

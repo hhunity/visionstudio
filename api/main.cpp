@@ -1706,18 +1706,20 @@ int main(int argc, char** argv) {
                                     viewer_origin.x + viewer_w, viewer_origin.y + viewer_h);
                     }
                 } else if (compare.left_viewer_ref().has_image()) {
-                    // Compare mode: draw on both panels
-                    const float spacing = ImGui::GetStyle().ItemSpacing.x;
-                    const float half_w  = std::floor((viewer_w - spacing) * 0.5f);
-                    const view_state& vs = compare.get_view_state();
-                    const ImVec2 img_orig = {viewer_origin.x + vs.pan_x, viewer_origin.y + vs.pan_y};
+                    // Compare mode: clip below label/offset header rows
+                    const float spacing    = ImGui::GetStyle().ItemSpacing.x;
+                    const float half_w     = std::floor((viewer_w - spacing) * 0.5f);
+                    const float header_h   = compare.get_header_height();
+                    const float canvas_top = viewer_origin.y + header_h;
+                    const view_state& vs   = compare.get_view_state();
+                    const ImVec2 img_orig  = {viewer_origin.x + vs.pan_x, canvas_top + vs.pan_y};
                     draw_guides(img_orig, vs.zoom,
-                                viewer_origin.x, viewer_origin.y,
+                                viewer_origin.x, canvas_top,
                                 viewer_origin.x + half_w, viewer_origin.y + viewer_h);
                     const ImVec2 rimg_orig = {viewer_origin.x + half_w + spacing + vs.pan_x,
-                                             viewer_origin.y + vs.pan_y};
+                                             canvas_top + vs.pan_y};
                     draw_guides(rimg_orig, vs.zoom,
-                                viewer_origin.x + half_w + spacing, viewer_origin.y,
+                                viewer_origin.x + half_w + spacing, canvas_top,
                                 viewer_origin.x + viewer_w,         viewer_origin.y + viewer_h);
                 }
             }
