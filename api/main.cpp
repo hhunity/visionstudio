@@ -1698,14 +1698,14 @@ int main(int argc, char** argv) {
                 };
 
                 if (use_single) {
-                    if (preview_tex == 0) {
+                    if (preview_tex == 0 && single_viewer.has_image()) {
                         const view_state& vs = single_viewer.get_view_state();
                         draw_guides({viewer_origin.x + vs.pan_x, viewer_origin.y + vs.pan_y},
                                     vs.zoom,
                                     viewer_origin.x, viewer_origin.y,
                                     viewer_origin.x + viewer_w, viewer_origin.y + viewer_h);
                     }
-                } else {
+                } else if (compare.left_viewer_ref().has_image()) {
                     // Compare mode: draw on both panels
                     const float spacing = ImGui::GetStyle().ItemSpacing.x;
                     const float half_w  = std::floor((viewer_w - spacing) * 0.5f);
