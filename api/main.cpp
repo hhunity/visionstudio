@@ -1013,6 +1013,10 @@ int main(int argc, char** argv) {
             settings_edit["capture"] = {
                 {"connect_config_file",  cap_cfg.connect_config_file},
                 {"capture_config_file",  cap_cfg.capture_config_file},
+                {"basex",                cap_cfg.basex},
+                {"targetx",              cap_cfg.targetx},
+                {"starty",               cap_cfg.starty},
+                {"liney",                cap_cfg.liney},
             };
             settings_edit["capture_client"] = {
                 {"host",             cap_cfg.host},
@@ -1110,6 +1114,10 @@ int main(int argc, char** argv) {
                     auto& c = settings_edit["capture"];
                     if (c.contains("connect_config_file") && c["connect_config_file"].is_string()) cap_cfg.connect_config_file = c["connect_config_file"].get<std::string>();
                     if (c.contains("capture_config_file") && c["capture_config_file"].is_string()) cap_cfg.capture_config_file = c["capture_config_file"].get<std::string>();
+                    if (c.contains("basex")   && c["basex"].is_number_integer())   cap_cfg.basex   = c["basex"].get<int>();
+                    if (c.contains("targetx") && c["targetx"].is_number_integer()) cap_cfg.targetx = c["targetx"].get<int>();
+                    if (c.contains("starty")  && c["starty"].is_number_integer())  cap_cfg.starty  = c["starty"].get<int>();
+                    if (c.contains("liney")   && c["liney"].is_number_integer())   cap_cfg.liney   = c["liney"].get<int>();
                 }
                 if (settings_edit.contains("save_dir") && settings_edit["save_dir"].is_string())
                     cap_cfg.save_dir = settings_edit["save_dir"].get<std::string>();
@@ -1388,6 +1396,31 @@ int main(int argc, char** argv) {
                     }
                     ImGui::EndDisabled();
 
+                    // Guide lines
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Guide Lines  (-1 = off)");
+                    if (ImGui::BeginTable("##guide_table", 2, ImGuiTableFlags_None)) {
+                        const float gl_lbl_w = ImGui::CalcTextSize("targetx").x
+                                             + ImGui::GetStyle().ItemSpacing.x;
+                        ImGui::TableSetupColumn("##gl_lbl", ImGuiTableColumnFlags_WidthFixed, gl_lbl_w);
+                        ImGui::TableSetupColumn("##gl_val", ImGuiTableColumnFlags_WidthStretch);
+                        auto gl_row = [&](const char* label, const char* id, int* val) {
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::AlignTextToFramePadding();
+                            ImGui::TextDisabled("%s", label);
+                            ImGui::TableSetColumnIndex(1);
+                            ImGui::SetNextItemWidth(-1);
+                            if (ImGui::InputInt(id, val, 0))
+                                capture_config::save("visionstudio.json", cap_cfg);
+                        };
+                        gl_row("basex",   "##basex",   &cap_cfg.basex);
+                        gl_row("targetx", "##targetx", &cap_cfg.targetx);
+                        gl_row("starty",  "##starty",  &cap_cfg.starty);
+                        gl_row("liney",   "##liney",   &cap_cfg.liney);
+                        ImGui::EndTable();
+                    }
+
                     // Capture config files: path + browse + edit modal
                     ImGui::Separator();
                     ImGui::TextDisabled("Capture Config Files");
@@ -1643,6 +1676,55 @@ int main(int argc, char** argv) {
             auto* dl = ImGui::GetWindowDrawList();
             dl->AddRectFilled(rmin, rmax, IM_COL32(20, 20, 20, 255));
             dl->AddImage(static_cast<ImTextureID>(preview_tex), imin, imax);
+        }
+
+        // ----- Guide lines overlay -----
+        {
+            const bool has_guide = cap_cfg.basex >= 0 || cap_cfg.targetx >= 0
+                                || cap_cfg.starty >= 0 || cap_cfg.liney   >= 0;
+            if (has_guide && imode == input_mode::remote_capture) {
+                auto* dl = ImGui::GetWindowDrawList();
+                const ImU32 vcol = IM_COL32(255, 80,  80,  200);
+                const ImU32 hcol = IM_COL32( 80, 200, 255, 200);
+                const float clip_x0 = viewer_origin.x;
+                const float clip_y0 = viewer_origin.y;
+                const float clip_x1 = viewer_origin.x + viewer_w;
+                const float clip_y1 = viewer_origin.y + viewer_h;
+                dl->PushClipRect({clip_x0, clip_y0}, {clip_x1, clip_y1}, true);
+
+                // Compute image origin and scale for the current display
+                ImVec2 img_orig;
+                float  img_scale;
+                if (preview_tex != 0 && use_single) {
+                    const float aspect = static_cast<float>(preview_tex_w)
+                                       / static_cast<float>(preview_tex_h);
+                    float dw = viewer_w, dh = viewer_w / aspect;
+                    if (dh > viewer_h) { dh = viewer_h; dw = viewer_h * aspect; }
+                    img_orig  = {viewer_origin.x + (viewer_w - dw) * 0.5f,
+                                 viewer_origin.y + (viewer_h - dh) * 0.5f};
+                    img_scale = dw / static_cast<float>(preview_tex_w);
+                } else {
+                    const view_state& vs = single_viewer.get_view_state();
+                    img_orig  = {viewer_origin.x + vs.pan_x,
+                                 viewer_origin.y + vs.pan_y};
+                    img_scale = vs.zoom;
+                }
+
+                auto vline = [&](int px) {
+                    const float sx = img_orig.x + px * img_scale;
+                    dl->AddLine({sx, clip_y0}, {sx, clip_y1}, vcol, 1.5f);
+                };
+                auto hline = [&](int py) {
+                    const float sy = img_orig.y + py * img_scale;
+                    dl->AddLine({clip_x0, sy}, {clip_x1, sy}, hcol, 1.5f);
+                };
+                if (cap_cfg.basex   >= 0) vline(cap_cfg.basex);
+                if (cap_cfg.targetx >= 0) vline(cap_cfg.targetx);
+                if (cap_cfg.starty  >= 0) hline(cap_cfg.starty);
+                if (cap_cfg.liney   >= 0) hline(cap_cfg.liney);
+
+                dl->PopClipRect();
+            }
         }
 
         // ----- Shared helpers for profile panels -----
