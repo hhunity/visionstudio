@@ -70,6 +70,10 @@ capture_config capture_config::load(const std::string& json_path) {
             cfg.capture_config_file = c["capture_config_file"];
         if (c.contains("save_dir") && c["save_dir"].is_string())
             cfg.save_dir = c["save_dir"];
+        if (c.contains("basex")   && c["basex"].is_number_integer())   cfg.basex   = c["basex"];
+        if (c.contains("targetx") && c["targetx"].is_number_integer()) cfg.targetx = c["targetx"];
+        if (c.contains("starty")  && c["starty"].is_number_integer())  cfg.starty  = c["starty"];
+        if (c.contains("liney")   && c["liney"].is_number_integer())   cfg.liney   = c["liney"];
     }
 
     if (cfg.save_dir.empty())
@@ -104,6 +108,10 @@ void capture_config::save(const std::string& json_path,
     root["capture"]["connect_config_file"] = cfg.connect_config_file;
     root["capture"]["capture_config_file"] = cfg.capture_config_file;
     root["capture"]["save_dir"]            = cfg.save_dir;
+    root["capture"]["basex"]               = cfg.basex;
+    root["capture"]["targetx"]             = cfg.targetx;
+    root["capture"]["starty"]              = cfg.starty;
+    root["capture"]["liney"]               = cfg.liney;
 
     if (!imgui_ini.empty())
         root["imgui_ini"] = imgui_ini;

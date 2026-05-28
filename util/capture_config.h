@@ -21,6 +21,12 @@ struct capture_config {
     std::string capture_config_file; // path to capture config file (JSON)
     std::string save_dir;            // local directory to save downloaded captures (empty = default)
 
+    // Guide line pixel coordinates (-1 = disabled)
+    int basex   = -1;
+    int targetx = -1;
+    int starty  = -1;
+    int liney   = -1;
+
     bool operator==(const capture_config&) const = default;
     bool operator!=(const capture_config& o) const { return !(*this == o); }
 

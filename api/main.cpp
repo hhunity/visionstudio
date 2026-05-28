@@ -178,6 +178,28 @@ struct AppLog {
 };
 
 // ---------------------------------------------------------------------------
+// Toggle switch widget (ImGui has no built-in)
+// ---------------------------------------------------------------------------
+
+static bool toggle_switch(const char* str_id, bool* v) {
+    const float h = ImGui::GetFrameHeight() * 0.85f;
+    const float w = h * 1.8f;
+    const float r = h * 0.5f;
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton(str_id, {w, h});
+    const bool clicked = ImGui::IsItemClicked();
+    if (clicked) *v = !*v;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float t = *v ? 1.0f : 0.0f;
+    const ImU32 track = ImGui::IsItemHovered()
+        ? (*v ? IM_COL32( 80,190, 80,255) : IM_COL32(190,190,190,255))
+        : (*v ? IM_COL32( 66,170, 66,255) : IM_COL32(160,160,160,255));
+    dl->AddRectFilled(p, {p.x + w, p.y + h}, track, r);
+    dl->AddCircleFilled({p.x + r + t * (w - r * 2.0f), p.y + r}, r - 2.0f, IM_COL32(255,255,255,255));
+    return clicked;
+}
+
+// ---------------------------------------------------------------------------
 // Static inline helpers shared between drop_callback and the main loop.
 // ---------------------------------------------------------------------------
 
@@ -991,6 +1013,10 @@ int main(int argc, char** argv) {
             settings_edit["capture"] = {
                 {"connect_config_file",  cap_cfg.connect_config_file},
                 {"capture_config_file",  cap_cfg.capture_config_file},
+                {"basex",                cap_cfg.basex},
+                {"targetx",              cap_cfg.targetx},
+                {"starty",               cap_cfg.starty},
+                {"liney",                cap_cfg.liney},
             };
             settings_edit["capture_client"] = {
                 {"host",             cap_cfg.host},
@@ -1088,6 +1114,10 @@ int main(int argc, char** argv) {
                     auto& c = settings_edit["capture"];
                     if (c.contains("connect_config_file") && c["connect_config_file"].is_string()) cap_cfg.connect_config_file = c["connect_config_file"].get<std::string>();
                     if (c.contains("capture_config_file") && c["capture_config_file"].is_string()) cap_cfg.capture_config_file = c["capture_config_file"].get<std::string>();
+                    if (c.contains("basex")   && c["basex"].is_number_integer())   cap_cfg.basex   = c["basex"].get<int>();
+                    if (c.contains("targetx") && c["targetx"].is_number_integer()) cap_cfg.targetx = c["targetx"].get<int>();
+                    if (c.contains("starty")  && c["starty"].is_number_integer())  cap_cfg.starty  = c["starty"].get<int>();
+                    if (c.contains("liney")   && c["liney"].is_number_integer())   cap_cfg.liney   = c["liney"].get<int>();
                 }
                 if (settings_edit.contains("save_dir") && settings_edit["save_dir"].is_string())
                     cap_cfg.save_dir = settings_edit["save_dir"].get<std::string>();
@@ -1222,22 +1252,38 @@ int main(int argc, char** argv) {
                 ImGui::PopStyleColor(3);
                 if (conn_open) {
                     ImGui::BeginDisabled(cur_sse == sse_state::connected);
-                    const float fw = ImGui::GetContentRegionAvail().x;
                     bool conn_changed = false;
+                    const float label_col_w = ImGui::CalcTextSize("Timeout(ms)").x
+                                           + ImGui::GetStyle().ItemSpacing.x;
                     auto labeled = [&](const char* label, auto fn) {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::AlignTextToFramePadding();
                         ImGui::TextDisabled("%s", label);
-                        ImGui::SetNextItemWidth(fw);
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::SetNextItemWidth(-1);
                         if (fn()) conn_changed = true;
                     };
-                    labeled("Host",        [&]{ return ImGui::InputText("##host",       conn_buf.host,            sizeof(conn_buf.host)); });
-                    labeled("Port",        [&]{ return ImGui::InputInt ("##port",       &conn_buf.port,           0); });
+                    constexpr ImGuiTableFlags kTblFlags = ImGuiTableFlags_None;
+                    if (ImGui::BeginTable("##conn_host", 2, kTblFlags)) {
+                        ImGui::TableSetupColumn("##lbl1", ImGuiTableColumnFlags_WidthFixed, label_col_w);
+                        ImGui::TableSetupColumn("##val1", ImGuiTableColumnFlags_WidthStretch);
+                        labeled("Host", [&]{ return ImGui::InputText("##host", conn_buf.host, sizeof(conn_buf.host)); });
+                        labeled("Port", [&]{ return ImGui::InputInt ("##port", &conn_buf.port, 0); });
+                        ImGui::EndTable();
+                    }
                     ImGui::Separator();
-                    labeled("Connect",     [&]{ return ImGui::InputText("##conn_path",  conn_buf.connect_path,    sizeof(conn_buf.connect_path)); });
-                    labeled("Start",       [&]{ return ImGui::InputText("##start_path", conn_buf.start_path,      sizeof(conn_buf.start_path)); });
-                    labeled("Stop",        [&]{ return ImGui::InputText("##stop_path",  conn_buf.stop_path,       sizeof(conn_buf.stop_path)); });
-                    labeled("Disconnect",  [&]{ return ImGui::InputText("##disc_path",  conn_buf.disconnect_path, sizeof(conn_buf.disconnect_path)); });
-                    labeled("SSE",         [&]{ return ImGui::InputText("##sse_path",   conn_buf.sse_path,        sizeof(conn_buf.sse_path)); });
-                    labeled("Timeout(ms)", [&]{ return ImGui::InputInt ("##timeout",    &conn_buf.timeout_ms,     0); });
+                    if (ImGui::BeginTable("##conn_paths", 2, kTblFlags)) {
+                        ImGui::TableSetupColumn("##lbl2", ImGuiTableColumnFlags_WidthFixed, label_col_w);
+                        ImGui::TableSetupColumn("##val2", ImGuiTableColumnFlags_WidthStretch);
+                        labeled("Connect",    [&]{ return ImGui::InputText("##conn_path",  conn_buf.connect_path,    sizeof(conn_buf.connect_path)); });
+                        labeled("Start",      [&]{ return ImGui::InputText("##start_path", conn_buf.start_path,      sizeof(conn_buf.start_path)); });
+                        labeled("Stop",       [&]{ return ImGui::InputText("##stop_path",  conn_buf.stop_path,       sizeof(conn_buf.stop_path)); });
+                        labeled("Disconnect", [&]{ return ImGui::InputText("##disc_path",  conn_buf.disconnect_path, sizeof(conn_buf.disconnect_path)); });
+                        labeled("SSE",        [&]{ return ImGui::InputText("##sse_path",   conn_buf.sse_path,        sizeof(conn_buf.sse_path)); });
+                        labeled("Timeout(ms)",[&]{ return ImGui::InputInt ("##timeout",    &conn_buf.timeout_ms,     0); });
+                        ImGui::EndTable();
+                    }
                     if (conn_changed) {
                         cap_cfg.host            = conn_buf.host;
                         cap_cfg.port            = conn_buf.port;
@@ -1311,20 +1357,24 @@ int main(int argc, char** argv) {
                     }
                     ImGui::Separator();
 
-                    ImGui::TextDisabled("Image Acquisition");
-                    if (ImGui::RadioButton("Enable##acq",  image_acquisition))  image_acquisition = true;
-                    ImGui::SameLine();
-                    if (ImGui::RadioButton("Disable##acq", !image_acquisition)) image_acquisition = false;
-
-                    ImGui::TextDisabled("Live Image");
-                    if (ImGui::RadioButton("Enable##live",  live_image))  live_image = true;
-                    ImGui::SameLine();
-                    if (ImGui::RadioButton("Disable##live", !live_image)) live_image = false;
-
-                    ImGui::TextDisabled("Auto Detect");
-                    if (ImGui::RadioButton("Enable##ad",  auto_detect))  auto_detect = true;
-                    ImGui::SameLine();
-                    if (ImGui::RadioButton("Disable##ad", !auto_detect)) auto_detect = false;
+                    if (ImGui::BeginTable("##sw_table", 2, ImGuiTableFlags_None)) {
+                        const float sw_lbl_w = ImGui::CalcTextSize("Image Acquisition").x
+                                             + ImGui::GetStyle().ItemSpacing.x;
+                        ImGui::TableSetupColumn("##sw_lbl", ImGuiTableColumnFlags_WidthFixed, sw_lbl_w);
+                        ImGui::TableSetupColumn("##sw_val", ImGuiTableColumnFlags_WidthFixed);
+                        auto sw_row = [&](const char* label, const char* id, bool* val) {
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::AlignTextToFramePadding();
+                            ImGui::TextDisabled("%s", label);
+                            ImGui::TableSetColumnIndex(1);
+                            toggle_switch(id, val);
+                        };
+                        sw_row("Image Acquisition", "##acq",  &image_acquisition);
+                        sw_row("Live Image",        "##live", &live_image);
+                        sw_row("Auto Detect",       "##ad",   &auto_detect);
+                        ImGui::EndTable();
+                    }
 
                     ImGui::BeginDisabled(vmode != view_mode::compare);
                     ImGui::TextDisabled("Ref Img");
@@ -1345,6 +1395,31 @@ int main(int argc, char** argv) {
                         }
                     }
                     ImGui::EndDisabled();
+
+                    // Guide lines
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Guide Lines  (-1 = off)");
+                    if (ImGui::BeginTable("##guide_table", 2, ImGuiTableFlags_None)) {
+                        const float gl_lbl_w = ImGui::CalcTextSize("targetx").x
+                                             + ImGui::GetStyle().ItemSpacing.x;
+                        ImGui::TableSetupColumn("##gl_lbl", ImGuiTableColumnFlags_WidthFixed, gl_lbl_w);
+                        ImGui::TableSetupColumn("##gl_val", ImGuiTableColumnFlags_WidthStretch);
+                        auto gl_row = [&](const char* label, const char* id, int* val) {
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::AlignTextToFramePadding();
+                            ImGui::TextDisabled("%s", label);
+                            ImGui::TableSetColumnIndex(1);
+                            ImGui::SetNextItemWidth(-1);
+                            if (ImGui::InputInt(id, val, 0))
+                                capture_config::save("visionstudio.json", cap_cfg);
+                        };
+                        gl_row("basex",   "##basex",   &cap_cfg.basex);
+                        gl_row("targetx", "##targetx", &cap_cfg.targetx);
+                        gl_row("starty",  "##starty",  &cap_cfg.starty);
+                        gl_row("liney",   "##liney",   &cap_cfg.liney);
+                        ImGui::EndTable();
+                    }
 
                     // Capture config files: path + browse + edit modal
                     ImGui::Separator();
@@ -1397,6 +1472,12 @@ int main(int argc, char** argv) {
                 ImGui::BeginDisabled(cur_sse != sse_state::connected);
                 if (!preview_on) {
                     if (ImGui::Button("Start Preview", {-1, 0})) {
+                        if (preview_tex != 0) {
+                            glDeleteTextures(1, &preview_tex);
+                            preview_tex   = 0;
+                            preview_tex_w = 0;
+                            preview_tex_h = 0;
+                        }
                         cap_cli->start_preview();
                         status_msg = "Preview started";
                     }
@@ -1595,6 +1676,55 @@ int main(int argc, char** argv) {
             auto* dl = ImGui::GetWindowDrawList();
             dl->AddRectFilled(rmin, rmax, IM_COL32(20, 20, 20, 255));
             dl->AddImage(static_cast<ImTextureID>(preview_tex), imin, imax);
+        }
+
+        // ----- Guide lines overlay -----
+        {
+            const bool has_guide = cap_cfg.basex >= 0 || cap_cfg.targetx >= 0
+                                || cap_cfg.starty >= 0 || cap_cfg.liney   >= 0;
+            if (has_guide && imode == input_mode::remote_capture) {
+                auto* dl = ImGui::GetWindowDrawList();
+                const ImU32 vcol = IM_COL32(255, 80,  80,  200);
+                const ImU32 hcol = IM_COL32( 80, 200, 255, 200);
+                const float clip_x0 = viewer_origin.x;
+                const float clip_y0 = viewer_origin.y;
+                const float clip_x1 = viewer_origin.x + viewer_w;
+                const float clip_y1 = viewer_origin.y + viewer_h;
+                dl->PushClipRect({clip_x0, clip_y0}, {clip_x1, clip_y1}, true);
+
+                // Compute image origin and scale for the current display
+                ImVec2 img_orig;
+                float  img_scale;
+                if (preview_tex != 0 && use_single) {
+                    const float aspect = static_cast<float>(preview_tex_w)
+                                       / static_cast<float>(preview_tex_h);
+                    float dw = viewer_w, dh = viewer_w / aspect;
+                    if (dh > viewer_h) { dh = viewer_h; dw = viewer_h * aspect; }
+                    img_orig  = {viewer_origin.x + (viewer_w - dw) * 0.5f,
+                                 viewer_origin.y + (viewer_h - dh) * 0.5f};
+                    img_scale = dw / static_cast<float>(preview_tex_w);
+                } else {
+                    const view_state& vs = single_viewer.get_view_state();
+                    img_orig  = {viewer_origin.x + vs.pan_x,
+                                 viewer_origin.y + vs.pan_y};
+                    img_scale = vs.zoom;
+                }
+
+                auto vline = [&](int px) {
+                    const float sx = img_orig.x + px * img_scale;
+                    dl->AddLine({sx, clip_y0}, {sx, clip_y1}, vcol, 1.5f);
+                };
+                auto hline = [&](int py) {
+                    const float sy = img_orig.y + py * img_scale;
+                    dl->AddLine({clip_x0, sy}, {clip_x1, sy}, hcol, 1.5f);
+                };
+                if (cap_cfg.basex   >= 0) vline(cap_cfg.basex);
+                if (cap_cfg.targetx >= 0) vline(cap_cfg.targetx);
+                if (cap_cfg.starty  >= 0) hline(cap_cfg.starty);
+                if (cap_cfg.liney   >= 0) hline(cap_cfg.liney);
+
+                dl->PopClipRect();
+            }
         }
 
         // ----- Shared helpers for profile panels -----
