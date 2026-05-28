@@ -332,16 +332,6 @@ void compare_viewer::render(float width, float height) {
                   : label_text(right_label, "Right"),
         right_viewer_.get_image_data());
 
-    dl->PushClipRect(origin, {origin.x + half_w, origin.y + label_h}, true);
-    dl->AddText({origin.x + 4.0f, origin.y + 2.0f}, label_col, ltxt.c_str());
-    dl->PopClipRect();
-
-    dl->PushClipRect({origin.x + half_w + spacing, origin.y},
-                     {origin.x + half_w + spacing + half_w, origin.y + label_h}, true);
-    const ImU32 rtxt_col = diff_mode ? IM_COL32(255, 180, 60, 255) : label_col;
-    dl->AddText({origin.x + half_w + spacing + 4.0f, origin.y + 2.0f}, rtxt_col, rtxt.c_str());
-    dl->PopClipRect();
-
     // Advance ImGui's cursor to the offset-controls row. The label row above was
     // drawn via dl->AddText which does not advance the cursor, so without this
     // dummy item ImGui's layout state is uninitialised when the LEFT controls call
@@ -420,6 +410,16 @@ void compare_viewer::render(float width, float height) {
                                          show_crosshair && lh.valid);
     }
     right_viewer_.render("right_canvas", half_w, canvas_h, right_state);
+
+    // Draw filename labels after viewers so they appear on top of the image.
+    dl->PushClipRect(origin, {origin.x + half_w, origin.y + label_h}, true);
+    dl->AddText({origin.x + 4.0f, origin.y + 2.0f}, label_col, ltxt.c_str());
+    dl->PopClipRect();
+    dl->PushClipRect({origin.x + half_w + spacing, origin.y},
+                     {origin.x + half_w + spacing + half_w, origin.y + label_h}, true);
+    const ImU32 rtxt_col = diff_mode ? IM_COL32(255, 180, 60, 255) : label_col;
+    dl->AddText({origin.x + half_w + spacing + 4.0f, origin.y + 2.0f}, rtxt_col, rtxt.c_str());
+    dl->PopClipRect();
 
     // Progress overlay while diff is computing.
     if (diff_computing) {
