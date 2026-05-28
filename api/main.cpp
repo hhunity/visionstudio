@@ -1698,24 +1698,13 @@ int main(int argc, char** argv) {
                 };
 
                 if (use_single) {
-                    ImVec2 img_orig;
-                    float  img_scale;
-                    if (imode == input_mode::remote_capture && preview_tex != 0) {
-                        const float aspect = static_cast<float>(preview_tex_w)
-                                           / static_cast<float>(preview_tex_h);
-                        float dw = viewer_w, dh = viewer_w / aspect;
-                        if (dh > viewer_h) { dh = viewer_h; dw = viewer_h * aspect; }
-                        img_orig  = {viewer_origin.x + (viewer_w - dw) * 0.5f,
-                                     viewer_origin.y + (viewer_h - dh) * 0.5f};
-                        img_scale = dw / static_cast<float>(preview_tex_w);
-                    } else {
+                    if (preview_tex == 0) {
                         const view_state& vs = single_viewer.get_view_state();
-                        img_orig  = {viewer_origin.x + vs.pan_x, viewer_origin.y + vs.pan_y};
-                        img_scale = vs.zoom;
+                        draw_guides({viewer_origin.x + vs.pan_x, viewer_origin.y + vs.pan_y},
+                                    vs.zoom,
+                                    viewer_origin.x, viewer_origin.y,
+                                    viewer_origin.x + viewer_w, viewer_origin.y + viewer_h);
                     }
-                    draw_guides(img_orig, img_scale,
-                                viewer_origin.x, viewer_origin.y,
-                                viewer_origin.x + viewer_w, viewer_origin.y + viewer_h);
                 } else {
                     // Compare mode: draw on both panels
                     const float spacing = ImGui::GetStyle().ItemSpacing.x;
