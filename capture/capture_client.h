@@ -28,6 +28,8 @@ struct cam_param {
     std::string              unit;
     std::string              min;
     std::string              max;
+    std::string              initial;
+    std::string              description;
     std::vector<std::string> options; // valid values for enum type
 };
 

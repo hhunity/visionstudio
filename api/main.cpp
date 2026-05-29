@@ -1527,6 +1527,16 @@ int main(int argc, char** argv) {
                             ImGui::TableNextRow();
                             ImGui::TableSetColumnIndex(0);
                             ImGui::TextDisabled("%s", p.name.c_str());
+                            if (ImGui::IsItemHovered() &&
+                                (!p.description.empty() || !p.min.empty() || !p.initial.empty())) {
+                                ImGui::BeginTooltip();
+                                if (!p.description.empty()) ImGui::TextUnformatted(p.description.c_str());
+                                if (!p.min.empty() || !p.max.empty())
+                                    ImGui::Text("Range: %s - %s", p.min.c_str(), p.max.c_str());
+                                if (!p.initial.empty())
+                                    ImGui::Text("Default: %s %s", p.initial.c_str(), p.unit.c_str());
+                                ImGui::EndTooltip();
+                            }
                             ImGui::TableSetColumnIndex(1);
 
                             if (p.rw_type == cam_param_rw::writeonly) {
