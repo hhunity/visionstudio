@@ -1682,7 +1682,7 @@ int main(int argc, char** argv) {
         {
             const bool has_guide = cap_cfg.basex >= 0 || cap_cfg.targetx >= 0
                                 || cap_cfg.starty >= 0 || cap_cfg.liney   >= 0;
-            if (has_guide && imode == input_mode::remote_capture && preview_tex == 0) {
+            if (has_guide && imode == input_mode::remote_capture && !cap_cli->is_preview_active()) {
                 auto* dl = ImGui::GetWindowDrawList();
                 const ImU32 vcol = IM_COL32(255, 80,  80,  200);
                 const ImU32 hcol = IM_COL32( 80, 200, 255, 200);
