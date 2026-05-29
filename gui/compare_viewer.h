@@ -14,6 +14,7 @@ public:
     bool load_right(const image_data& img);
     bool load_single(const image_data& img);  // load same image to both left and right
     void unload_left();                        // clear the left panel
+    void unload_right();                       // clear the right panel
 
     // Overlays for compare mode (independent left/right).
     void set_left_overlay_groups(std::vector<roi_group> groups);

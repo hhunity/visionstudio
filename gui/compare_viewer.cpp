@@ -43,6 +43,13 @@ void compare_viewer::unload_left() {
     left_viewer_.unload_image();
 }
 
+void compare_viewer::unload_right() {
+    right_src_ = {};
+    diff_applied_ = false;
+    right_viewer_.set_display_offset(0, 0);
+    right_viewer_.unload_image();
+}
+
 bool compare_viewer::load_right(const image_data& img) {
     cancel_diff();
     right_src_             = img;

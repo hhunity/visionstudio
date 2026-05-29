@@ -736,13 +736,17 @@ int main(int argc, char** argv) {
                     app_log.add("ERROR", ("Server error: " + e->message).c_str());
                 } else if (auto* e = std::get_if<evt_capture_done>(&*ev)) {
                     capturing = false;
-                    if (vmode == view_mode::compare) {
-                        if (left_image.empty())
-                            left_loader.start(e->path);
-                        else
-                            right_loader.start(e->path);
-                    } else {
+                    if (capture_mode == 0) {
+                        single_viewer.unload_image();
                         left_loader.start(e->path);
+                    } else if (capture_mode == 1) {
+                        compare.unload_left();
+                        compare.unload_right();
+                        left_loader.start(e->path);
+                    } else {
+                        // mode 2: keep left as reference, replace right only
+                        compare.unload_right();
+                        right_loader.start(e->path);
                     }
                     status_msg = "Capture complete: " + e->path;
                     app_log.add("INFO", ("Capture done: " + e->path).c_str());
@@ -1344,16 +1348,16 @@ int main(int argc, char** argv) {
                 const bool cap_settings_open = ImGui::CollapsingHeader("Capture Settings");
                 ImGui::PopStyleColor(3);
                 if (cap_settings_open) {
-                    constexpr const char* kCaptureModes[] = {"Single", "Compare"};
+                    constexpr const char* kCaptureModes[] = {"Single", "Compare", "Compare (keep left)"};
                     ImGui::TextDisabled("View Mode");
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
                     const int prev_cap_mode = capture_mode;
-                    if (ImGui::Combo("##cap_mode", &capture_mode, kCaptureModes, 2)) {
-                        if (prev_cap_mode == 1 && capture_mode != 1) {
+                    if (ImGui::Combo("##cap_mode", &capture_mode, kCaptureModes, 3)) {
+                        if (prev_cap_mode == 1 && capture_mode == 0) {
                             ref_img_path.clear();
                             compare.unload_left();
                         }
-                        vmode = capture_mode == 1 ? view_mode::compare : view_mode::single;
+                        vmode = capture_mode == 0 ? view_mode::single : view_mode::compare;
                     }
                     ImGui::Separator();
 
