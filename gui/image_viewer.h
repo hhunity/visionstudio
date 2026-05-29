@@ -84,6 +84,8 @@ public:
 
     // Overlay coordinate offset: set when viewer displays a cropped slice of a larger image.
     void set_display_offset(int ox, int oy) { display_offset_x_ = ox; display_offset_y_ = oy; }
+    int  display_offset_x() const { return display_offset_x_; }
+    int  display_offset_y() const { return display_offset_y_; }
 
     // Overlay: load ROI groups for heatmap display.
     void set_overlay_groups(std::vector<roi_group> groups);

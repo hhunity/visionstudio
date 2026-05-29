@@ -37,6 +37,9 @@ public:
     // View state access for visible-range profiles.
     const view_state& get_view_state() const { return shared_state_; }
 
+    // Height of the label + offset rows above the canvas (for guide line clipping).
+    float get_header_height() const;
+
     // Combined hover info for the pixel panel (same data as the tooltip).
     struct combined_hover_info {
         bool                   valid      = false;
