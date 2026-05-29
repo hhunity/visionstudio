@@ -653,11 +653,13 @@ static std::vector<cam_info_group> parse_groups(const nlohmann::json& j) {
         if (g.contains("params") && g["params"].is_array()) {
             for (const auto& p : g["params"]) {
                 cam_param param;
-                param.name  = p.value("name",  "");
-                param.value = p.value("value", "");
-                param.unit  = p.value("unit",  "");
-                param.min   = p.value("min",   "");
-                param.max   = p.value("max",   "");
+                param.name        = p.value("name",        "");
+                param.value       = p.value("value",       "");
+                param.unit        = p.value("unit",        "");
+                param.min         = p.value("min",         "");
+                param.max         = p.value("max",         "");
+                param.initial     = p.value("initial",     "");
+                param.description = p.value("description", "");
 
                 const std::string type_str = p.value("type", "string");
                 if      (type_str == "int")   param.type = cam_param_type::int_;

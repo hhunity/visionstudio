@@ -736,13 +736,17 @@ int main(int argc, char** argv) {
                     app_log.add("ERROR", ("Server error: " + e->message).c_str());
                 } else if (auto* e = std::get_if<evt_capture_done>(&*ev)) {
                     capturing = false;
-                    if (vmode == view_mode::compare) {
-                        if (left_image.empty())
-                            left_loader.start(e->path);
-                        else
-                            right_loader.start(e->path);
-                    } else {
+                    if (capture_mode == 0) {
+                        single_viewer.unload_image();
                         left_loader.start(e->path);
+                    } else if (capture_mode == 1) {
+                        compare.unload_left();
+                        compare.unload_right();
+                        left_loader.start(e->path);
+                    } else {
+                        // mode 2: keep left as reference, replace right only
+                        compare.unload_right();
+                        right_loader.start(e->path);
                     }
                     status_msg = "Capture complete: " + e->path;
                     app_log.add("INFO", ("Capture done: " + e->path).c_str());
@@ -1344,16 +1348,16 @@ int main(int argc, char** argv) {
                 const bool cap_settings_open = ImGui::CollapsingHeader("Capture Settings");
                 ImGui::PopStyleColor(3);
                 if (cap_settings_open) {
-                    constexpr const char* kCaptureModes[] = {"Single", "Compare"};
+                    constexpr const char* kCaptureModes[] = {"Single", "Compare", "Compare (keep left)"};
                     ImGui::TextDisabled("View Mode");
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
                     const int prev_cap_mode = capture_mode;
-                    if (ImGui::Combo("##cap_mode", &capture_mode, kCaptureModes, 2)) {
-                        if (prev_cap_mode == 1 && capture_mode != 1) {
+                    if (ImGui::Combo("##cap_mode", &capture_mode, kCaptureModes, 3)) {
+                        if (prev_cap_mode == 1 && capture_mode == 0) {
                             ref_img_path.clear();
                             compare.unload_left();
                         }
-                        vmode = capture_mode == 1 ? view_mode::compare : view_mode::single;
+                        vmode = capture_mode == 0 ? view_mode::single : view_mode::compare;
                     }
                     ImGui::Separator();
 
@@ -1523,6 +1527,7 @@ int main(int argc, char** argv) {
                             ImGui::TableNextRow();
                             ImGui::TableSetColumnIndex(0);
                             ImGui::TextDisabled("%s", p.name.c_str());
+                            const bool name_hov = ImGui::IsItemHovered();
                             ImGui::TableSetColumnIndex(1);
 
                             if (p.rw_type == cam_param_rw::writeonly) {
@@ -1603,7 +1608,7 @@ int main(int argc, char** argv) {
                                     const std::string disp = p.unit.empty()
                                         ? p.value : p.value + " " + p.unit;
                                     ImGui::TextUnformatted(disp.c_str());
-                                    if (ImGui::IsItemHovered() &&
+                                    if ((name_hov || ImGui::IsItemHovered()) &&
                                         ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                                         cam_edit_key = key;
                                         if (p.type == cam_param_type::bool_ ||
@@ -1617,6 +1622,16 @@ int main(int argc, char** argv) {
                                         }
                                     }
                                 }
+                            }
+                            if ((name_hov || ImGui::IsItemHovered()) && cam_edit_key.empty() &&
+                                (!p.description.empty() || !p.min.empty() || !p.initial.empty())) {
+                                ImGui::BeginTooltip();
+                                if (!p.description.empty()) ImGui::TextUnformatted(p.description.c_str());
+                                if (!p.min.empty() || !p.max.empty())
+                                    ImGui::Text("Range: %s - %s", p.min.c_str(), p.max.c_str());
+                                if (!p.initial.empty())
+                                    ImGui::Text("Default: %s %s", p.initial.c_str(), p.unit.c_str());
+                                ImGui::EndTooltip();
                             }
                         }
                         ImGui::EndTable();
@@ -1682,7 +1697,7 @@ int main(int argc, char** argv) {
         {
             const bool has_guide = cap_cfg.basex >= 0 || cap_cfg.targetx >= 0
                                 || cap_cfg.starty >= 0 || cap_cfg.liney   >= 0;
-            if (has_guide && imode == input_mode::remote_capture) {
+            if (has_guide && imode == input_mode::remote_capture && !cap_cli->is_preview_active()) {
                 auto* dl = ImGui::GetWindowDrawList();
                 const ImU32 vcol = IM_COL32(255, 80,  80,  200);
                 const ImU32 hcol = IM_COL32( 80, 200, 255, 200);
