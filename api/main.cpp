@@ -1608,7 +1608,7 @@ int main(int argc, char** argv) {
                                     const std::string disp = p.unit.empty()
                                         ? p.value : p.value + " " + p.unit;
                                     ImGui::TextUnformatted(disp.c_str());
-                                    if (ImGui::IsItemHovered() &&
+                                    if ((name_hov || ImGui::IsItemHovered()) &&
                                         ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                                         cam_edit_key = key;
                                         if (p.type == cam_param_type::bool_ ||
