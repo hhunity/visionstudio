@@ -1857,88 +1857,88 @@ int main(int argc, char** argv) {
             ImGui::SetCursorScreenPos({viewer_origin.x + viewer_w + spacing_x, viewer_origin.y});
             ImGui::BeginChild("##pixel_panel", {panel_w, viewer_h}, ImGuiChildFlags_Borders);
 
-            if (ImGui::BeginTabBar("##right_panel_tabs")) {
-
-                // ---- Info tab ----
-                if (ImGui::BeginTabItem("Info")) {
-                    if (use_single) {
-                        const auto& hi = single_viewer.get_hover_info();
-                        if (!hi.valid) {
-                            ImGui::TextDisabled("--");
-                        } else {
-                            ImGui::Text("pos  : (%d, %d)", hi.img_x, hi.img_y);
-                            ImGui::Text("zoom : %.2fx", static_cast<double>(hi.zoom));
-                            ImGui::Separator();
-                            draw_rgba("##swatch", hi.rgba, single_viewer.get_image_data().format);
-                        }
-                    } else {
-                        const auto& hi = compare.get_hover_info();
-                        if (!hi.valid) {
-                            ImGui::TextDisabled("--");
-                        } else {
-                            ImGui::Text("pos  : (%d, %d)", hi.img_x, hi.img_y);
-                            ImGui::Text("zoom : %.2fx", static_cast<double>(hi.zoom));
-                            ImGui::Separator();
-                            ImGui::TextDisabled("Left");
-                            draw_rgba("##lswatch", hi.left_rgba,
-                                      compare.left_viewer_ref().get_image_data().format);
-                            ImGui::Spacing();
-                            ImGui::TextDisabled(compare.diff_mode ? "Diff" : "Right");
-                            draw_rgba("##rswatch", hi.right_rgba,
-                                      compare.right_viewer_ref().get_image_data().format);
-                        }
-                    }
-
-                    // ----- Overlay file selector -----
-                    if (imode == input_mode::read_img) {
-                        ImGui::Separator();
-                        ImGui::TextDisabled("Overlay");
-
-                        const float load_w = 45.0f;
-                        const float path_w = ImGui::GetContentRegionAvail().x
-                                             - load_w - ImGui::GetStyle().ItemSpacing.x;
-
-                        if (vmode == view_mode::compare) {
-                            ImGui::TextDisabled("L");
-                            ImGui::SetNextItemWidth(path_w);
-                            ImGui::InputText("##ov_path_l", &left_overlay_file, ImGuiInputTextFlags_ReadOnly);
-                            ImGui::SameLine();
-                            if (ImGui::Button("Load##ovl", {load_w, 0}))
-                                load_overlay(left_overlay_file, left_overlays,
-                                    [&](auto& g){ compare.set_left_overlay_groups(g); },
-                                    nullptr, &status_msg, "Overlay L loaded: ");
-                            overlay_group_checkboxes(compare.left_viewer_ref(), "ovgl");
-                            ImGui::TextDisabled("R");
-                            ImGui::SetNextItemWidth(path_w);
-                            ImGui::InputText("##ov_path_r", &right_overlay_file, ImGuiInputTextFlags_ReadOnly);
-                            ImGui::SameLine();
-                            if (ImGui::Button("Load##ovr", {load_w, 0}))
-                                load_overlay(right_overlay_file, right_overlays,
-                                    [&](auto& g){ compare.set_right_overlay_groups(g); },
-                                    nullptr, &status_msg, "Overlay R loaded: ");
-                            overlay_group_checkboxes(compare.right_viewer_ref(), "ovgr");
-                        } else {
-                            ImGui::SetNextItemWidth(path_w);
-                            ImGui::InputText("##ov_path", &overlay_file, ImGuiInputTextFlags_ReadOnly);
-                            ImGui::SameLine();
-                            if (ImGui::Button("Load##ov", {load_w, 0})) {
-                                if (use_single)
-                                    load_overlay(overlay_file, overlays,
-                                        [&](auto& g){ single_viewer.set_overlay_groups(g); },
-                                        nullptr, &status_msg);
-                                else
-                                    load_overlay(overlay_file, left_overlays,
-                                        [&](auto& g){ compare.set_left_overlay_groups(g); },
-                                        nullptr, &status_msg);
-                            }
-                            if (use_single)
-                                overlay_group_checkboxes(single_viewer, "ovg");
-                            else
-                                overlay_group_checkboxes(compare.left_viewer_ref(), "ovg", nullptr);
-                        }
-                    }
-                    ImGui::EndTabItem();
+            // ---- Info section (always visible) ----
+            if (use_single) {
+                const auto& hi = single_viewer.get_hover_info();
+                if (!hi.valid) {
+                    ImGui::TextDisabled("--");
+                } else {
+                    ImGui::Text("pos  : (%d, %d)", hi.img_x, hi.img_y);
+                    ImGui::Text("zoom : %.2fx", static_cast<double>(hi.zoom));
+                    ImGui::Separator();
+                    draw_rgba("##swatch", hi.rgba, single_viewer.get_image_data().format);
                 }
+            } else {
+                const auto& hi = compare.get_hover_info();
+                if (!hi.valid) {
+                    ImGui::TextDisabled("--");
+                } else {
+                    ImGui::Text("pos  : (%d, %d)", hi.img_x, hi.img_y);
+                    ImGui::Text("zoom : %.2fx", static_cast<double>(hi.zoom));
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Left");
+                    draw_rgba("##lswatch", hi.left_rgba,
+                              compare.left_viewer_ref().get_image_data().format);
+                    ImGui::Spacing();
+                    ImGui::TextDisabled(compare.diff_mode ? "Diff" : "Right");
+                    draw_rgba("##rswatch", hi.right_rgba,
+                              compare.right_viewer_ref().get_image_data().format);
+                }
+            }
+
+            // ----- Overlay file selector -----
+            if (imode == input_mode::read_img) {
+                ImGui::Separator();
+                ImGui::TextDisabled("Overlay");
+
+                const float load_w = 45.0f;
+                const float path_w = ImGui::GetContentRegionAvail().x
+                                     - load_w - ImGui::GetStyle().ItemSpacing.x;
+
+                if (vmode == view_mode::compare) {
+                    ImGui::TextDisabled("L");
+                    ImGui::SetNextItemWidth(path_w);
+                    ImGui::InputText("##ov_path_l", &left_overlay_file, ImGuiInputTextFlags_ReadOnly);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Load##ovl", {load_w, 0}))
+                        load_overlay(left_overlay_file, left_overlays,
+                            [&](auto& g){ compare.set_left_overlay_groups(g); },
+                            nullptr, &status_msg, "Overlay L loaded: ");
+                    overlay_group_checkboxes(compare.left_viewer_ref(), "ovgl");
+                    ImGui::TextDisabled("R");
+                    ImGui::SetNextItemWidth(path_w);
+                    ImGui::InputText("##ov_path_r", &right_overlay_file, ImGuiInputTextFlags_ReadOnly);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Load##ovr", {load_w, 0}))
+                        load_overlay(right_overlay_file, right_overlays,
+                            [&](auto& g){ compare.set_right_overlay_groups(g); },
+                            nullptr, &status_msg, "Overlay R loaded: ");
+                    overlay_group_checkboxes(compare.right_viewer_ref(), "ovgr");
+                } else {
+                    ImGui::SetNextItemWidth(path_w);
+                    ImGui::InputText("##ov_path", &overlay_file, ImGuiInputTextFlags_ReadOnly);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Load##ov", {load_w, 0})) {
+                        if (use_single)
+                            load_overlay(overlay_file, overlays,
+                                [&](auto& g){ single_viewer.set_overlay_groups(g); },
+                                nullptr, &status_msg);
+                        else
+                            load_overlay(overlay_file, left_overlays,
+                                [&](auto& g){ compare.set_left_overlay_groups(g); },
+                                nullptr, &status_msg);
+                    }
+                    if (use_single)
+                        overlay_group_checkboxes(single_viewer, "ovg");
+                    else
+                        overlay_group_checkboxes(compare.left_viewer_ref(), "ovg", nullptr);
+                }
+            }
+
+            ImGui::Separator();
+
+            // ---- Tool tabs ----
+            if (ImGui::BeginTabBar("##right_panel_tabs")) {
 
                 // ---- Circle/Ellipse tab ----
                 if (ImGui::BeginTabItem("Circle/Ellipse")) {
