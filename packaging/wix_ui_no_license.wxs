@@ -24,8 +24,8 @@
       <Publish Dialog="WelcomeDlg"    Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="3">1</Publish>
       <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg"    Order="3">1</Publish>
 
-      <!-- Launch checkbox on finish dialog (only on fresh install) -->
-      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
+      <!-- Always launch on finish (fresh install only, not repair/uninstall) -->
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">NOT Installed</Publish>
     </UI>
   </Fragment>
 </Wix>
