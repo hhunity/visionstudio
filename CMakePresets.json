@@ -40,5 +40,14 @@
       "name": "release",
       "configurePreset": "release"
     }
+  ],
+  "packagePresets": [
+    {
+      "name": "release-msi",
+      "displayName": "Release MSI (WiX)",
+      "configurePreset": "release",
+      "generators": ["WIX"],
+      "configurations": ["Release"]
+    }
   ]
 }

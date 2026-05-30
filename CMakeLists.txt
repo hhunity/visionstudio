@@ -195,7 +195,7 @@ if(WIN32)
 endif()
 
 # =============================================================================
-# CPack / NSIS installer (Windows only)
+# CPack / WiX MSI installer (Windows only)
 # =============================================================================
 if(WIN32)
     # install() puts files into the installer package.
@@ -211,37 +211,25 @@ if(WIN32)
         RUNTIME DESTINATION "."
     )
 
-    set(CPACK_GENERATOR "NSIS")
-    set(CPACK_PACKAGE_NAME        "VisionStudio")
-    set(CPACK_PACKAGE_VENDOR      "${VS_COMPANY_NAME}")
-    set(CPACK_PACKAGE_DESCRIPTION "TIFF Image Viewer")
-    set(CPACK_PACKAGE_VERSION_MAJOR "${PROJECT_VERSION_MAJOR}")
-    set(CPACK_PACKAGE_VERSION_MINOR "${PROJECT_VERSION_MINOR}")
-    set(CPACK_PACKAGE_VERSION_PATCH "${PROJECT_VERSION_PATCH}")
+    set(CPACK_GENERATOR "WIX")
+    set(CPACK_PACKAGE_NAME             "VisionStudio")
+    set(CPACK_PACKAGE_VENDOR           "${VS_COMPANY_NAME}")
+    set(CPACK_PACKAGE_DESCRIPTION      "TIFF Image Viewer")
+    set(CPACK_PACKAGE_VERSION_MAJOR    "${PROJECT_VERSION_MAJOR}")
+    set(CPACK_PACKAGE_VERSION_MINOR    "${PROJECT_VERSION_MINOR}")
+    set(CPACK_PACKAGE_VERSION_PATCH    "${PROJECT_VERSION_PATCH}")
 
-    # Default install directory: C:\Program Files\VisionStudio
-    set(CPACK_NSIS_INSTALL_ROOT   "$PROGRAMFILES64")
-    set(CPACK_NSIS_PACKAGE_NAME   "VisionStudio ${PROJECT_VERSION}")
-    set(CPACK_NSIS_DISPLAY_NAME   "VisionStudio ${PROJECT_VERSION}")
+    # Install under C:\Program Files\VisionStudio
+    set(CPACK_PACKAGE_INSTALL_DIRECTORY "VisionStudio")
 
-    # Start menu + desktop shortcut
-    set(CPACK_NSIS_CREATE_ICONS_EXTRA
-        "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\VisionStudio.lnk' '$INSTDIR\\\\visionstudio.exe'"
-    )
-    set(CPACK_NSIS_DELETE_ICONS_EXTRA
-        "Delete '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\VisionStudio.lnk'"
-    )
-    set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS
-        "CreateShortCut '$DESKTOP\\\\VisionStudio.lnk' '$INSTDIR\\\\visionstudio.exe'"
-    )
-    set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
-        "Delete '$DESKTOP\\\\VisionStudio.lnk'"
-    )
+    # Stable GUID used for upgrade detection across versions — never change this.
+    set(CPACK_WIX_UPGRADE_GUID "3C7A9F2E-B841-4D56-8E1F-0A2B3C4D5E6F")
 
-    # Icon for the installer window (requires .ico)
+    # Desktop + Start Menu shortcuts injected via WiX patch
+    set(CPACK_WIX_PATCH_FILE "${CMAKE_SOURCE_DIR}/packaging/wix_shortcuts.xml")
+
     if(EXISTS "${CMAKE_SOURCE_DIR}/assets/visionstudio.ico")
-        set(CPACK_NSIS_MUI_ICON    "${CMAKE_SOURCE_DIR}/assets/visionstudio.ico")
-        set(CPACK_NSIS_MUI_UNIICON "${CMAKE_SOURCE_DIR}/assets/visionstudio.ico")
+        set(CPACK_WIX_PRODUCT_ICON "${CMAKE_SOURCE_DIR}/assets/visionstudio.ico")
     endif()
 
     include(CPack)

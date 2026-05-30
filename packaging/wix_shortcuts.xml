@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CPack WiX patch: adds desktop and Start Menu shortcuts for visionstudio.exe.
+
+  Fragment Id "CM_CP_visionstudio.exe" is the component CPack generates for
+  the installed executable.  Adding <Shortcut> elements here means the
+  shortcuts are created and removed together with the exe — no extra component
+  or registry key required.
+
+  DesktopFolder and ProgramMenuFolder are standard WiX built-in directory ids.
+  APPLICATIONROOTDIRECTORY is the install-root directory id CPack creates.
+-->
+<CPackWiXPatch>
+  <CPackWiXFragment Id="CM_CP_visionstudio.exe">
+    <Shortcut Id="DesktopShortcut"
+              Directory="DesktopFolder"
+              Name="VisionStudio"
+              Description="TIFF Image Viewer"
+              Target="[#CM_FP_visionstudio.exe]"
+              WorkingDirectory="APPLICATIONROOTDIRECTORY"/>
+    <Shortcut Id="StartMenuShortcut"
+              Directory="ProgramMenuFolder"
+              Name="VisionStudio"
+              Description="TIFF Image Viewer"
+              Target="[#CM_FP_visionstudio.exe]"
+              WorkingDirectory="APPLICATIONROOTDIRECTORY"/>
+  </CPackWiXFragment>
+</CPackWiXPatch>
