@@ -1,19 +1,31 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Custom UI: WixUI_InstallDir without the license agreement dialog.
+  Custom UI: WixUI_InstallDir without the license dialog, with launch-after-install.
 
-  WixUI_InstallDir default flow:
-    WelcomeDlg → LicenseAgreementDlg → InstallDirDlg → ...
+  Dialog flow:
+    WelcomeDlg → InstallDirDlg → ProgressDlg → ExitDialog
+                                                  └─ [x] Launch VisionStudio Capture
 
-  Override with Order=3 (originals are Order=2) so the last-set dialog wins:
-    WelcomeDlg → InstallDirDlg → ...
+  Override Order=3 beats the default Order=2 transitions so LicenseAgreementDlg
+  is skipped.  LaunchApplication fires only on fresh install (NOT Installed).
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Fragment>
+    <!-- asyncNoWait: installer exits without waiting for the app to close -->
+    <CustomAction Id="LaunchApplication"
+                  FileKey="CM_FP_visionstudio.exe"
+                  ExeCommand="--mode capture"
+                  Return="asyncNoWait"/>
+
     <UI Id="WixUI_InstallDir_NoLicense">
       <UIRef Id="WixUI_InstallDir"/>
+
+      <!-- Skip license dialog -->
       <Publish Dialog="WelcomeDlg"    Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="3">1</Publish>
       <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg"    Order="3">1</Publish>
+
+      <!-- Launch checkbox on finish dialog (only on fresh install) -->
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
     </UI>
   </Fragment>
 </Wix>
