@@ -225,6 +225,10 @@ if(WIN32)
     # Stable GUID used for upgrade detection across versions — never change this.
     set(CPACK_WIX_UPGRADE_GUID "3C7A9F2E-B841-4D56-8E1F-0A2B3C4D5E6F")
 
+    # Skip the license agreement dialog
+    set(CPACK_WIX_UI_REF      "WixUI_InstallDir_NoLicense")
+    set(CPACK_WIX_EXTRA_SOURCES "${CMAKE_SOURCE_DIR}/packaging/wix_ui_no_license.wxs")
+
     # Desktop + Start Menu shortcuts injected via WiX patch
     set(CPACK_WIX_PATCH_FILE "${CMAKE_SOURCE_DIR}/packaging/wix_shortcuts.xml")
 

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Custom UI: WixUI_InstallDir without the license agreement dialog.
+
+  WixUI_InstallDir default flow:
+    WelcomeDlg → LicenseAgreementDlg → InstallDirDlg → ...
+
+  Override with Order=3 (originals are Order=2) so the last-set dialog wins:
+    WelcomeDlg → InstallDirDlg → ...
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <UI Id="WixUI_InstallDir_NoLicense">
+      <UIRef Id="WixUI_InstallDir"/>
+      <Publish Dialog="WelcomeDlg"    Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="3">1</Publish>
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg"    Order="3">1</Publish>
+    </UI>
+  </Fragment>
+</Wix>
