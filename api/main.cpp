@@ -490,10 +490,8 @@ int main(int argc, char** argv) {
     bool        show_pixel_panel      = true;
     bool        show_profile_panel    = false;
     bool        show_overlay_graph    = false;
-    bool        show_detection_panel  = false;
     circle_ellipse_tool ce_tool;
     remote_overlay_tool rot;
-    bool        show_remote_overlay_panel = false;
     bool        show_camera_config    = false;
     bool        show_connect_config   = false;
     bool        show_about            = false;
@@ -860,8 +858,8 @@ int main(int argc, char** argv) {
                 ImGui::MenuItem("Pixel Panel",      nullptr, &show_pixel_panel);
                 ImGui::MenuItem("Profile Panel",    nullptr, &show_profile_panel);
                 ImGui::MenuItem("Overlay Graph",    nullptr, &show_overlay_graph);
-                ImGui::MenuItem("Circle/Ellipse",   nullptr, &show_detection_panel);
-                ImGui::MenuItem("Remote Overlay",   nullptr, &show_remote_overlay_panel);
+                ImGui::MenuItem("Circle/Ellipse Overlay", nullptr, &ce_tool.visible);
+                ImGui::MenuItem("Remote Overlay",         nullptr, &rot.visible);
                 ImGui::MenuItem("Log",              nullptr, &show_log);
                 ImGui::EndMenu();
             }
@@ -1202,8 +1200,8 @@ int main(int argc, char** argv) {
             toggle_btn("Pixel",   show_pixel_panel);
             toggle_btn("Profile", show_profile_panel);
             toggle_btn("OvGraph", show_overlay_graph);
-            toggle_btn("Detect",  show_detection_panel);
-            toggle_btn("Remote",  show_remote_overlay_panel);
+            toggle_btn("Detect",  ce_tool.visible);
+            toggle_btn("Remote",  rot.visible);
             ImGui::NewLine();
         }
 
@@ -1211,11 +1209,8 @@ int main(int argc, char** argv) {
         const float status_h          = ImGui::GetFrameHeightWithSpacing();
         const float profile_panel_h   = show_profile_panel  ? 180.0f : 0.0f;
         const float overlay_graph_h   = show_overlay_graph  ? 360.0f : 0.0f;
-        const float detection_panel_h      = show_detection_panel      ? 260.0f : 0.0f;
-        const float remote_overlay_panel_h = show_remote_overlay_panel ? 200.0f : 0.0f;
         const float viewer_h          = ImGui::GetContentRegionAvail().y - status_h
-                                        - profile_panel_h - overlay_graph_h
-                                        - detection_panel_h - remote_overlay_panel_h;
+                                        - profile_panel_h - overlay_graph_h;
 
         static float    panel_w         = 240.0f;  // right pixel panel (resizable)
         static float    capture_panel_w = 180.0f;  // left capture control panel (resizable)
@@ -1657,7 +1652,7 @@ int main(int argc, char** argv) {
             ImGui::Image(static_cast<ImTextureID>(preview_tex), {dw, dh});
         } else if (use_single) {
             single_viewer.render("single_canvas", viewer_w, viewer_h);
-            if (show_detection_panel) {
+            if (ce_tool.visible) {
                 const view_state& vs = single_viewer.get_view_state();
                 ce_tool.render_overlay(ImGui::GetWindowDrawList(),
                                        viewer_origin, {viewer_w, viewer_h},
@@ -1665,7 +1660,7 @@ int main(int argc, char** argv) {
             }
         } else {
             compare.render(viewer_w, viewer_h);
-            if (show_detection_panel) {
+            if (ce_tool.visible) {
                 const view_state& lvs = compare.get_view_state();
                 const float spacing   = ImGui::GetStyle().ItemSpacing.x;
                 const float half_w    = std::floor((viewer_w - spacing) * 0.5f);
@@ -1857,88 +1852,126 @@ int main(int argc, char** argv) {
                 panel_w = std::clamp(panel_w - ImGui::GetIO().MouseDelta.x, 160.0f, 600.0f);
         }
 
-        // ----- Pixel panel -----
+        // ----- Right panel (tabbed) -----
         if (show_pixel_panel) {
             ImGui::SetCursorScreenPos({viewer_origin.x + viewer_w + spacing_x, viewer_origin.y});
             ImGui::BeginChild("##pixel_panel", {panel_w, viewer_h}, ImGuiChildFlags_Borders);
 
-            if (use_single) {
-                const auto& hi = single_viewer.get_hover_info();
-                if (!hi.valid) {
-                    ImGui::TextDisabled("--");
-                } else {
-                    ImGui::Text("pos  : (%d, %d)", hi.img_x, hi.img_y);
-                    ImGui::Text("zoom : %.2fx", static_cast<double>(hi.zoom));
-                    ImGui::Separator();
-                    draw_rgba("##swatch", hi.rgba, single_viewer.get_image_data().format);
-                }
-            } else {
-                const auto& hi = compare.get_hover_info();
-                if (!hi.valid) {
-                    ImGui::TextDisabled("--");
-                } else {
-                    ImGui::Text("pos  : (%d, %d)", hi.img_x, hi.img_y);
-                    ImGui::Text("zoom : %.2fx", static_cast<double>(hi.zoom));
-                    ImGui::Separator();
-                    ImGui::TextDisabled("Left");
-                    draw_rgba("##lswatch", hi.left_rgba,
-                              compare.left_viewer_ref().get_image_data().format);
-                    ImGui::Spacing();
-                    ImGui::TextDisabled(compare.diff_mode ? "Diff" : "Right");
-                    draw_rgba("##rswatch", hi.right_rgba,
-                              compare.right_viewer_ref().get_image_data().format);
-                }
-            }
+            if (ImGui::BeginTabBar("##right_panel_tabs")) {
 
-            // ----- Overlay file selector -----
-            if (imode == input_mode::read_img) {
-                ImGui::Separator();
-                ImGui::TextDisabled("Overlay");
-
-                const float load_w = 45.0f;
-                const float path_w = ImGui::GetContentRegionAvail().x
-                                     - load_w - ImGui::GetStyle().ItemSpacing.x;
-
-                if (vmode == view_mode::compare) {
-                    // Left
-                    ImGui::TextDisabled("L");
-                    ImGui::SetNextItemWidth(path_w);
-                    ImGui::InputText("##ov_path_l", &left_overlay_file, ImGuiInputTextFlags_ReadOnly);
-                    ImGui::SameLine();
-                    if (ImGui::Button("Load##ovl", {load_w, 0}))
-                        load_overlay(left_overlay_file, left_overlays,
-                            [&](auto& g){ compare.set_left_overlay_groups(g); },
-                            nullptr, &status_msg, "Overlay L loaded: ");
-                    overlay_group_checkboxes(compare.left_viewer_ref(), "ovgl");
-                    // Right
-                    ImGui::TextDisabled("R");
-                    ImGui::SetNextItemWidth(path_w);
-                    ImGui::InputText("##ov_path_r", &right_overlay_file, ImGuiInputTextFlags_ReadOnly);
-                    ImGui::SameLine();
-                    if (ImGui::Button("Load##ovr", {load_w, 0}))
-                        load_overlay(right_overlay_file, right_overlays,
-                            [&](auto& g){ compare.set_right_overlay_groups(g); },
-                            nullptr, &status_msg, "Overlay R loaded: ");
-                    overlay_group_checkboxes(compare.right_viewer_ref(), "ovgr");
-                } else {
-                    ImGui::SetNextItemWidth(path_w);
-                    ImGui::InputText("##ov_path", &overlay_file, ImGuiInputTextFlags_ReadOnly);
-                    ImGui::SameLine();
-                    if (ImGui::Button("Load##ov", {load_w, 0})) {
-                        if (use_single)
-                            load_overlay(overlay_file, overlays,
-                                [&](auto& g){ single_viewer.set_overlay_groups(g); },
-                                nullptr, &status_msg);
-                        else
-                            load_overlay(overlay_file, left_overlays,
-                                [&](auto& g){ compare.set_left_overlay_groups(g); },
-                                nullptr, &status_msg);
+                // ---- Info tab ----
+                if (ImGui::BeginTabItem("Info")) {
+                    if (use_single) {
+                        const auto& hi = single_viewer.get_hover_info();
+                        if (!hi.valid) {
+                            ImGui::TextDisabled("--");
+                        } else {
+                            ImGui::Text("pos  : (%d, %d)", hi.img_x, hi.img_y);
+                            ImGui::Text("zoom : %.2fx", static_cast<double>(hi.zoom));
+                            ImGui::Separator();
+                            draw_rgba("##swatch", hi.rgba, single_viewer.get_image_data().format);
+                        }
+                    } else {
+                        const auto& hi = compare.get_hover_info();
+                        if (!hi.valid) {
+                            ImGui::TextDisabled("--");
+                        } else {
+                            ImGui::Text("pos  : (%d, %d)", hi.img_x, hi.img_y);
+                            ImGui::Text("zoom : %.2fx", static_cast<double>(hi.zoom));
+                            ImGui::Separator();
+                            ImGui::TextDisabled("Left");
+                            draw_rgba("##lswatch", hi.left_rgba,
+                                      compare.left_viewer_ref().get_image_data().format);
+                            ImGui::Spacing();
+                            ImGui::TextDisabled(compare.diff_mode ? "Diff" : "Right");
+                            draw_rgba("##rswatch", hi.right_rgba,
+                                      compare.right_viewer_ref().get_image_data().format);
+                        }
                     }
-                    if (use_single)
-                        overlay_group_checkboxes(single_viewer, "ovg");
-                    else
-                        overlay_group_checkboxes(compare.left_viewer_ref(), "ovg", nullptr);
+
+                    // ----- Overlay file selector -----
+                    if (imode == input_mode::read_img) {
+                        ImGui::Separator();
+                        ImGui::TextDisabled("Overlay");
+
+                        const float load_w = 45.0f;
+                        const float path_w = ImGui::GetContentRegionAvail().x
+                                             - load_w - ImGui::GetStyle().ItemSpacing.x;
+
+                        if (vmode == view_mode::compare) {
+                            ImGui::TextDisabled("L");
+                            ImGui::SetNextItemWidth(path_w);
+                            ImGui::InputText("##ov_path_l", &left_overlay_file, ImGuiInputTextFlags_ReadOnly);
+                            ImGui::SameLine();
+                            if (ImGui::Button("Load##ovl", {load_w, 0}))
+                                load_overlay(left_overlay_file, left_overlays,
+                                    [&](auto& g){ compare.set_left_overlay_groups(g); },
+                                    nullptr, &status_msg, "Overlay L loaded: ");
+                            overlay_group_checkboxes(compare.left_viewer_ref(), "ovgl");
+                            ImGui::TextDisabled("R");
+                            ImGui::SetNextItemWidth(path_w);
+                            ImGui::InputText("##ov_path_r", &right_overlay_file, ImGuiInputTextFlags_ReadOnly);
+                            ImGui::SameLine();
+                            if (ImGui::Button("Load##ovr", {load_w, 0}))
+                                load_overlay(right_overlay_file, right_overlays,
+                                    [&](auto& g){ compare.set_right_overlay_groups(g); },
+                                    nullptr, &status_msg, "Overlay R loaded: ");
+                            overlay_group_checkboxes(compare.right_viewer_ref(), "ovgr");
+                        } else {
+                            ImGui::SetNextItemWidth(path_w);
+                            ImGui::InputText("##ov_path", &overlay_file, ImGuiInputTextFlags_ReadOnly);
+                            ImGui::SameLine();
+                            if (ImGui::Button("Load##ov", {load_w, 0})) {
+                                if (use_single)
+                                    load_overlay(overlay_file, overlays,
+                                        [&](auto& g){ single_viewer.set_overlay_groups(g); },
+                                        nullptr, &status_msg);
+                                else
+                                    load_overlay(overlay_file, left_overlays,
+                                        [&](auto& g){ compare.set_left_overlay_groups(g); },
+                                        nullptr, &status_msg);
+                            }
+                            if (use_single)
+                                overlay_group_checkboxes(single_viewer, "ovg");
+                            else
+                                overlay_group_checkboxes(compare.left_viewer_ref(), "ovg", nullptr);
+                        }
+                    }
+                    ImGui::EndTabItem();
                 }
+
+                // ---- Circle/Ellipse tab ----
+                if (ImGui::BeginTabItem("Circle/Ellipse")) {
+                    ImGui::Checkbox("Show Overlay##ce", &ce_tool.visible);
+                    ImGui::Separator();
+                    const bool has_img = use_single ? single_viewer.has_image()
+                                                    : compare.get_left_image_data().width > 0;
+                    ImGui::BeginDisabled(!has_img || ce_tool.is_analyzing());
+                    if (ImGui::Button("Detect", {-1, 0})) {
+                        const image_data& src = use_single
+                            ? single_viewer.get_image_data()
+                            : compare.get_left_image_data();
+                        ce_tool.start_analyze(src);
+                    }
+                    ImGui::EndDisabled();
+                    if (ImGui::Button("Clear", {-1, 0})) {
+                        ce_tool.clear_results();
+                        status_msg = "Detection cleared";
+                    }
+                    ImGui::Separator();
+                    ce_tool.render_panel();
+                    ImGui::EndTabItem();
+                }
+
+                // ---- Remote Overlay tab ----
+                if (ImGui::BeginTabItem("Remote Overlay")) {
+                    ImGui::Checkbox("Show Overlay##rot", &rot.visible);
+                    ImGui::Separator();
+                    rot.render_panel();
+                    ImGui::EndTabItem();
+                }
+
+                ImGui::EndTabBar();
             }
 
             ImGui::EndChild();
@@ -2163,69 +2196,9 @@ int main(int argc, char** argv) {
             ImGui::EndChild();
         }
 
-        // ----- Circle/Ellipse detection panel -----
-        if (show_detection_panel) {
-            const float content_left_x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
-            ImGui::SetCursorScreenPos({content_left_x,
-                viewer_origin.y + viewer_h + profile_panel_h + overlay_graph_h});
-            const float avail_w = ImGui::GetContentRegionAvail().x;
-            ImGui::BeginChild("##detection_panel", {avail_w, detection_panel_h},
-                              ImGuiChildFlags_Borders);
-
-            // Detect button (left column) + results (right fills the rest)
-            // Re-query width *inside* the child (border + padding reduce it).
-            const float inner_w = ImGui::GetContentRegionAvail().x;
-            const float btn_w   = 100.0f;
-            const float spacing = ImGui::GetStyle().ItemSpacing.x;
-            ImGui::BeginGroup();
-            ImGui::TextUnformatted("Circle/Ellipse");
-            ImGui::Separator();
-            const bool has_img = use_single ? single_viewer.has_image()
-                                            : compare.get_left_image_data().width > 0;
-            ImGui::BeginDisabled(!has_img || ce_tool.is_analyzing());
-            if (ImGui::Button("Detect", {btn_w, 0})) {
-                const image_data& src = use_single
-                    ? single_viewer.get_image_data()
-                    : compare.get_left_image_data();
-                ce_tool.start_analyze(src);
-            }
-            ImGui::EndDisabled();
-            if (ImGui::Button("Clear", {btn_w, 0})) {
-                ce_tool.clear_results();
-                status_msg = "Detection cleared";
-            }
-            ImGui::EndGroup();
-            ImGui::SameLine();
-
-            // Parameters + results panel fills the rest
-            ImGui::BeginChild("##det_inner",
-                              {inner_w - btn_w - spacing,
-                               ImGui::GetContentRegionAvail().y},
-                              ImGuiChildFlags_None);
-            ce_tool.render_panel();
-            ImGui::EndChild();
-
-            ImGui::EndChild();
-        }
-
-        // ----- Remote Overlay panel -----
-        if (show_remote_overlay_panel) {
-            const float content_left_x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
-            ImGui::SetCursorScreenPos({content_left_x,
-                viewer_origin.y + viewer_h + profile_panel_h + overlay_graph_h + detection_panel_h});
-            ImGui::BeginChild("##remote_overlay_panel",
-                              {ImGui::GetContentRegionAvail().x, remote_overlay_panel_h},
-                              ImGuiChildFlags_Borders);
-            ImGui::TextUnformatted("Remote Overlay");
-            ImGui::Separator();
-            rot.render_panel();
-            ImGui::EndChild();
-        }
-
         // Reset cursor to below all panels so the status bar sits correctly.
         ImGui::SetCursorScreenPos({viewer_origin.x,
-            viewer_origin.y + viewer_h + profile_panel_h + overlay_graph_h
-            + detection_panel_h + remote_overlay_panel_h});
+            viewer_origin.y + viewer_h + profile_panel_h + overlay_graph_h});
 
         // ----- Status bar -----
         ImGui::Separator();
