@@ -2104,6 +2104,9 @@ int main(int argc, char** argv) {
                     char tab_id[128];
                     std::snprintf(tab_id, sizeof(tab_id), "%s##ovgtab%zu", g.label.c_str(), gi);
                     if (ImGui::BeginTabItem(tab_id)) {
+                        // Force-apply axis limits this frame when the user commits new values.
+                        // ImGuiCond_Once is used otherwise so pan/zoom persists freely.
+                        bool y1_force = false, y2_force = false;
 
                         // ---- Settings ----
                         if (ImGui::CollapsingHeader("Settings##ovgs")) {
@@ -2133,26 +2136,28 @@ int main(int argc, char** argv) {
 
                             ImGui::TextUnformatted("Y1 (dx/dy):");
                             ImGui::SameLine();
-                            ImGui::Checkbox("Auto##y1ovg", &ovg_auto_y1);
+                            if (ImGui::Checkbox("Auto##y1ovg", &ovg_auto_y1) && !ovg_auto_y1)
+                                y1_force = true;
                             if (!ovg_auto_y1) {
                                 ImGui::SameLine();
                                 ImGui::SetNextItemWidth(80);
-                                ImGui::InputDouble("min##y1mn", &ovg_y1_min, 0.0, 0.0, "%.3f");
+                                if (ImGui::InputDouble("min##y1mn", &ovg_y1_min, 0.0, 0.0, "%.3f")) y1_force = true;
                                 ImGui::SameLine();
                                 ImGui::SetNextItemWidth(80);
-                                ImGui::InputDouble("max##y1mx", &ovg_y1_max, 0.0, 0.0, "%.3f");
+                                if (ImGui::InputDouble("max##y1mx", &ovg_y1_max, 0.0, 0.0, "%.3f")) y1_force = true;
                             }
 
                             ImGui::TextUnformatted("Y2 (angle):");
                             ImGui::SameLine();
-                            ImGui::Checkbox("Auto##y2ovg", &ovg_auto_y2);
+                            if (ImGui::Checkbox("Auto##y2ovg", &ovg_auto_y2) && !ovg_auto_y2)
+                                y2_force = true;
                             if (!ovg_auto_y2) {
                                 ImGui::SameLine();
                                 ImGui::SetNextItemWidth(80);
-                                ImGui::InputDouble("min##y2mn", &ovg_y2_min, 0.0, 0.0, "%.3f");
+                                if (ImGui::InputDouble("min##y2mn", &ovg_y2_min, 0.0, 0.0, "%.3f")) y2_force = true;
                                 ImGui::SameLine();
                                 ImGui::SetNextItemWidth(80);
-                                ImGui::InputDouble("max##y2mx", &ovg_y2_max, 0.0, 0.0, "%.3f");
+                                if (ImGui::InputDouble("max##y2mx", &ovg_y2_max, 0.0, 0.0, "%.3f")) y2_force = true;
                             }
                         }
 
@@ -2218,19 +2223,19 @@ int main(int argc, char** argv) {
 
                             const ImPlotAxisFlags af_x  = ImPlotAxisFlags_AutoFit;
                             const ImPlotAxisFlags af_y1 = ovg_auto_y1
-                                ? ImPlotAxisFlags_AutoFit
-                                : (ImPlotAxisFlags_LockMin | ImPlotAxisFlags_LockMax);
+                                ? ImPlotAxisFlags_AutoFit : ImPlotAxisFlags_None;
                             const ImPlotAxisFlags af_y2 = ovg_auto_y2
-                                ? ImPlotAxisFlags_AutoFit
-                                : (ImPlotAxisFlags_LockMin | ImPlotAxisFlags_LockMax);
+                                ? ImPlotAxisFlags_AutoFit : ImPlotAxisFlags_None;
 
                             if (ImPlot::BeginPlot(pid, {plot_w, plot_h}, pf)) {
                                 ImPlot::SetupAxes(xlabel, "dx / dy", af_x, af_y1);
                                 ImPlot::SetupAxis(ImAxis_Y2, "angle", af_y2);
                                 if (!ovg_auto_y1)
-                                    ImPlot::SetupAxisLimits(ImAxis_Y1, ovg_y1_min, ovg_y1_max, ImGuiCond_Always);
+                                    ImPlot::SetupAxisLimits(ImAxis_Y1, ovg_y1_min, ovg_y1_max,
+                                        y1_force ? ImGuiCond_Always : ImGuiCond_Once);
                                 if (!ovg_auto_y2)
-                                    ImPlot::SetupAxisLimits(ImAxis_Y2, ovg_y2_min, ovg_y2_max, ImGuiCond_Always);
+                                    ImPlot::SetupAxisLimits(ImAxis_Y2, ovg_y2_min, ovg_y2_max,
+                                        y2_force ? ImGuiCond_Always : ImGuiCond_Once);
 
                                 // Scatter points
                                 if (ovg_show_dx) ImPlot::PlotScatter("dx", xs.data(), dxs.data(), n);
