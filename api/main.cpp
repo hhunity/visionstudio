@@ -2156,8 +2156,9 @@ int main(int argc, char** argv) {
                             }
                         }
 
-                        const float text_h = ovg_show_fit
-                            ? ImGui::GetTextLineHeightWithSpacing() * 2.0f + ImGui::GetStyle().ItemSpacing.y
+                        const int stat_lines = (ovg_show_fit ? 2 : 0) + (ovg_show_ref ? 2 : 0);
+                        const float text_h = stat_lines > 0
+                            ? ImGui::GetTextLineHeightWithSpacing() * stat_lines + ImGui::GetStyle().ItemSpacing.y
                             : 0.0f;
                         const float plot_h = ImGui::GetContentRegionAvail().y - text_h;
                         const float plot_w = (avail_w - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
@@ -2177,6 +2178,27 @@ int main(int argc, char** argv) {
                             const double b = (sy - a * sx) / m;
                             return {a, b};
                         };
+
+                        // Reference line error statistics per series/axis.
+                        struct RefStat { double max_abs, mean, stddev; bool valid; };
+                        auto compute_ref_stat = [&](const std::vector<double>& xs,
+                                                    const std::vector<double>& ys) -> RefStat {
+                            if (!ovg_show_ref || n < 1) return {0, 0, 0, false};
+                            double sum = 0, sum_sq = 0, max_abs = 0;
+                            for (int i = 0; i < n; ++i) {
+                                const double e = ys[i] - (ovg_ref_a * xs[i] + ovg_ref_b);
+                                sum    += e;
+                                sum_sq += e * e;
+                                max_abs = std::max(max_abs, std::abs(e));
+                            }
+                            const double mean   = sum / n;
+                            const double stddev = std::sqrt(std::max(0.0, sum_sq / n - mean * mean));
+                            return {max_abs, mean, stddev, true};
+                        };
+                        const RefStat rs_col_dx = compute_ref_stat(xs_col, dxs);
+                        const RefStat rs_col_dy = compute_ref_stat(xs_col, dys);
+                        const RefStat rs_row_dx = compute_ref_stat(xs_row, dxs);
+                        const RefStat rs_row_dy = compute_ref_stat(xs_row, dys);
 
                         // Pre-compute all regressions for formula display below plots.
                         const auto [a_dx_col,  b_dx_col]  = linreg(xs_col, dxs);
@@ -2308,6 +2330,23 @@ int main(int argc, char** argv) {
                             ImGui::SameLine(); ImGui::Text("  dy=%.4fx%+.4f", a_dy_row,  b_dy_row);
                             ImGui::SameLine(); ImGui::TextColored({1.0f,0.7f,0.3f,1.0f},
                                                                   "  angle=%.4fx%+.4f", a_ang_row, b_ang_row);
+                        }
+
+                        // Reference line error statistics
+                        if (ovg_show_ref) {
+                            constexpr ImVec4 kRefCol = {1.0f, 0.9f, 0.0f, 1.0f};
+                            auto show_stat = [](const char* label, const RefStat& s) {
+                                ImGui::SameLine();
+                                ImGui::Text("%s max=%.4f  mean=%+.4f  σ=%.4f",
+                                            label, s.max_abs, s.mean, s.stddev);
+                            };
+                            ImGui::TextColored(kRefCol, "Ref Col:");
+                            if (ovg_show_dx) show_stat("dx:", rs_col_dx);
+                            if (ovg_show_dy) show_stat("dy:", rs_col_dy);
+
+                            ImGui::TextColored(kRefCol, "Ref Row:");
+                            if (ovg_show_dx) show_stat("dx:", rs_row_dx);
+                            if (ovg_show_dy) show_stat("dy:", rs_row_dy);
                         }
 
                         ImGui::EndTabItem();
