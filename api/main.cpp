@@ -2028,6 +2028,19 @@ int main(int argc, char** argv) {
 
         // ----- Overlay scatter graph panel -----
         if (show_overlay_graph) {
+            // Per-session settings (persist across frames)
+            static bool   ovg_show_dx    = true;
+            static bool   ovg_show_dy    = true;
+            static bool   ovg_show_angle = true;
+            static bool   ovg_show_fit   = true;
+            static bool   ovg_show_ref   = false;
+            static double ovg_ref_a      = 0.0;
+            static double ovg_ref_b      = 0.0;
+            static bool   ovg_auto_y1    = true;
+            static double ovg_y1_min     = -1.0, ovg_y1_max = 1.0;
+            static bool   ovg_auto_y2    = true;
+            static double ovg_y2_min     = -180.0, ovg_y2_max = 180.0;
+
             const float content_left_x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
             ImGui::SetCursorScreenPos({content_left_x, viewer_origin.y + viewer_h + profile_panel_h});
             const float avail_w = ImGui::GetContentRegionAvail().x;
@@ -2064,13 +2077,65 @@ int main(int argc, char** argv) {
                     char tab_id[128];
                     std::snprintf(tab_id, sizeof(tab_id), "%s##ovgtab%zu", g.label.c_str(), gi);
                     if (ImGui::BeginTabItem(tab_id)) {
-                        const float text_h  = ImGui::GetTextLineHeightWithSpacing() * 2.0f
-                                            + ImGui::GetStyle().ItemSpacing.y;
-                        const float plot_h  = ImGui::GetContentRegionAvail().y - text_h;
-                        const float plot_w  = (avail_w - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
 
-                        constexpr ImPlotFlags    pf = ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
-                        constexpr ImPlotAxisFlags af = ImPlotAxisFlags_AutoFit;
+                        // ---- Settings ----
+                        if (ImGui::CollapsingHeader("Settings##ovgs")) {
+                            ImGui::TextUnformatted("Series:");
+                            ImGui::SameLine();
+                            ImGui::Checkbox("dx##ovs",         &ovg_show_dx);
+                            ImGui::SameLine();
+                            ImGui::Checkbox("dy##ovs",         &ovg_show_dy);
+                            ImGui::SameLine();
+                            ImGui::Checkbox("angle##ovs",      &ovg_show_angle);
+                            ImGui::SameLine();
+                            ImGui::Checkbox("Regression##ovs", &ovg_show_fit);
+
+                            ImGui::Checkbox("Reference line##ovs", &ovg_show_ref);
+                            if (ovg_show_ref) {
+                                ImGui::SameLine();
+                                ImGui::TextUnformatted("  y =");
+                                ImGui::SameLine();
+                                ImGui::SetNextItemWidth(80);
+                                ImGui::InputDouble("##ovg_ra", &ovg_ref_a, 0.0, 0.0, "%.4f");
+                                ImGui::SameLine();
+                                ImGui::TextUnformatted("x +");
+                                ImGui::SameLine();
+                                ImGui::SetNextItemWidth(80);
+                                ImGui::InputDouble("##ovg_rb", &ovg_ref_b, 0.0, 0.0, "%.4f");
+                            }
+
+                            ImGui::TextUnformatted("Y1 (dx/dy):");
+                            ImGui::SameLine();
+                            ImGui::Checkbox("Auto##y1ovg", &ovg_auto_y1);
+                            if (!ovg_auto_y1) {
+                                ImGui::SameLine();
+                                ImGui::SetNextItemWidth(80);
+                                ImGui::InputDouble("min##y1mn", &ovg_y1_min, 0.0, 0.0, "%.3f");
+                                ImGui::SameLine();
+                                ImGui::SetNextItemWidth(80);
+                                ImGui::InputDouble("max##y1mx", &ovg_y1_max, 0.0, 0.0, "%.3f");
+                            }
+
+                            ImGui::TextUnformatted("Y2 (angle):");
+                            ImGui::SameLine();
+                            ImGui::Checkbox("Auto##y2ovg", &ovg_auto_y2);
+                            if (!ovg_auto_y2) {
+                                ImGui::SameLine();
+                                ImGui::SetNextItemWidth(80);
+                                ImGui::InputDouble("min##y2mn", &ovg_y2_min, 0.0, 0.0, "%.3f");
+                                ImGui::SameLine();
+                                ImGui::SetNextItemWidth(80);
+                                ImGui::InputDouble("max##y2mx", &ovg_y2_max, 0.0, 0.0, "%.3f");
+                            }
+                        }
+
+                        const float text_h = ovg_show_fit
+                            ? ImGui::GetTextLineHeightWithSpacing() * 2.0f + ImGui::GetStyle().ItemSpacing.y
+                            : 0.0f;
+                        const float plot_h = ImGui::GetContentRegionAvail().y - text_h;
+                        const float plot_w = (avail_w - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+
+                        const ImPlotFlags pf = ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
 
                         // Linear regression: returns {a, b} for y = a*x + b.
                         auto linreg = [&](const std::vector<double>& xs,
@@ -2094,8 +2159,6 @@ int main(int argc, char** argv) {
                         const auto [a_dy_row,  b_dy_row]  = linreg(xs_row, dys);
                         const auto [a_ang_row, b_ang_row] = linreg(xs_row, angles);
 
-                        // One plot showing dx, dy (Y1) and angle (Y2) against an index axis.
-                        // Legend items are clickable to hide/show individual series.
                         auto dual_scatter = [&](const char* title, const std::vector<double>& xs,
                                                 const char* xlabel,
                                                 double a_dx, double b_dx,
@@ -2103,22 +2166,37 @@ int main(int argc, char** argv) {
                                                 double a_ang, double b_ang) {
                             char pid[128];
                             std::snprintf(pid, sizeof(pid), "%s##%zu", title, gi);
+
+                            const ImPlotAxisFlags af_x  = ImPlotAxisFlags_AutoFit;
+                            const ImPlotAxisFlags af_y1 = ovg_auto_y1
+                                ? ImPlotAxisFlags_AutoFit : ImPlotAxisFlags_None;
+                            const ImPlotAxisFlags af_y2 = ovg_auto_y2
+                                ? ImPlotAxisFlags_AutoFit : ImPlotAxisFlags_None;
+
                             if (ImPlot::BeginPlot(pid, {plot_w, plot_h}, pf)) {
-                                ImPlot::SetupAxes(xlabel, "dx / dy", af, af);
-                                ImPlot::SetupAxis(ImAxis_Y2, "angle", af);
+                                ImPlot::SetupAxes(xlabel, "dx / dy", af_x, af_y1);
+                                ImPlot::SetupAxis(ImAxis_Y2, "angle", af_y2);
+                                if (!ovg_auto_y1)
+                                    ImPlot::SetupAxisLimits(ImAxis_Y1, ovg_y1_min, ovg_y1_max, ImGuiCond_Always);
+                                if (!ovg_auto_y2)
+                                    ImPlot::SetupAxisLimits(ImAxis_Y2, ovg_y2_min, ovg_y2_max, ImGuiCond_Always);
 
                                 // Scatter points
-                                ImPlot::PlotScatter("dx",    xs.data(), dxs.data(),    n);
-                                ImPlot::PlotScatter("dy",    xs.data(), dys.data(),    n);
+                                if (ovg_show_dx) ImPlot::PlotScatter("dx", xs.data(), dxs.data(), n);
+                                if (ovg_show_dy) ImPlot::PlotScatter("dy", xs.data(), dys.data(), n);
                                 ImPlot::SetAxes(ImAxis_X1, ImAxis_Y2);
-                                ImPlot::PlotScatter("angle", xs.data(), angles.data(), n);
+                                if (ovg_show_angle) ImPlot::PlotScatter("angle", xs.data(), angles.data(), n);
+
+                                // Shared x range for fit and reference lines
+                                double xmin = 0.0, xmax = 0.0;
+                                if ((ovg_show_fit || ovg_show_ref) && n >= 2) {
+                                    xmin = *std::min_element(xs.begin(), xs.end());
+                                    xmax = *std::max_element(xs.begin(), xs.end());
+                                }
 
                                 // Linear regression lines
-                                if (n >= 2) {
-                                    const double xmin = *std::min_element(xs.begin(), xs.end());
-                                    const double xmax = *std::max_element(xs.begin(), xs.end());
+                                if (ovg_show_fit && n >= 2) {
                                     const double fit_xs[2] = {xmin, xmax};
-
                                     auto plot_fit = [&](double a, double b, ImAxis yax,
                                                         ImVec4 col, const char* lbl) {
                                         const double fit_ys[2] = {a*xmin+b, a*xmax+b};
@@ -2128,12 +2206,25 @@ int main(int argc, char** argv) {
                                         std::snprintf(lid, sizeof(lid), "%s##fit_%s_%zu", lbl, lbl, gi);
                                         ImPlot::PlotLine(lid, fit_xs, fit_ys, 2);
                                     };
-                                    plot_fit(a_dx,  b_dx,  ImAxis_Y1, {0.4f, 0.8f, 1.0f, 0.8f}, "dx fit");
-                                    plot_fit(a_dy,  b_dy,  ImAxis_Y1, {0.4f, 1.0f, 0.5f, 0.8f}, "dy fit");
-                                    plot_fit(a_ang, b_ang, ImAxis_Y2, {1.0f, 0.7f, 0.3f, 0.8f}, "angle fit");
+                                    if (ovg_show_dx)    plot_fit(a_dx,  b_dx,  ImAxis_Y1, {0.4f, 0.8f, 1.0f, 0.8f}, "dx fit");
+                                    if (ovg_show_dy)    plot_fit(a_dy,  b_dy,  ImAxis_Y1, {0.4f, 1.0f, 0.5f, 0.8f}, "dy fit");
+                                    if (ovg_show_angle) plot_fit(a_ang, b_ang, ImAxis_Y2, {1.0f, 0.7f, 0.3f, 0.8f}, "angle fit");
                                 }
 
-                                // Nearest-point tooltip — tracks which series is closest
+                                // User reference line  y = ovg_ref_a * x + ovg_ref_b  (on Y1)
+                                if (ovg_show_ref && n >= 2) {
+                                    const double ref_xs[2] = {xmin, xmax};
+                                    const double ref_ys[2] = {ovg_ref_a*xmin + ovg_ref_b,
+                                                               ovg_ref_a*xmax + ovg_ref_b};
+                                    ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
+                                    ImPlot::SetNextLineStyle({1.0f, 0.9f, 0.0f, 1.0f}, 2.0f);
+                                    char rid[64];
+                                    std::snprintf(rid, sizeof(rid), "y=%.3fx%+.3f##ref_%zu",
+                                                  ovg_ref_a, ovg_ref_b, gi);
+                                    ImPlot::PlotLine(rid, ref_xs, ref_ys, 2);
+                                }
+
+                                // Nearest-point tooltip
                                 if (ImPlot::IsPlotHovered() && n > 0) {
                                     const ImVec2 mp = ImGui::GetMousePos();
                                     int nearest = -1, nearest_series = -1;
@@ -2144,9 +2235,9 @@ int main(int argc, char** argv) {
                                             const float d = std::sqrt((pt.x-mp.x)*(pt.x-mp.x)+(pt.y-mp.y)*(pt.y-mp.y));
                                             if (d < best) { best = d; nearest = i; nearest_series = sid; }
                                         };
-                                        check(dxs[i],    ImAxis_Y1, 0);
-                                        check(dys[i],    ImAxis_Y1, 1);
-                                        check(angles[i], ImAxis_Y2, 2);
+                                        if (ovg_show_dx)    check(dxs[i],    ImAxis_Y1, 0);
+                                        if (ovg_show_dy)    check(dys[i],    ImAxis_Y1, 1);
+                                        if (ovg_show_angle) check(angles[i], ImAxis_Y2, 2);
                                     }
                                     if (nearest >= 0) {
                                         const auto& e = g.entries[nearest];
@@ -2158,9 +2249,9 @@ int main(int argc, char** argv) {
                                             ImGui::Text("%-6s %.6f", label, val);
                                             if (highlight) ImGui::PopStyleColor();
                                         };
-                                        row_text("dx:",    e.dx,    nearest_series == 0);
-                                        row_text("dy:",    e.dy,    nearest_series == 1);
-                                        row_text("angle:", e.angle, nearest_series == 2);
+                                        if (ovg_show_dx)    row_text("dx:",    e.dx,    nearest_series == 0);
+                                        if (ovg_show_dy)    row_text("dy:",    e.dy,    nearest_series == 1);
+                                        if (ovg_show_angle) row_text("angle:", e.angle, nearest_series == 2);
                                         ImGui::EndTooltip();
                                     }
                                 }
@@ -2176,17 +2267,19 @@ int main(int argc, char** argv) {
                                      a_dx_row, b_dx_row, a_dy_row, b_dy_row, a_ang_row, b_ang_row);
 
                         // Regression formulas displayed below the plots
-                        ImGui::TextColored({0.4f,0.8f,1.0f,1.0f}, "Col:");
-                        ImGui::SameLine(); ImGui::Text("dx=%.4fx%+.4f", a_dx_col,  b_dx_col);
-                        ImGui::SameLine(); ImGui::Text("  dy=%.4fx%+.4f", a_dy_col,  b_dy_col);
-                        ImGui::SameLine(); ImGui::TextColored({1.0f,0.7f,0.3f,1.0f},
-                                                              "  angle=%.4fx%+.4f", a_ang_col, b_ang_col);
+                        if (ovg_show_fit) {
+                            ImGui::TextColored({0.4f,0.8f,1.0f,1.0f}, "Col:");
+                            ImGui::SameLine(); ImGui::Text("dx=%.4fx%+.4f", a_dx_col,  b_dx_col);
+                            ImGui::SameLine(); ImGui::Text("  dy=%.4fx%+.4f", a_dy_col,  b_dy_col);
+                            ImGui::SameLine(); ImGui::TextColored({1.0f,0.7f,0.3f,1.0f},
+                                                                  "  angle=%.4fx%+.4f", a_ang_col, b_ang_col);
 
-                        ImGui::TextColored({0.4f,0.8f,1.0f,1.0f}, "Row:");
-                        ImGui::SameLine(); ImGui::Text("dx=%.4fx%+.4f", a_dx_row,  b_dx_row);
-                        ImGui::SameLine(); ImGui::Text("  dy=%.4fx%+.4f", a_dy_row,  b_dy_row);
-                        ImGui::SameLine(); ImGui::TextColored({1.0f,0.7f,0.3f,1.0f},
-                                                              "  angle=%.4fx%+.4f", a_ang_row, b_ang_row);
+                            ImGui::TextColored({0.4f,0.8f,1.0f,1.0f}, "Row:");
+                            ImGui::SameLine(); ImGui::Text("dx=%.4fx%+.4f", a_dx_row,  b_dx_row);
+                            ImGui::SameLine(); ImGui::Text("  dy=%.4fx%+.4f", a_dy_row,  b_dy_row);
+                            ImGui::SameLine(); ImGui::TextColored({1.0f,0.7f,0.3f,1.0f},
+                                                                  "  angle=%.4fx%+.4f", a_ang_row, b_ang_row);
+                        }
 
                         ImGui::EndTabItem();
                     }
