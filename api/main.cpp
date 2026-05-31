@@ -2239,6 +2239,8 @@ int main(int argc, char** argv) {
                                 }
 
                                 // User reference line  y = ovg_ref_a * x + ovg_ref_b  (on Y1)
+                                // ImPlotItemFlags_NoFit keeps this line out of auto-fit
+                                // so the Y1 scale stays driven by the scatter data.
                                 if (ovg_show_ref && n >= 2) {
                                     const double ref_xs[2] = {xmin, xmax};
                                     const double ref_ys[2] = {ovg_ref_a*xmin + ovg_ref_b,
@@ -2248,7 +2250,7 @@ int main(int argc, char** argv) {
                                     char rid[64];
                                     std::snprintf(rid, sizeof(rid), "y=%.3fx%+.3f##ref_%zu",
                                                   ovg_ref_a, ovg_ref_b, gi);
-                                    ImPlot::PlotLine(rid, ref_xs, ref_ys, 2);
+                                    ImPlot::PlotLine(rid, ref_xs, ref_ys, 2, ImPlotItemFlags_NoFit);
                                 }
 
                                 // Nearest-point tooltip
