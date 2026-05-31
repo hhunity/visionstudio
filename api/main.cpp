@@ -498,10 +498,6 @@ int main(int argc, char** argv) {
     bool   ovg_show_ref   = false;
     double ovg_ref_a      = 0.0;
     double ovg_ref_b      = 0.0;
-    bool   ovg_auto_y1    = true;
-    double ovg_y1_min     = -1.0,   ovg_y1_max = 1.0;
-    bool   ovg_auto_y2    = true;
-    double ovg_y2_min     = -180.0, ovg_y2_max = 180.0;
     circle_ellipse_tool ce_tool;
     remote_overlay_tool rot;
     bool        show_camera_config    = false;
@@ -575,12 +571,6 @@ int main(int argc, char** argv) {
                     gb("show_ref",   ovg_show_ref);
                     gd("ref_a",      ovg_ref_a);
                     gd("ref_b",      ovg_ref_b);
-                    gb("auto_y1",    ovg_auto_y1);
-                    gd("y1_min",     ovg_y1_min);
-                    gd("y1_max",     ovg_y1_max);
-                    gb("auto_y2",    ovg_auto_y2);
-                    gd("y2_min",     ovg_y2_min);
-                    gd("y2_max",     ovg_y2_max);
                 }
             } catch (...) {}
         }
@@ -2104,9 +2094,9 @@ int main(int argc, char** argv) {
                     char tab_id[128];
                     std::snprintf(tab_id, sizeof(tab_id), "%s##ovgtab%zu", g.label.c_str(), gi);
                     if (ImGui::BeginTabItem(tab_id)) {
-                        // Force-apply axis limits this frame when the user commits new values.
-                        // ImGuiCond_Once is used otherwise so pan/zoom persists freely.
-                        bool y1_force = false, y2_force = false;
+                        // y1/y2 fit: set to data range this frame when Auto Scale is pressed.
+                        bool   y1_force = false, y2_force = false;
+                        double y1_lo = 0.0, y1_hi = 0.0, y2_lo = 0.0, y2_hi = 0.0;
 
                         // ---- Settings ----
                         if (ImGui::CollapsingHeader("Settings##ovgs")) {
@@ -2134,31 +2124,36 @@ int main(int argc, char** argv) {
                                 ImGui::InputDouble("##ovg_rb", &ovg_ref_b, 0.0, 0.0, "%.4f");
                             }
 
+                            // Auto Scale buttons: compute data range and force-apply once
+                            auto fit_range = [&](const std::vector<double>& a,
+                                                 const std::vector<double>& b,
+                                                 bool use_a, bool use_b,
+                                                 double& lo, double& hi) -> bool {
+                                lo =  std::numeric_limits<double>::max();
+                                hi = -std::numeric_limits<double>::max();
+                                if (use_a && !a.empty()) {
+                                    lo = std::min(lo, *std::min_element(a.begin(), a.end()));
+                                    hi = std::max(hi, *std::max_element(a.begin(), a.end()));
+                                }
+                                if (use_b && !b.empty()) {
+                                    lo = std::min(lo, *std::min_element(b.begin(), b.end()));
+                                    hi = std::max(hi, *std::max_element(b.begin(), b.end()));
+                                }
+                                if (lo > hi) return false;
+                                const double pad = std::max((hi - lo) * 0.05, 1e-9);
+                                lo -= pad; hi += pad;
+                                return true;
+                            };
+
                             ImGui::TextUnformatted("Y1 (dx/dy):");
                             ImGui::SameLine();
-                            if (ImGui::Checkbox("Auto##y1ovg", &ovg_auto_y1) && !ovg_auto_y1)
-                                y1_force = true;
-                            if (!ovg_auto_y1) {
-                                ImGui::SameLine();
-                                ImGui::SetNextItemWidth(80);
-                                if (ImGui::InputDouble("min##y1mn", &ovg_y1_min, 0.0, 0.0, "%.3f")) y1_force = true;
-                                ImGui::SameLine();
-                                ImGui::SetNextItemWidth(80);
-                                if (ImGui::InputDouble("max##y1mx", &ovg_y1_max, 0.0, 0.0, "%.3f")) y1_force = true;
-                            }
+                            if (ImGui::Button("Auto Scale##y1"))
+                                y1_force = fit_range(dxs, dys, ovg_show_dx, ovg_show_dy, y1_lo, y1_hi);
 
                             ImGui::TextUnformatted("Y2 (angle):");
                             ImGui::SameLine();
-                            if (ImGui::Checkbox("Auto##y2ovg", &ovg_auto_y2) && !ovg_auto_y2)
-                                y2_force = true;
-                            if (!ovg_auto_y2) {
-                                ImGui::SameLine();
-                                ImGui::SetNextItemWidth(80);
-                                if (ImGui::InputDouble("min##y2mn", &ovg_y2_min, 0.0, 0.0, "%.3f")) y2_force = true;
-                                ImGui::SameLine();
-                                ImGui::SetNextItemWidth(80);
-                                if (ImGui::InputDouble("max##y2mx", &ovg_y2_max, 0.0, 0.0, "%.3f")) y2_force = true;
-                            }
+                            if (ImGui::Button("Auto Scale##y2"))
+                                y2_force = fit_range(angles, {}, ovg_show_angle, false, y2_lo, y2_hi);
                         }
 
                         const int stat_lines = (ovg_show_fit ? 2 : 0) + (ovg_show_ref ? 2 : 0);
@@ -2221,21 +2216,14 @@ int main(int argc, char** argv) {
                             char pid[128];
                             std::snprintf(pid, sizeof(pid), "%s##%zu", title, gi);
 
-                            const ImPlotAxisFlags af_x  = ImPlotAxisFlags_AutoFit;
-                            const ImPlotAxisFlags af_y1 = ovg_auto_y1
-                                ? ImPlotAxisFlags_AutoFit : ImPlotAxisFlags_None;
-                            const ImPlotAxisFlags af_y2 = ovg_auto_y2
-                                ? ImPlotAxisFlags_AutoFit : ImPlotAxisFlags_None;
-
                             if (ImPlot::BeginPlot(pid, {plot_w, plot_h}, pf)) {
-                                ImPlot::SetupAxes(xlabel, "dx / dy", af_x, af_y1);
-                                ImPlot::SetupAxis(ImAxis_Y2, "angle", af_y2);
-                                if (!ovg_auto_y1)
-                                    ImPlot::SetupAxisLimits(ImAxis_Y1, ovg_y1_min, ovg_y1_max,
-                                        y1_force ? ImGuiCond_Always : ImGuiCond_Once);
-                                if (!ovg_auto_y2)
-                                    ImPlot::SetupAxisLimits(ImAxis_Y2, ovg_y2_min, ovg_y2_max,
-                                        y2_force ? ImGuiCond_Always : ImGuiCond_Once);
+                                ImPlot::SetupAxes(xlabel, "dx / dy",
+                                                  ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_None);
+                                ImPlot::SetupAxis(ImAxis_Y2, "angle", ImPlotAxisFlags_None);
+                                if (y1_force)
+                                    ImPlot::SetupAxisLimits(ImAxis_Y1, y1_lo, y1_hi, ImGuiCond_Always);
+                                if (y2_force)
+                                    ImPlot::SetupAxisLimits(ImAxis_Y2, y2_lo, y2_hi, ImGuiCond_Always);
 
                                 // Scatter points
                                 if (ovg_show_dx) ImPlot::PlotScatter("dx", xs.data(), dxs.data(), n);
@@ -2435,12 +2423,6 @@ int main(int argc, char** argv) {
             {"show_ref",   ovg_show_ref},
             {"ref_a",      ovg_ref_a},
             {"ref_b",      ovg_ref_b},
-            {"auto_y1",    ovg_auto_y1},
-            {"y1_min",     ovg_y1_min},
-            {"y1_max",     ovg_y1_max},
-            {"auto_y2",    ovg_auto_y2},
-            {"y2_min",     ovg_y2_min},
-            {"y2_max",     ovg_y2_max},
         };
         std::ofstream jf("visionstudio.json");
         if (jf.is_open()) jf << j.dump(2) << '\n';
