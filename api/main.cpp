@@ -1238,7 +1238,8 @@ int main(int argc, char** argv) {
         // ----- Viewer area -----
         const float status_h          = ImGui::GetFrameHeightWithSpacing();
         const float profile_panel_h   = show_profile_panel  ? 180.0f : 0.0f;
-        const float overlay_graph_h   = show_overlay_graph  ? 360.0f : 0.0f;
+        static float    ovg_panel_h     = 360.0f;  // overlay graph panel height (resizable)
+        const float overlay_graph_h   = show_overlay_graph  ? ovg_panel_h : 0.0f;
         const float viewer_h          = ImGui::GetContentRegionAvail().y - status_h
                                         - profile_panel_h - overlay_graph_h;
 
@@ -1881,6 +1882,16 @@ int main(int argc, char** argv) {
             if (ImGui::IsItemActive())
                 panel_w = std::clamp(panel_w - ImGui::GetIO().MouseDelta.x, 160.0f, 600.0f);
         }
+        if (show_overlay_graph) {
+            const float content_left_x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
+            const float handle_y = viewer_origin.y + viewer_h + profile_panel_h - 2.0f;
+            ImGui::SetCursorScreenPos({content_left_x, handle_y});
+            ImGui::InvisibleButton("##ovg_resize", {ImGui::GetContentRegionAvail().x, 4.0f});
+            if (ImGui::IsItemHovered() || ImGui::IsItemActive())
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+            if (ImGui::IsItemActive())
+                ovg_panel_h = std::clamp(ovg_panel_h - ImGui::GetIO().MouseDelta.y, 80.0f, 900.0f);
+        }
 
         // ----- Right panel (tabbed) -----
         if (show_pixel_panel) {
@@ -2062,6 +2073,17 @@ int main(int argc, char** argv) {
             ImGui::SetCursorScreenPos({content_left_x, viewer_origin.y + viewer_h + profile_panel_h});
             const float avail_w = ImGui::GetContentRegionAvail().x;
             ImGui::BeginChild("##overlay_graph", {avail_w, overlay_graph_h}, ImGuiChildFlags_Borders);
+
+            // Expand / shrink buttons (top-right corner)
+            {
+                const float btn_w = ImGui::CalcTextSize("+").x + ImGui::GetStyle().FramePadding.x * 2.0f + 4.0f;
+                ImGui::SetCursorPosX(ImGui::GetContentRegionAvail().x - btn_w * 2.0f - ImGui::GetStyle().ItemSpacing.x);
+                if (ImGui::SmallButton("+##ovge"))
+                    ovg_panel_h = std::clamp(ovg_panel_h + 120.0f, 80.0f, 900.0f);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("-##ovgs"))
+                    ovg_panel_h = std::clamp(ovg_panel_h - 120.0f, 80.0f, 900.0f);
+            }
 
             const std::vector<roi_group>* src  = use_single ? &overlays : &left_overlays;
             const std::vector<uint8_t>*   gvis = nullptr;
