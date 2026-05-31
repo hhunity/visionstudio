@@ -2218,9 +2218,11 @@ int main(int argc, char** argv) {
 
                             const ImPlotAxisFlags af_x  = ImPlotAxisFlags_AutoFit;
                             const ImPlotAxisFlags af_y1 = ovg_auto_y1
-                                ? ImPlotAxisFlags_AutoFit : ImPlotAxisFlags_None;
+                                ? ImPlotAxisFlags_AutoFit
+                                : (ImPlotAxisFlags_LockMin | ImPlotAxisFlags_LockMax);
                             const ImPlotAxisFlags af_y2 = ovg_auto_y2
-                                ? ImPlotAxisFlags_AutoFit : ImPlotAxisFlags_None;
+                                ? ImPlotAxisFlags_AutoFit
+                                : (ImPlotAxisFlags_LockMin | ImPlotAxisFlags_LockMax);
 
                             if (ImPlot::BeginPlot(pid, {plot_w, plot_h}, pf)) {
                                 ImPlot::SetupAxes(xlabel, "dx / dy", af_x, af_y1);
