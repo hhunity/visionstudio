@@ -490,6 +490,18 @@ int main(int argc, char** argv) {
     bool        show_pixel_panel      = true;
     bool        show_profile_panel    = false;
     bool        show_overlay_graph    = false;
+    // Overlay graph display settings (persisted in visionstudio.json)
+    bool   ovg_show_dx    = true;
+    bool   ovg_show_dy    = true;
+    bool   ovg_show_angle = true;
+    bool   ovg_show_fit   = true;
+    bool   ovg_show_ref   = false;
+    double ovg_ref_a      = 0.0;
+    double ovg_ref_b      = 0.0;
+    bool   ovg_auto_y1    = true;
+    double ovg_y1_min     = -1.0,   ovg_y1_max = 1.0;
+    bool   ovg_auto_y2    = true;
+    double ovg_y2_min     = -180.0, ovg_y2_max = 180.0;
     circle_ellipse_tool ce_tool;
     remote_overlay_tool rot;
     bool        show_camera_config    = false;
@@ -545,6 +557,34 @@ int main(int argc, char** argv) {
     };
     config_tab capture_cfg_tab;   // capture_config_file
     config_tab connect_cfg_tab;   // connect_config_file
+
+    // Load overlay graph settings from visionstudio.json
+    {
+        std::ifstream jf("visionstudio.json");
+        if (jf.is_open()) {
+            try {
+                const auto j = nlohmann::json::parse(jf);
+                if (j.contains("overlay_graph") && j["overlay_graph"].is_object()) {
+                    const auto& og = j["overlay_graph"];
+                    auto gb = [&](const char* k, bool&   v){ if (og.contains(k) && og[k].is_boolean()) v = og[k]; };
+                    auto gd = [&](const char* k, double& v){ if (og.contains(k) && og[k].is_number())  v = og[k]; };
+                    gb("show_dx",    ovg_show_dx);
+                    gb("show_dy",    ovg_show_dy);
+                    gb("show_angle", ovg_show_angle);
+                    gb("show_fit",   ovg_show_fit);
+                    gb("show_ref",   ovg_show_ref);
+                    gd("ref_a",      ovg_ref_a);
+                    gd("ref_b",      ovg_ref_b);
+                    gb("auto_y1",    ovg_auto_y1);
+                    gd("y1_min",     ovg_y1_min);
+                    gd("y1_max",     ovg_y1_max);
+                    gb("auto_y2",    ovg_auto_y2);
+                    gd("y2_min",     ovg_y2_min);
+                    gd("y2_max",     ovg_y2_max);
+                }
+            } catch (...) {}
+        }
+    }
 
     capture_config                cap_cfg  = capture_config::load("visionstudio.json");
     std::optional<capture_client> cap_cli;
@@ -2028,19 +2068,6 @@ int main(int argc, char** argv) {
 
         // ----- Overlay scatter graph panel -----
         if (show_overlay_graph) {
-            // Per-session settings (persist across frames)
-            static bool   ovg_show_dx    = true;
-            static bool   ovg_show_dy    = true;
-            static bool   ovg_show_angle = true;
-            static bool   ovg_show_fit   = true;
-            static bool   ovg_show_ref   = false;
-            static double ovg_ref_a      = 0.0;
-            static double ovg_ref_b      = 0.0;
-            static bool   ovg_auto_y1    = true;
-            static double ovg_y1_min     = -1.0, ovg_y1_max = 1.0;
-            static bool   ovg_auto_y2    = true;
-            static double ovg_y2_min     = -180.0, ovg_y2_max = 180.0;
-
             const float content_left_x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
             ImGui::SetCursorScreenPos({content_left_x, viewer_origin.y + viewer_h + profile_panel_h});
             const float avail_w = ImGui::GetContentRegionAvail().x;
@@ -2352,6 +2379,21 @@ int main(int argc, char** argv) {
         }
         j["window"]    = {{"width", cur_w}, {"height", cur_h}};
         j["imgui_ini"] = imgui_ini;
+        j["overlay_graph"] = {
+            {"show_dx",    ovg_show_dx},
+            {"show_dy",    ovg_show_dy},
+            {"show_angle", ovg_show_angle},
+            {"show_fit",   ovg_show_fit},
+            {"show_ref",   ovg_show_ref},
+            {"ref_a",      ovg_ref_a},
+            {"ref_b",      ovg_ref_b},
+            {"auto_y1",    ovg_auto_y1},
+            {"y1_min",     ovg_y1_min},
+            {"y1_max",     ovg_y1_max},
+            {"auto_y2",    ovg_auto_y2},
+            {"y2_min",     ovg_y2_min},
+            {"y2_max",     ovg_y2_max},
+        };
         std::ofstream jf("visionstudio.json");
         if (jf.is_open()) jf << j.dump(2) << '\n';
     }
