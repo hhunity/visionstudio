@@ -2064,6 +2064,9 @@ int main(int argc, char** argv) {
             const float content_left_x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
             ImGui::SetCursorScreenPos({content_left_x, viewer_origin.y + viewer_h + profile_panel_h});
             const float avail_w = ImGui::GetContentRegionAvail().x;
+            // Force opaque background so the panel doesn't look transparent when maximized.
+            ImVec4 bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg); bg.w = 1.0f;
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, bg);
             ImGui::BeginChild("##overlay_graph", {avail_w, overlay_graph_h}, ImGuiChildFlags_Borders);
 
             // Top-edge drag-to-resize handle (inside child = correct z-order, no viewer conflict)
@@ -2240,6 +2243,11 @@ int main(int argc, char** argv) {
                             char pid[128];
                             std::snprintf(pid, sizeof(pid), "%s##%zu", title, gi);
 
+                            // Opaque plot background so the panel doesn't look transparent.
+                            {
+                                const ImVec4 wbg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+                                ImPlot::PushStyleColor(ImPlotCol_PlotBg, ImVec4(wbg.x, wbg.y, wbg.z, 1.0f));
+                            }
                             if (ImPlot::BeginPlot(pid, {plot_w, plot_h}, pf)) {
                                 ImPlot::SetupAxes(xlabel, "dx / dy",
                                                   ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_None);
@@ -2328,6 +2336,7 @@ int main(int argc, char** argv) {
 
                                 ImPlot::EndPlot();
                             }
+                            ImPlot::PopStyleColor(); // ImPlotCol_PlotBg
                         };
 
                         dual_scatter("Column", xs_col, "col",
@@ -2374,6 +2383,7 @@ int main(int argc, char** argv) {
                 ImGui::EndTabBar();
             }
             ImGui::EndChild();
+            ImGui::PopStyleColor(); // ImGuiCol_ChildBg
         }
 
         // Reset cursor to below all panels so the status bar sits correctly.
