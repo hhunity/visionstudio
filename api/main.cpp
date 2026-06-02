@@ -170,7 +170,21 @@ struct AppLog {
         if (ImGui::Button("Clear")) buf.clear();
         ImGui::Separator();
         ImGui::BeginChild("scrolling", {0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
-        ImGui::TextUnformatted(buf.begin(), buf.end());
+
+        // Render line by line; color ERROR lines red.
+        // Log format: "[HH:MM:SS] LEVEL msg\n" → level starts at col 11, length 5.
+        const char* p   = buf.begin();
+        const char* end = buf.end();
+        while (p < end) {
+            const char* nl = static_cast<const char*>(std::memchr(p, '\n', end - p));
+            const char* le = nl ? nl : end;
+            const bool  is_error = (le - p >= 16) && std::memcmp(p + 11, "ERROR", 5) == 0;
+            if (is_error) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+            ImGui::TextUnformatted(p, le);
+            if (is_error) ImGui::PopStyleColor();
+            p = nl ? nl + 1 : end;
+        }
+
         if (scroll_to_bottom) { ImGui::SetScrollHereY(1.0f); scroll_to_bottom = false; }
         ImGui::EndChild();
         ImGui::End();
