@@ -148,8 +148,9 @@ struct config_tab {
 // ---------------------------------------------------------------------------
 
 struct AppLog {
-    ImGuiTextBuffer buf;
-    bool            scroll_to_bottom = true;
+    struct Entry { std::string text; bool is_error; };
+    std::vector<Entry> entries;
+    bool               scroll_to_bottom = true;
 
     void add(const char* level, const char* msg) {
         auto t  = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
@@ -161,30 +162,22 @@ struct AppLog {
 #endif
         char tbuf[10];
         std::strftime(tbuf, sizeof(tbuf), "%H:%M:%S", &tm_info);
-        buf.appendf("[%s] %-5s %s\n", tbuf, level, msg);
+        char line[512];
+        std::snprintf(line, sizeof(line), "[%s] %-5s %s", tbuf, level, msg);
+        entries.push_back({line, std::strcmp(level, "ERROR") == 0});
         scroll_to_bottom = true;
     }
 
     void draw(const char* title, bool* p_open) {
         if (!ImGui::Begin(title, p_open)) { ImGui::End(); return; }
-        if (ImGui::Button("Clear")) buf.clear();
+        if (ImGui::Button("Clear")) entries.clear();
         ImGui::Separator();
         ImGui::BeginChild("scrolling", {0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
-
-        // Render line by line; color ERROR lines red.
-        // Log format: "[HH:MM:SS] LEVEL msg\n" → level starts at col 11, length 5.
-        const char* p   = buf.begin();
-        const char* end = buf.end();
-        while (p < end) {
-            const char* nl = static_cast<const char*>(std::memchr(p, '\n', end - p));
-            const char* le = nl ? nl : end;
-            const bool  is_error = (le - p >= 16) && std::memcmp(p + 11, "ERROR", 5) == 0;
-            if (is_error) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
-            ImGui::TextUnformatted(p, le);
-            if (is_error) ImGui::PopStyleColor();
-            p = nl ? nl + 1 : end;
+        for (const auto& e : entries) {
+            if (e.is_error) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+            ImGui::TextUnformatted(e.text.c_str());
+            if (e.is_error) ImGui::PopStyleColor();
         }
-
         if (scroll_to_bottom) { ImGui::SetScrollHereY(1.0f); scroll_to_bottom = false; }
         ImGui::EndChild();
         ImGui::End();
