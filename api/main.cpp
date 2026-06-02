@@ -148,29 +148,40 @@ struct config_tab {
 // ---------------------------------------------------------------------------
 
 struct AppLog {
-    ImGuiTextBuffer buf;
-    bool            scroll_to_bottom = true;
+    struct Entry { std::string text; bool is_error; };
+    std::vector<Entry> entries;
+    bool               scroll_to_bottom = true;
 
     void add(const char* level, const char* msg) {
-        auto t  = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        const auto now = std::chrono::system_clock::now();
+        const auto t   = std::chrono::system_clock::to_time_t(now);
+        const int  ms  = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                now.time_since_epoch()).count() % 1000);
         struct tm tm_info{};
 #ifdef _WIN32
         localtime_s(&tm_info, &t);
 #else
         localtime_r(&t, &tm_info);
 #endif
-        char tbuf[10];
+        char tbuf[16];
         std::strftime(tbuf, sizeof(tbuf), "%H:%M:%S", &tm_info);
-        buf.appendf("[%s] %-5s %s\n", tbuf, level, msg);
+        char line[512];
+        std::snprintf(line, sizeof(line), "[%s.%03d] %-5s %s", tbuf, ms, level, msg);
+        entries.push_back({line, std::strcmp(level, "ERROR") == 0});
         scroll_to_bottom = true;
     }
 
     void draw(const char* title, bool* p_open) {
         if (!ImGui::Begin(title, p_open)) { ImGui::End(); return; }
-        if (ImGui::Button("Clear")) buf.clear();
+        if (ImGui::Button("Clear")) entries.clear();
         ImGui::Separator();
-        ImGui::BeginChild("scrolling", {0, 0}, false, ImGuiWindowFlags_HorizontalScrollbar);
-        ImGui::TextUnformatted(buf.begin(), buf.end());
+        ImGui::BeginChild("scrolling", {0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+        for (const auto& e : entries) {
+            if (e.is_error) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+            ImGui::TextUnformatted(e.text.c_str());
+            if (e.is_error) ImGui::PopStyleColor();
+        }
         if (scroll_to_bottom) { ImGui::SetScrollHereY(1.0f); scroll_to_bottom = false; }
         ImGui::EndChild();
         ImGui::End();
@@ -1239,8 +1250,11 @@ int main(int argc, char** argv) {
         const float status_h          = ImGui::GetFrameHeightWithSpacing();
         const float profile_panel_h   = show_profile_panel  ? 180.0f : 0.0f;
         static float    ovg_panel_h     = 360.0f;  // overlay graph panel height (resizable)
+        const float total_avail_h     = ImGui::GetContentRegionAvail().y;
+        const float max_ovg_h         = std::max(80.0f, total_avail_h - status_h - profile_panel_h - 80.0f);
+        ovg_panel_h                   = std::clamp(ovg_panel_h, 80.0f, max_ovg_h);
         const float overlay_graph_h   = show_overlay_graph  ? ovg_panel_h : 0.0f;
-        const float viewer_h          = ImGui::GetContentRegionAvail().y - status_h
+        const float viewer_h          = total_avail_h - status_h
                                         - profile_panel_h - overlay_graph_h;
 
         static float    panel_w         = 240.0f;  // right pixel panel (resizable)
@@ -1882,17 +1896,6 @@ int main(int argc, char** argv) {
             if (ImGui::IsItemActive())
                 panel_w = std::clamp(panel_w - ImGui::GetIO().MouseDelta.x, 160.0f, 600.0f);
         }
-        if (show_overlay_graph) {
-            const float content_left_x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
-            const float handle_y = viewer_origin.y + viewer_h + profile_panel_h - 2.0f;
-            ImGui::SetCursorScreenPos({content_left_x, handle_y});
-            ImGui::InvisibleButton("##ovg_resize", {ImGui::GetContentRegionAvail().x, 4.0f});
-            if (ImGui::IsItemHovered() || ImGui::IsItemActive())
-                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
-            if (ImGui::IsItemActive())
-                ovg_panel_h = std::clamp(ovg_panel_h - ImGui::GetIO().MouseDelta.y, 80.0f, 900.0f);
-        }
-
         // ----- Right panel (tabbed) -----
         if (show_pixel_panel) {
             ImGui::SetCursorScreenPos({viewer_origin.x + viewer_w + spacing_x, viewer_origin.y});
@@ -2072,17 +2075,30 @@ int main(int argc, char** argv) {
             const float content_left_x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
             ImGui::SetCursorScreenPos({content_left_x, viewer_origin.y + viewer_h + profile_panel_h});
             const float avail_w = ImGui::GetContentRegionAvail().x;
+            // Force opaque background so the panel doesn't look transparent when maximized.
+            ImVec4 bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg); bg.w = 1.0f;
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, bg);
             ImGui::BeginChild("##overlay_graph", {avail_w, overlay_graph_h}, ImGuiChildFlags_Borders);
 
-            // Expand / shrink buttons (top-right corner)
+            // Top-edge drag-to-resize handle (inside child = correct z-order, no viewer conflict)
             {
-                const float btn_w = ImGui::CalcTextSize("+").x + ImGui::GetStyle().FramePadding.x * 2.0f + 4.0f;
-                ImGui::SetCursorPosX(ImGui::GetContentRegionAvail().x - btn_w * 2.0f - ImGui::GetStyle().ItemSpacing.x);
-                if (ImGui::SmallButton("+##ovge"))
-                    ovg_panel_h = std::clamp(ovg_panel_h + 120.0f, 80.0f, 900.0f);
+                const float cw = ImGui::GetContentRegionAvail().x;
+                ImGui::SetCursorPos({0.0f, 0.0f});
+                ImGui::InvisibleButton("##ovg_resize", {cw, 4.0f});
+                if (ImGui::IsItemHovered() || ImGui::IsItemActive())
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+                if (ImGui::IsItemActive())
+                    ovg_panel_h = std::clamp(ovg_panel_h - ImGui::GetIO().MouseDelta.y, 80.0f, max_ovg_h);
+
+                // ▲ maximize / ▼ shrink buttons at top-right
+                const float fp = ImGui::GetStyle().FramePadding.x;
+                const float sp = ImGui::GetStyle().ItemSpacing.x;
+                const float bw = ImGui::CalcTextSize("▲").x + fp * 2.0f;
+                ImGui::SetCursorPos({cw - bw * 2.0f - sp, 0.0f});
+                if (ImGui::SmallButton("▲##ovge")) ovg_panel_h = max_ovg_h;
                 ImGui::SameLine();
-                if (ImGui::SmallButton("-##ovgs"))
-                    ovg_panel_h = std::clamp(ovg_panel_h - 120.0f, 80.0f, 900.0f);
+                if (ImGui::SmallButton("▼##ovgs"))
+                    ovg_panel_h = std::clamp(ovg_panel_h - 120.0f, 80.0f, max_ovg_h);
             }
 
             const std::vector<roi_group>* src  = use_single ? &overlays : &left_overlays;
@@ -2238,6 +2254,11 @@ int main(int argc, char** argv) {
                             char pid[128];
                             std::snprintf(pid, sizeof(pid), "%s##%zu", title, gi);
 
+                            // Opaque plot background so the panel doesn't look transparent.
+                            {
+                                const ImVec4 wbg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+                                ImPlot::PushStyleColor(ImPlotCol_PlotBg, ImVec4(wbg.x, wbg.y, wbg.z, 1.0f));
+                            }
                             if (ImPlot::BeginPlot(pid, {plot_w, plot_h}, pf)) {
                                 ImPlot::SetupAxes(xlabel, "dx / dy",
                                                   ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_None);
@@ -2326,13 +2347,18 @@ int main(int argc, char** argv) {
 
                                 ImPlot::EndPlot();
                             }
+                            ImPlot::PopStyleColor(); // ImPlotCol_PlotBg
                         };
 
-                        dual_scatter("Column", xs_col, "col",
-                                     a_dx_col, b_dx_col, a_dy_col, b_dy_col, a_ang_col, b_ang_col);
-                        ImGui::SameLine();
-                        dual_scatter("Row",    xs_row, "row",
-                                     a_dx_row, b_dx_row, a_dy_row, b_dy_row, a_ang_row, b_ang_row);
+                        if (plot_h > 1.0f && plot_w > 1.0f) {
+                            dual_scatter("Column", xs_col, "col",
+                                         a_dx_col, b_dx_col, a_dy_col, b_dy_col, a_ang_col, b_ang_col);
+                            ImGui::SameLine();
+                            dual_scatter("Row",    xs_row, "row",
+                                         a_dx_row, b_dx_row, a_dy_row, b_dy_row, a_ang_row, b_ang_row);
+                        } else {
+                            ImGui::TextDisabled("(enlarge panel to view plots)");
+                        }
 
                         // Regression formulas displayed below the plots
                         if (ovg_show_fit) {
@@ -2372,6 +2398,7 @@ int main(int argc, char** argv) {
                 ImGui::EndTabBar();
             }
             ImGui::EndChild();
+            ImGui::PopStyleColor(); // ImGuiCol_ChildBg
         }
 
         // Reset cursor to below all panels so the status bar sits correctly.
