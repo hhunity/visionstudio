@@ -169,7 +169,7 @@ struct AppLog {
         if (!ImGui::Begin(title, p_open)) { ImGui::End(); return; }
         if (ImGui::Button("Clear")) buf.clear();
         ImGui::Separator();
-        ImGui::BeginChild("scrolling", {0, 0}, false, ImGuiWindowFlags_HorizontalScrollbar);
+        ImGui::BeginChild("scrolling", {0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
         ImGui::TextUnformatted(buf.begin(), buf.end());
         if (scroll_to_bottom) { ImGui::SetScrollHereY(1.0f); scroll_to_bottom = false; }
         ImGui::EndChild();
@@ -2339,11 +2339,15 @@ int main(int argc, char** argv) {
                             ImPlot::PopStyleColor(); // ImPlotCol_PlotBg
                         };
 
-                        dual_scatter("Column", xs_col, "col",
-                                     a_dx_col, b_dx_col, a_dy_col, b_dy_col, a_ang_col, b_ang_col);
-                        ImGui::SameLine();
-                        dual_scatter("Row",    xs_row, "row",
-                                     a_dx_row, b_dx_row, a_dy_row, b_dy_row, a_ang_row, b_ang_row);
+                        if (plot_h > 1.0f && plot_w > 1.0f) {
+                            dual_scatter("Column", xs_col, "col",
+                                         a_dx_col, b_dx_col, a_dy_col, b_dy_col, a_ang_col, b_ang_col);
+                            ImGui::SameLine();
+                            dual_scatter("Row",    xs_row, "row",
+                                         a_dx_row, b_dx_row, a_dy_row, b_dy_row, a_ang_row, b_ang_row);
+                        } else {
+                            ImGui::TextDisabled("(enlarge panel to view plots)");
+                        }
 
                         // Regression formulas displayed below the plots
                         if (ovg_show_fit) {
