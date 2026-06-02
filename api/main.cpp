@@ -153,17 +153,21 @@ struct AppLog {
     bool               scroll_to_bottom = true;
 
     void add(const char* level, const char* msg) {
-        auto t  = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        const auto now = std::chrono::system_clock::now();
+        const auto t   = std::chrono::system_clock::to_time_t(now);
+        const int  ms  = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                now.time_since_epoch()).count() % 1000);
         struct tm tm_info{};
 #ifdef _WIN32
         localtime_s(&tm_info, &t);
 #else
         localtime_r(&t, &tm_info);
 #endif
-        char tbuf[10];
+        char tbuf[16];
         std::strftime(tbuf, sizeof(tbuf), "%H:%M:%S", &tm_info);
         char line[512];
-        std::snprintf(line, sizeof(line), "[%s] %-5s %s", tbuf, level, msg);
+        std::snprintf(line, sizeof(line), "[%s.%03d] %-5s %s", tbuf, ms, level, msg);
         entries.push_back({line, std::strcmp(level, "ERROR") == 0});
         scroll_to_bottom = true;
     }
