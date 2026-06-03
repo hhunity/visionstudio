@@ -1526,8 +1526,12 @@ int main(int argc, char** argv) {
                         for (auto& p : g.params) {
                             ImGui::TableNextRow();
                             ImGui::TableSetColumnIndex(0);
+                            const float row_top = ImGui::GetCursorScreenPos().y;
+                            const ImVec2 mouse   = ImGui::GetMousePos();
+                            const bool row_hov   = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
+                                                   mouse.y >= row_top &&
+                                                   mouse.y <  row_top + ImGui::GetTextLineHeightWithSpacing();
                             ImGui::TextDisabled("%s", p.name.c_str());
-                            const bool name_hov = ImGui::IsItemHovered();
                             ImGui::TableSetColumnIndex(1);
 
                             if (p.rw_type == cam_param_rw::writeonly) {
@@ -1608,7 +1612,7 @@ int main(int argc, char** argv) {
                                     const std::string disp = p.unit.empty()
                                         ? p.value : p.value + " " + p.unit;
                                     ImGui::TextUnformatted(disp.c_str());
-                                    if ((name_hov || ImGui::IsItemHovered()) &&
+                                    if (row_hov &&
                                         ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                                         cam_edit_key = key;
                                         if (p.type == cam_param_type::bool_ ||
@@ -1623,7 +1627,7 @@ int main(int argc, char** argv) {
                                     }
                                 }
                             }
-                            if ((name_hov || ImGui::IsItemHovered()) && cam_edit_key.empty() &&
+                            if (row_hov && cam_edit_key.empty() &&
                                 (!p.description.empty() || !p.min.empty() || !p.initial.empty())) {
                                 ImGui::BeginTooltip();
                                 if (!p.description.empty()) ImGui::TextUnformatted(p.description.c_str());
