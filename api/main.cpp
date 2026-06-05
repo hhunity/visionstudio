@@ -1531,7 +1531,10 @@ int main(int argc, char** argv) {
                             const bool row_hov   = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
                                                    mouse.y >= row_top &&
                                                    mouse.y <  row_top + ImGui::GetTextLineHeightWithSpacing();
-                            ImGui::TextDisabled("%s", p.name.c_str());
+                            if (p.rw_type == cam_param_rw::readwrite)
+                                ImGui::TextUnformatted(p.name.c_str());
+                            else
+                                ImGui::TextDisabled("%s", p.name.c_str());
                             ImGui::TableSetColumnIndex(1);
 
                             if (p.rw_type == cam_param_rw::writeonly) {
