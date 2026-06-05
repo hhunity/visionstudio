@@ -465,7 +465,7 @@ int main(int argc, char** argv) {
     ImGui::CreateContext();
     ImPlot::CreateContext();
     ImGui::GetIO().IniFilename = nullptr; // Disable auto imgui.ini; layout saved in visionstudio.json
-    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_DockingEnable;
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
@@ -789,6 +789,22 @@ int main(int argc, char** argv) {
                 }
                 glBindTexture(GL_TEXTURE_2D, 0);
             }
+        }
+
+        // Full-screen DockSpace (transparent, behind everything)
+        {
+            ImGui::SetNextWindowPos({0.0f, 0.0f});
+            ImGui::SetNextWindowSize({static_cast<float>(win_w), static_cast<float>(win_h)});
+            ImGui::SetNextWindowBgAlpha(0.0f);
+            constexpr ImGuiWindowFlags kDockFlags =
+                ImGuiWindowFlags_NoTitleBar         | ImGuiWindowFlags_NoCollapse     |
+                ImGuiWindowFlags_NoResize           | ImGuiWindowFlags_NoMove         |
+                ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus  |
+                ImGuiWindowFlags_NoBackground       | ImGuiWindowFlags_NoDocking;
+            ImGui::Begin("##dockspace_host", nullptr, kDockFlags);
+            ImGui::DockSpace(ImGui::GetID("##dockspace"), {0.0f, 0.0f},
+                             ImGuiDockNodeFlags_PassthruCentralNode);
+            ImGui::End();
         }
 
         // Full-screen host window
