@@ -130,8 +130,8 @@ private:
                                  ImU32 color, float thickness,
                                  float dash = 5.0f, float gap = 4.0f);
 
-    // Vertical tiles: each covers rows [y0, y1) at full resolution.
-    struct tex_tile { uint32_t id; int y0, y1; };
+    // 2-D tiles: each covers columns [x0, x1) × rows [y0, y1) at full resolution.
+    struct tex_tile { uint32_t id; int x0, x1, y0, y1; };
     std::vector<tex_tile> tiles_;
     // Minimap thumbnail (downscaled single texture when tiles_ has >1 entry).
     uint32_t minimap_tex_id_    = 0;
