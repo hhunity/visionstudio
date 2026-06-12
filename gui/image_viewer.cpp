@@ -38,7 +38,9 @@ void image_viewer::unload_image() {
 // ---------------------------------------------------------------------------
 
 // Upload one rectangular region of img as an independent GL texture.
-static uint32_t upload_tile(const image_data& img, int y0, int y1) {
+// GL_UNPACK_ROW_LENGTH lets us point directly into the source image row without
+// copying, so x0 > 0 (horizontal tiles) works without an extra buffer.
+static uint32_t upload_tile(const image_data& img, int x0, int x1, int y0, int y1) {
     GLuint tex = 0;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
@@ -47,17 +49,19 @@ static uint32_t upload_tile(const image_data& img, int y0, int y1) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, img.width);
     const int      ch  = img.channels();
-    const uint8_t* src = img.pixels.data() + static_cast<size_t>(y0) * img.width * ch;
+    const uint8_t* src = img.pixels.data() + (static_cast<size_t>(y0) * img.width + x0) * ch;
     if (img.format == PixelFormat::gray) {
         const GLint swizzle[] = {GL_RED, GL_RED, GL_RED, GL_ONE};
         glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, img.width, y1 - y0, 0,
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, x1 - x0, y1 - y0, 0,
                      GL_RED, GL_UNSIGNED_BYTE, src);
     } else {
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width, y1 - y0, 0,
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, x1 - x0, y1 - y0, 0,
                      GL_RGBA, GL_UNSIGNED_BYTE, src);
     }
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     glBindTexture(GL_TEXTURE_2D, 0);
     return static_cast<uint32_t>(tex);
@@ -104,19 +108,26 @@ void image_viewer::create_texture(const image_data& img) {
     GLint max_tex = 0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex);
 
-    // Split image into vertical tiles, each at most max_tex rows tall.
-    // Width is assumed to fit (line cameras are typically 2048 px wide).
-    const int tile_h  = max_tex;
-    const int n_tiles = (img.height + tile_h - 1) / tile_h;
+    // Split into a grid of tiles so that no single tile exceeds max_tex in
+    // either dimension.  This handles both tall images (line cameras) and wide
+    // images (area sensors, panoramas) that would otherwise silently fail in
+    // glTexImage2D when width > GL_MAX_TEXTURE_SIZE.
+    const int n_tiles_x = (img.width  + max_tex - 1) / max_tex;
+    const int n_tiles_y = (img.height + max_tex - 1) / max_tex;
 
-    tiles_.reserve(n_tiles);
-    for (int t = 0; t < n_tiles; ++t) {
-        const int y0 = t * tile_h;
-        const int y1 = std::min(y0 + tile_h, img.height);
-        tiles_.push_back({ upload_tile(img, y0, y1), y0, y1 });
+    tiles_.reserve(static_cast<size_t>(n_tiles_x) * n_tiles_y);
+    for (int ty = 0; ty < n_tiles_y; ++ty) {
+        const int y0 = ty * max_tex;
+        const int y1 = std::min(y0 + max_tex, img.height);
+        for (int tx = 0; tx < n_tiles_x; ++tx) {
+            const int x0 = tx * max_tex;
+            const int x1 = std::min(x0 + max_tex, img.width);
+            tiles_.push_back({ upload_tile(img, x0, x1, y0, y1), x0, x1, y0, y1 });
+        }
     }
 
     // Minimap thumbnail.
+    const int n_tiles = n_tiles_x * n_tiles_y;
     if (n_tiles == 1) {
         // Single tile: reuse it, no separate allocation.
         minimap_tex_id_   = tiles_[0].id;
@@ -126,7 +137,7 @@ void image_viewer::create_texture(const image_data& img) {
         const float scale = static_cast<float>(max_tex) / static_cast<float>(std::max(img.width, img.height));
         const int tw = std::max(1, static_cast<int>(img.width  * scale));
         const int th = std::max(1, static_cast<int>(img.height * scale));
-        fprintf(stderr, "[image_viewer] %d tiles, minimap thumbnail %dx%d\n", n_tiles, tw, th);
+        fprintf(stderr, "[image_viewer] %dx%d tiles, minimap thumbnail %dx%d\n", n_tiles_x, n_tiles_y, tw, th);
         minimap_tex_id_   = upload_thumbnail(img, tw, th);
         minimap_owns_tex_ = true;
     }
@@ -397,11 +408,14 @@ void image_viewer::draw_content(ImDrawList* dl, const ImVec2& canvas_pos,
 
     // Draw each tile that intersects the visible canvas area.
     for (const auto& tile : tiles_) {
+        const float tx0 = img_sx + tile.x0 * state.zoom;
+        const float tx1 = img_sx + tile.x1 * state.zoom;
         const float ty0 = img_sy + tile.y0 * state.zoom;
         const float ty1 = img_sy + tile.y1 * state.zoom;
-        if (ty1 < canvas_pos.y || ty0 > canvas_pos.y + canvas_size.y) continue;
+        if (tx1 < canvas_pos.x || tx0 > clip_max.x) continue;
+        if (ty1 < canvas_pos.y || ty0 > clip_max.y) continue;
         dl->AddImage(static_cast<ImTextureID>(tile.id),
-                     {img_sx, ty0}, {img_sx + img_sw, ty1});
+                     {tx0, ty0}, {tx1, ty1});
     }
 
     if (show_grid)
