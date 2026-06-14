@@ -38,9 +38,33 @@ void image_viewer::unload_image() {
 // ---------------------------------------------------------------------------
 
 // Upload one rectangular region of img as an independent GL texture.
-// GL_UNPACK_ROW_LENGTH lets us point directly into the source image row without
-// copying, so x0 > 0 (horizontal tiles) works without an extra buffer.
+// Data is uploaded in strips via glTexSubImage2D to work around drivers that
+// silently truncate a single large glTexImage2D call, leaving the bottom rows
+// black.  GL_UNPACK_ROW_LENGTH is avoided entirely: sub-region tiles (x0 > 0)
+// are packed into a temporary buffer row-by-row before upload.
 static uint32_t upload_tile(const image_data& img, int x0, int x1, int y0, int y1) {
+    const int tw = x1 - x0;
+    const int th = y1 - y0;
+    const int ch = img.channels();
+
+    // For partial-width tiles, pack the region into a contiguous buffer.
+    // For full-width tiles, point directly into img.pixels (no copy).
+    const bool full_width = (x0 == 0 && x1 == img.width);
+    std::vector<uint8_t> tmp;
+    const uint8_t* tile_pixels;
+    if (full_width) {
+        tile_pixels = img.pixels.data() + static_cast<size_t>(y0) * img.width * ch;
+    } else {
+        tmp.resize(static_cast<size_t>(tw) * th * ch);
+        for (int r = 0; r < th; ++r) {
+            const uint8_t* row = img.pixels.data()
+                               + (static_cast<size_t>(y0 + r) * img.width + x0) * ch;
+            std::memcpy(tmp.data() + static_cast<size_t>(r) * tw * ch,
+                        row, static_cast<size_t>(tw) * ch);
+        }
+        tile_pixels = tmp.data();
+    }
+
     GLuint tex = 0;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
@@ -48,25 +72,38 @@ static uint32_t upload_tile(const image_data& img, int x0, int x1, int y0, int y
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    // Without this the driver may internally reserve memory for 1000 mipmap
-    // levels, which silently fails for large textures and leaves the bottom
-    // rows black on some GPUs / drivers.
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,  0);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, img.width);
-    const int      ch  = img.channels();
-    const uint8_t* src = img.pixels.data() + (static_cast<size_t>(y0) * img.width + x0) * ch;
+
+    GLenum gl_fmt;
+    GLint  gl_internal;
     if (img.format == PixelFormat::gray) {
         const GLint swizzle[] = {GL_RED, GL_RED, GL_RED, GL_ONE};
         glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, x1 - x0, y1 - y0, 0,
-                     GL_RED, GL_UNSIGNED_BYTE, src);
+        gl_fmt      = GL_RED;
+        gl_internal = GL_R8;
     } else {
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, x1 - x0, y1 - y0, 0,
-                     GL_RGBA, GL_UNSIGNED_BYTE, src);
+        gl_fmt      = GL_RGBA;
+        gl_internal = GL_RGBA;
     }
+
+    // Allocate texture storage without data first, then upload in strips.
+    // Uploading one huge buffer at once can silently fail on some drivers,
+    // leaving the bottom rows unwritten (black).
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, gl_internal, tw, th, 0,
+                 gl_fmt, GL_UNSIGNED_BYTE, nullptr);
+
+    constexpr int kStripH = 512;
+    for (int sy = 0; sy < th; sy += kStripH) {
+        const int rows = std::min(kStripH, th - sy);
+        glTexSubImage2D(GL_TEXTURE_2D, 0,
+                        0, sy, tw, rows,
+                        gl_fmt, GL_UNSIGNED_BYTE,
+                        tile_pixels + static_cast<size_t>(sy) * tw * ch);
+    }
+
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     glBindTexture(GL_TEXTURE_2D, 0);
     return static_cast<uint32_t>(tex);
