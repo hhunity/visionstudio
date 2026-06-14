@@ -48,6 +48,11 @@ static uint32_t upload_tile(const image_data& img, int x0, int x1, int y0, int y
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    // Without this the driver may internally reserve memory for 1000 mipmap
+    // levels, which silently fails for large textures and leaves the bottom
+    // rows black on some GPUs / drivers.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,  0);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, img.width);
     const int      ch  = img.channels();
@@ -89,6 +94,8 @@ static uint32_t upload_thumbnail(const image_data& img, int tw, int th) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,  0);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     if (img.format == PixelFormat::gray) {
         const GLint swizzle[] = {GL_RED, GL_RED, GL_RED, GL_ONE};
