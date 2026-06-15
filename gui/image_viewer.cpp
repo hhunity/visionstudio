@@ -149,6 +149,18 @@ static uint32_t upload_thumbnail(const image_data& img, int tw, int th) {
 }
 
 void image_viewer::create_texture(const image_data& img) {
+    // Diagnostic: sample pixels at 25%, 50%, 75%, 100% height to identify
+    // whether black rows originate in CPU data or in the GL upload.
+    if (img.height > 0 && img.width > 0) {
+        const int cx = img.width / 2;
+        for (int frac : {25, 50, 75, 100}) {
+            const int row = std::min(img.height - 1, img.height * frac / 100);
+            const auto px = img.pixel_at(cx, row);
+            fprintf(stderr, "[image_viewer] CPU pixel at row %d/%d (center): R=%d G=%d B=%d A=%d\n",
+                    row, img.height - 1, (int)px[0], (int)px[1], (int)px[2], (int)px[3]);
+        }
+    }
+
     GLint max_tex = 0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex);
 
