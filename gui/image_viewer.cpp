@@ -149,36 +149,6 @@ static uint32_t upload_thumbnail(const image_data& img, int tw, int th) {
 }
 
 void image_viewer::create_texture(const image_data& img) {
-    // Diagnostic: scan from the bottom to find the first non-zero row,
-    // to determine how many rows tiff_io::read actually filled.
-    if (img.height > 0 && img.width > 0) {
-        const int cx    = img.width / 2;
-        const int ch    = img.channels();
-        int first_zero  = -1;  // topmost row that has all-zero center pixel
-        int last_nonzero = -1; // bottommost row with non-zero center pixel
-
-        for (int row = 0; row < img.height; ++row) {
-            const size_t idx = (static_cast<size_t>(row) * img.width + cx) * ch;
-            bool nonzero = false;
-            for (int c = 0; c < ch && c < 3; ++c)
-                if (img.pixels[idx + c]) { nonzero = true; break; }
-            if (nonzero) last_nonzero = row;
-            else if (first_zero < 0 && row > img.height / 4) first_zero = row;
-        }
-
-        fprintf(stderr,
-                "[image_viewer] %dx%d image (ch=%d): "
-                "last non-zero row=%d, first zero row (past 25%%)=%d\n",
-                img.width, img.height, ch, last_nonzero, first_zero);
-        if (last_nonzero >= 0 && last_nonzero < img.height - 1) {
-            fprintf(stderr,
-                    "[image_viewer] WARNING: rows %d..%d are zero — "
-                    "only %.1f%% of image was decoded!\n",
-                    last_nonzero + 1, img.height - 1,
-                    100.0f * (last_nonzero + 1) / img.height);
-        }
-    }
-
     GLint max_tex = 0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex);
 
