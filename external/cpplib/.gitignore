@@ -1,0 +1,21 @@
+# CMake build output
+build/
+
+# Compiled artifacts
+out/
+
+# vcpkg (clone separately; too large to track)
+external/vcpkg/
+
+# Test output files
+*.tiff
+*.db
+
+# macOS
+.DS_Store
+
+# VSCode (user-local settings only; keep extensions.json / c_cpp_properties.json if desired)
+.vscode/settings.json
+
+# CMake user presets (machine-specific)
+CMakeUserPresets.json

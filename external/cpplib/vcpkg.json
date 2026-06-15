@@ -1,0 +1,10 @@
+{
+  "name": "cpplib",
+  "version": "0.1.0",
+  "dependencies": [
+    "nlohmann-json",
+    "sqlite3",
+    "tiff",
+    "zlib"
+  ]
+}
