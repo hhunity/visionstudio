@@ -16,7 +16,10 @@
       "Bash(git submodule:*)",
       "Bash(cmake --preset debug -S /Users/hiroyukih/vscode/visionstudio -B /Users/hiroyukih/vscode/visionstudio/build/debug)",
       "Bash(cmake --build /Users/hiroyukih/vscode/visionstudio/build/debug)",
-      "Bash(find /Users/hiroyukih/vscode/visionstudio -name httplib.h ! -path */external/vcpkg/buildtrees/*)"
+      "Bash(find /Users/hiroyukih/vscode/visionstudio -name httplib.h ! -path */external/vcpkg/buildtrees/*)",
+      "Bash(rm /home/user/visionstudio/.gitmodules && echo \"removed .gitmodules\")",
+      "Bash(rm /home/user/visionstudio/external/cpplib/.git)",
+      "Bash(git rm *)"
     ]
   }
 }
