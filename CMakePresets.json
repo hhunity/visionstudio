@@ -17,7 +17,16 @@
       "binaryDir": "${sourceDir}/build/debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/out/debug"
+        "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/out/debug",
+        "VS_CJK_FONT": "OFF"
+      }
+    },
+    {
+      "name": "debug-cjk",
+      "inherits": "debug",
+      "displayName": "Debug (CJK Font)",
+      "cacheVariables": {
+        "VS_CJK_FONT": "ON"
       }
     },
     {
@@ -27,7 +36,16 @@
       "binaryDir": "${sourceDir}/build/release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/out/release"
+        "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/out/release",
+        "VS_CJK_FONT": "OFF"
+      }
+    },
+    {
+      "name": "release-cjk",
+      "inherits": "release",
+      "displayName": "Release (CJK Font)",
+      "cacheVariables": {
+        "VS_CJK_FONT": "ON"
       }
     }
   ],
@@ -37,8 +55,16 @@
       "configurePreset": "debug"
     },
     {
+      "name": "debug-cjk",
+      "configurePreset": "debug-cjk"
+    },
+    {
       "name": "release",
       "configurePreset": "release"
+    },
+    {
+      "name": "release-cjk",
+      "configurePreset": "release-cjk"
     }
   ]
 }

@@ -18,7 +18,16 @@
     "stop_path": "/stop",
     "timeout_ms": 5000
   },
-  "imgui_ini": "[Window][##root]\nPos=0,0\nSize=1470,891\n\n[Window][Debug##Default]\nPos=60,60\nSize=400,400\n\n[Window][Settings##modal]\nPos=495,215\nSize=480,460\n\n[Window][Version##modal]\nPos=575,372\nSize=320,147\n\n[Window][About VisionStudio##modal]\nPos=425,185\nSize=620,520\n\n[Window][Error##err_modal]\nPos=551,401\nSize=402,88\n\n[Window][Camera Config##modal]\nPos=385,175\nSize=700,540\n\n[Window][Circle/Ellipse – Major Diameter vs Y]\nPos=60,60\nSize=520,380\n\n",
+  "imgui_ini": "[Window][##root]\nPos=0,0\nSize=1470,891\nCollapsed=0\n\n[Window][Debug##Default]\nPos=60,60\nSize=400,400\nCollapsed=0\n\n[Window][Settings##modal]\nPos=495,215\nSize=480,460\nCollapsed=0\n\n[Window][Version##modal]\nPos=575,372\nSize=320,147\nCollapsed=0\n\n[Window][About VisionStudio##modal]\nPos=425,185\nSize=620,520\nCollapsed=0\n\n[Window][Error##err_modal]\nPos=551,401\nSize=402,88\nCollapsed=0\n\n[Window][Camera Config##modal]\nPos=385,175\nSize=700,540\nCollapsed=0\n\n[Window][Circle/Ellipse – Major Diameter vs Y]\nPos=60,60\nSize=520,380\nCollapsed=0\n\n[Window][##dockspace_host]\nPos=0,0\nSize=1470,891\nCollapsed=0\n\n[Window][Log##log_win]\nPos=1251,8\nSize=211,875\nCollapsed=0\nDockId=0x00000002,0\n\n[Docking][Data]\nDockSpace   ID=0xA8EAB86C Window=0xA1A16AA4 Pos=8,8 Size=1454,875 Split=X\n  DockNode  ID=0x00000001 Parent=0xA8EAB86C SizeRef=1241,875 CentralNode=1\n  DockNode  ID=0x00000002 Parent=0xA8EAB86C SizeRef=211,875 Selected=0xE12B68DA\n\n",
+  "overlay_graph": {
+    "ref_a": 0.0,
+    "ref_b": 0.0,
+    "show_angle": true,
+    "show_dx": true,
+    "show_dy": true,
+    "show_fit": true,
+    "show_ref": false
+  },
   "window": {
     "height": 891,
     "width": 1470

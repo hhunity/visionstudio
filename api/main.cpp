@@ -34,7 +34,14 @@
 #  define NOMINMAX
 #  include <windows.h>
 static void fatal_error(const char* msg) {
-    MessageBoxA(nullptr, msg, "VisionStudio - Fatal Error", MB_OK | MB_ICONERROR);
+    // Convert UTF-8 message to UTF-16 for MessageBoxW so Japanese characters render correctly.
+    auto to_wide = [](const char* s) -> std::wstring {
+        const int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, nullptr, 0);
+        std::wstring w(n, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, s, -1, w.data(), n);
+        return w;
+    };
+    MessageBoxW(nullptr, to_wide(msg).c_str(), L"VisionStudio - Fatal Error", MB_OK | MB_ICONERROR);
 }
 #else
 static void fatal_error(const char* msg) { fprintf(stderr, "Fatal: %s\n", msg); }
@@ -478,6 +485,36 @@ int main(int argc, char** argv) {
     ImGui::GetIO().IniFilename = nullptr; // Disable auto imgui.ini; layout saved in visionstudio.json
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_DockingEnable;
     ImGui::StyleColorsDark();
+
+#ifdef VS_CJK_FONT
+    {
+        // Merge two Noto Sans fonts to support English, Japanese, and Korean.
+        // Enabled at build time with -DVS_CJK_FONT=ON (adds ~1s startup rasterization).
+        static const ImWchar jp_ranges[] = {
+            0x0020, 0x00FF,  // Basic Latin + Latin Supplement (English)
+            0x3000, 0x30FF,  // CJK Symbols, Hiragana, Katakana
+            0x31F0, 0x31FF,  // Katakana Phonetic Extensions
+            0x4E00, 0x9FFF,  // CJK Unified Ideographs (Kanji)
+            0xFF00, 0xFFEF,  // Halfwidth / Fullwidth
+            0,
+        };
+        static const ImWchar kr_ranges[] = {
+            0x3131, 0x3163,  // Hangul Compatibility Jamo
+            0xA960, 0xA97F,  // Hangul Jamo Extended-A
+            0xAC00, 0xD7A3,  // Hangul Syllables
+            0xD7B0, 0xD7FF,  // Hangul Jamo Extended-B
+            0,
+        };
+        ImFontConfig merge_cfg;
+        merge_cfg.MergeMode  = true;
+        merge_cfg.OversampleH = 1;
+        merge_cfg.OversampleV = 1;
+        ImFontAtlas* atlas = ImGui::GetIO().Fonts;
+        atlas->AddFontFromFileTTF("assets/fonts/NotoSansJP-Regular.ttf", 14.0f, nullptr,   jp_ranges);
+        atlas->AddFontFromFileTTF("assets/fonts/NotoSansKR-Regular.ttf", 14.0f, &merge_cfg, kr_ranges);
+    }
+#endif
+
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
 

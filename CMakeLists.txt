@@ -126,6 +126,33 @@ add_executable(visionstudio
 target_include_directories(visionstudio PRIVATE ${CMAKE_BINARY_DIR})
 target_link_libraries(visionstudio PRIVATE vs_gui vs_io vs_capture vs_analysis CLI11::CLI11 implot::implot nfd::nfd)
 
+# Bundled CJK font (NotoSansJP + NotoSansKR).
+# Adds startup rasterization time (~1s); disable for faster startup or CI builds.
+option(VS_CJK_FONT "Bundle CJK fonts for Japanese/Korean UI rendering" OFF)
+if(VS_CJK_FONT)
+    set(_font_dir "${CMAKE_SOURCE_DIR}/assets/fonts")
+    set(_jp_font  "${_font_dir}/NotoSansJP-Regular.ttf")
+    set(_kr_font  "${_font_dir}/NotoSansKR-Regular.ttf")
+    file(MAKE_DIRECTORY "${_font_dir}")
+
+    foreach(_font IN ITEMS "${_jp_font}" "${_kr_font}")
+        if(NOT EXISTS "${_font}")
+            message(FATAL_ERROR
+                "VS_CJK_FONT=ON but font file is missing:\n"
+                "  ${_font}\n"
+                "Place the font file there and re-run cmake.")
+        endif()
+    endforeach()
+
+    target_compile_definitions(visionstudio PRIVATE VS_CJK_FONT)
+    add_custom_command(TARGET visionstudio POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/assets"
+            "$<TARGET_FILE_DIR:visionstudio>/assets"
+        COMMENT "Copying CJK font assets to output directory"
+    )
+endif()
+
 # ----- vs_analysis: image analysis tools (circle/ellipse, remote overlay) -----
 add_library(vs_analysis STATIC
     gui/circle_ellipse_tool.cpp
