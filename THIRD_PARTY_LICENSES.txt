@@ -1,6 +1,15 @@
 VisionStudio uses the following third-party libraries:
 
 ================================================================================
+Noto Sans JP / Noto Sans KR 
+--------------------------------------------------------------------------------
+
+Copyright 2014-2021 Adobe (http://www.adobe.com/)
+Licensed under the SIL Open Font License, Version 1.1.
+https://scripts.sil.org/OFL
+
+
+================================================================================
 Dear ImGui
 https://github.com/ocornut/imgui
 --------------------------------------------------------------------------------
