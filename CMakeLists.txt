@@ -157,6 +157,7 @@ endif()
 add_library(vs_analysis STATIC
     gui/circle_ellipse_tool.cpp
     gui/remote_overlay_tool.cpp
+    gui/measure_tool.cpp
 )
 target_include_directories(vs_analysis PUBLIC
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>

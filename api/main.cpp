@@ -9,6 +9,7 @@
 #include "capture/capture_client.h"
 #include "util/capture_config.h"
 #include "gui/circle_ellipse_tool.h"
+#include "gui/measure_tool.h"
 #include "gui/remote_overlay_tool.h"
 #include "gui/compare_viewer.h"
 #include "gui/image_viewer.h"
@@ -547,6 +548,7 @@ int main(int argc, char** argv) {
     double ovg_ref_a      = 0.0;
     double ovg_ref_b      = 0.0;
     circle_ellipse_tool ce_tool;
+    measure_tool        mt;
     remote_overlay_tool rot;
     bool        show_camera_config    = false;
     bool        show_connect_config   = false;
@@ -953,6 +955,7 @@ int main(int argc, char** argv) {
                 ImGui::MenuItem("Profile Panel",    nullptr, &show_profile_panel);
                 ImGui::MenuItem("Overlay Graph",    nullptr, &show_overlay_graph);
                 ImGui::MenuItem("Circle/Ellipse Overlay", nullptr, &ce_tool.visible);
+                ImGui::MenuItem("Measure Tool",           nullptr, &mt.visible);
                 ImGui::MenuItem("Remote Overlay",         nullptr, &rot.visible);
                 ImGui::MenuItem("Log",              nullptr, &show_log);
                 ImGui::EndMenu();
@@ -1295,6 +1298,7 @@ int main(int argc, char** argv) {
             toggle_btn("Profile", show_profile_panel);
             toggle_btn("OvGraph", show_overlay_graph);
             toggle_btn("Detect",  ce_tool.visible);
+            toggle_btn("Measure", mt.visible);
             toggle_btn("Remote",  rot.visible);
             ImGui::NewLine();
         }
@@ -1751,21 +1755,94 @@ int main(int argc, char** argv) {
             ImGui::Image(static_cast<ImTextureID>(preview_tex), {dw, dh});
         } else if (use_single) {
             single_viewer.render("single_canvas", viewer_w, viewer_h);
-            if (ce_tool.visible) {
+            {
                 const view_state& vs = single_viewer.get_view_state();
-                ce_tool.render_overlay(ImGui::GetWindowDrawList(),
-                                       viewer_origin, {viewer_w, viewer_h},
-                                       vs.zoom, vs.pan_x, vs.pan_y);
+                auto* dl = ImGui::GetWindowDrawList();
+                if (ce_tool.visible)
+                    ce_tool.render_overlay(dl, viewer_origin, {viewer_w, viewer_h},
+                                           vs.zoom, vs.pan_x, vs.pan_y);
+                if (mt.visible) {
+                    const auto& hi = single_viewer.get_hover_info();
+                    mt.render_overlay(dl, viewer_origin, {viewer_w, viewer_h},
+                                      vs.zoom, vs.pan_x, vs.pan_y,
+                                      hi.valid ? hi.img_x : -1,
+                                      hi.valid ? hi.img_y : -1);
+                }
             }
         } else {
             compare.render(viewer_w, viewer_h);
-            if (ce_tool.visible) {
-                const view_state& lvs = compare.get_view_state();
-                const float spacing   = ImGui::GetStyle().ItemSpacing.x;
-                const float half_w    = std::floor((viewer_w - spacing) * 0.5f);
-                ce_tool.render_overlay(ImGui::GetWindowDrawList(),
-                                       viewer_origin, {half_w, viewer_h},
-                                       lvs.zoom, lvs.pan_x, lvs.pan_y);
+            {
+                const view_state& lvs    = compare.get_view_state();
+                const float spacing      = ImGui::GetStyle().ItemSpacing.x;
+                const float half_w       = std::floor((viewer_w - spacing) * 0.5f);
+                const float header_h     = compare.get_header_height();
+                const ImVec2 canvas_pos  = {viewer_origin.x, viewer_origin.y + header_h};
+                const float  canvas_h    = viewer_h - header_h;
+                const ImVec2 left_vmax   = {viewer_origin.x + half_w, viewer_origin.y + viewer_h};
+                const bool left_hovered  = ImGui::IsMouseHoveringRect(viewer_origin, left_vmax);
+                auto* dl = ImGui::GetWindowDrawList();
+                if (ce_tool.visible)
+                    ce_tool.render_overlay(dl, canvas_pos, {half_w, canvas_h},
+                                           lvs.zoom, lvs.pan_x, lvs.pan_y);
+                if (mt.visible) {
+                    const auto& hi = compare.get_hover_info();
+                    mt.render_overlay(dl, canvas_pos, {half_w, canvas_h},
+                                      lvs.zoom, lvs.pan_x, lvs.pan_y,
+                                      (hi.valid && left_hovered) ? hi.img_x : -1,
+                                      (hi.valid && left_hovered) ? hi.img_y : -1);
+                }
+            }
+        }
+
+        // Measure tool click detection (after viewer renders so hover_info is current)
+        if (mt.visible) {
+            bool  hover_valid = false;
+            int   hover_x = -1, hover_y = -1;
+            if (use_single) {
+                const auto& hi = single_viewer.get_hover_info();
+                hover_valid = hi.valid;
+                hover_x = hi.img_x; hover_y = hi.img_y;
+            } else {
+                // In compare mode, only accept clicks on the left panel.
+                const float spacing    = ImGui::GetStyle().ItemSpacing.x;
+                const float half_w     = std::floor((viewer_w - spacing) * 0.5f);
+                const ImVec2 left_vmax = {viewer_origin.x + half_w, viewer_origin.y + viewer_h};
+                const bool left_hovered = ImGui::IsMouseHoveringRect(viewer_origin, left_vmax);
+                const auto& hi = compare.get_hover_info();
+                hover_valid = hi.valid && left_hovered;
+                hover_x = hi.img_x; hover_y = hi.img_y;
+            }
+            static ImVec2 s_mt_press_pos = {-1.0f, -1.0f};
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                s_mt_press_pos = ImGui::GetMousePos();
+            if (hover_valid && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+                const ImVec2 cur = ImGui::GetMousePos();
+                const float  threshold = ImGui::GetIO().MouseDragThreshold;
+                if (std::abs(cur.x - s_mt_press_pos.x) < threshold &&
+                    std::abs(cur.y - s_mt_press_pos.y) < threshold)
+                    mt.handle_click(hover_x, hover_y);
+            }
+        }
+
+        // Right-click context menu on viewer area
+        {
+            const ImVec2 vmin = viewer_origin;
+            const ImVec2 vmax = {viewer_origin.x + viewer_w, viewer_origin.y + viewer_h};
+            if (ImGui::IsMouseHoveringRect(vmin, vmax) &&
+                ImGui::IsMouseReleased(ImGuiMouseButton_Right))
+                ImGui::OpenPopup("##viewer_ctx");
+            if (ImGui::BeginPopup("##viewer_ctx")) {
+                ImGui::MenuItem("Measure Tool", nullptr, &mt.visible);
+                if (mt.visible && ImGui::MenuItem("Reset Measure"))
+                    mt.reset();
+                ImGui::Separator();
+                ImGui::MenuItem("Show Grid",     nullptr,
+                    use_single ? &single_viewer.show_grid     : &compare.show_grid);
+                ImGui::MenuItem("Show Minimap",  nullptr,
+                    use_single ? &single_viewer.show_minimap  : &compare.show_minimap);
+                ImGui::MenuItem("Show Overlays", nullptr,
+                    use_single ? &single_viewer.show_overlays : &compare.show_left_overlays);
+                ImGui::EndPopup();
             }
         }
 
@@ -2037,6 +2114,14 @@ int main(int argc, char** argv) {
 
             // ---- Tool tabs ----
             if (ImGui::BeginTabBar("##right_panel_tabs")) {
+
+                // ---- Measure tab ----
+                if (ImGui::BeginTabItem("Measure")) {
+                    ImGui::Checkbox("Show Overlay##mt", &mt.visible);
+                    ImGui::Separator();
+                    mt.render_panel();
+                    ImGui::EndTabItem();
+                }
 
                 // ---- Circle/Ellipse tab ----
                 if (ImGui::BeginTabItem("Circle/Ellipse")) {
