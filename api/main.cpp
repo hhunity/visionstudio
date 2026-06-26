@@ -1300,15 +1300,9 @@ int main(int argc, char** argv) {
         }
 
         // ----- Viewer area -----
-        const float status_h          = ImGui::GetFrameHeightWithSpacing();
-        const float profile_panel_h   = show_profile_panel  ? 180.0f : 0.0f;
-        static float    ovg_panel_h     = 360.0f;  // overlay graph panel height (resizable)
-        const float total_avail_h     = ImGui::GetContentRegionAvail().y;
-        const float max_ovg_h         = std::max(80.0f, total_avail_h - status_h - profile_panel_h - 80.0f);
-        ovg_panel_h                   = std::clamp(ovg_panel_h, 80.0f, max_ovg_h);
-        const float overlay_graph_h   = show_overlay_graph  ? ovg_panel_h : 0.0f;
-        const float viewer_h          = total_avail_h - status_h
-                                        - profile_panel_h - overlay_graph_h;
+        const float status_h      = ImGui::GetFrameHeightWithSpacing();
+        const float total_avail_h = ImGui::GetContentRegionAvail().y;
+        const float viewer_h      = total_avail_h - status_h;
 
         static float    panel_w         = 240.0f;  // right pixel panel (resizable)
         static float    capture_panel_w = 180.0f;  // left capture control panel (resizable)
@@ -2081,16 +2075,11 @@ int main(int argc, char** argv) {
             ImGui::EndChild();
         }
 
-        // ----- Bottom profile panel -----
+        // ----- Profile panel (dockable) -----
         if (show_profile_panel) {
-            // Anchor to the left edge of the content region (not viewer_origin.x),
-            // so the panel spans the full width including the capture control panel.
-            const float content_left_x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
-            ImGui::SetCursorScreenPos({content_left_x, viewer_origin.y + viewer_h});
-            const float avail_w = ImGui::GetContentRegionAvail().x;
-            ImGui::BeginChild("##profile_bottom", {avail_w, profile_panel_h}, ImGuiChildFlags_Borders);
+            ImGui::SetNextWindowSize({640.0f, 200.0f}, ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Profile##profile_panel", &show_profile_panel)) {
             const float graph_h = ImGui::GetContentRegionAvail().y;
-            // 4 plots: [X full] [X zoomed] [Y full] [Y zoomed]
             const float graph_w = (ImGui::GetContentRegionAvail().x
                                    - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
 
@@ -2126,40 +2115,15 @@ int main(int argc, char** argv) {
                     {{li, IM_COL32(80, 200, 255, 220), cy},
                      {ri, IM_COL32(255, 160,  60, 220), cy}}, graph_w, graph_h, vis_y0, vis_y1);
             }
-
-            ImGui::EndChild();
+            } // if Begin
+            ImGui::End();
         }
 
-        // ----- Overlay scatter graph panel -----
+        // ----- Overlay graph panel (dockable) -----
         if (show_overlay_graph) {
-            const float content_left_x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x;
-            ImGui::SetCursorScreenPos({content_left_x, viewer_origin.y + viewer_h + profile_panel_h});
+            ImGui::SetNextWindowSize({800.0f, 400.0f}, ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Overlay Graph##ovg_panel", &show_overlay_graph)) {
             const float avail_w = ImGui::GetContentRegionAvail().x;
-            // Force opaque background so the panel doesn't look transparent when maximized.
-            ImVec4 bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg); bg.w = 1.0f;
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, bg);
-            ImGui::BeginChild("##overlay_graph", {avail_w, overlay_graph_h}, ImGuiChildFlags_Borders);
-
-            // Top-edge drag-to-resize handle (inside child = correct z-order, no viewer conflict)
-            {
-                const float cw = ImGui::GetContentRegionAvail().x;
-                ImGui::SetCursorPos({0.0f, 0.0f});
-                ImGui::InvisibleButton("##ovg_resize", {cw, 4.0f});
-                if (ImGui::IsItemHovered() || ImGui::IsItemActive())
-                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
-                if (ImGui::IsItemActive())
-                    ovg_panel_h = std::clamp(ovg_panel_h - ImGui::GetIO().MouseDelta.y, 80.0f, max_ovg_h);
-
-                // ▲ maximize / ▼ shrink buttons at top-right
-                const float fp = ImGui::GetStyle().FramePadding.x;
-                const float sp = ImGui::GetStyle().ItemSpacing.x;
-                const float bw = ImGui::CalcTextSize("▲").x + fp * 2.0f;
-                ImGui::SetCursorPos({cw - bw * 2.0f - sp, 0.0f});
-                if (ImGui::SmallButton("▲##ovge")) ovg_panel_h = max_ovg_h;
-                ImGui::SameLine();
-                if (ImGui::SmallButton("▼##ovgs"))
-                    ovg_panel_h = std::clamp(ovg_panel_h - 120.0f, 80.0f, max_ovg_h);
-            }
 
             const std::vector<roi_group>* src  = use_single ? &overlays : &left_overlays;
             const std::vector<uint8_t>*   gvis = nullptr;
@@ -2457,13 +2421,12 @@ int main(int argc, char** argv) {
                 }
                 ImGui::EndTabBar();
             }
-            ImGui::EndChild();
-            ImGui::PopStyleColor(); // ImGuiCol_ChildBg
+            } // if Begin
+            ImGui::End();
         }
 
-        // Reset cursor to below all panels so the status bar sits correctly.
-        ImGui::SetCursorScreenPos({viewer_origin.x,
-            viewer_origin.y + viewer_h + profile_panel_h + overlay_graph_h});
+        // Reset cursor to below viewer so the status bar sits correctly.
+        ImGui::SetCursorScreenPos({viewer_origin.x, viewer_origin.y + viewer_h});
 
         // ----- Status bar -----
         ImGui::Separator();
