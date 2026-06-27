@@ -209,8 +209,6 @@ static bool has_ext(const char* path, const char* ext) {
 static void drop_callback(GLFWwindow* window, int count, const char** paths) {
     auto* app = static_cast<app_state*>(glfwGetWindowUserPointer(window));
 
-    if (*app->vmode == view_mode::none) return;
-
     switch (*app->vmode) {
     case view_mode::single:
         for (int i = 0; i < count; ++i) {
@@ -267,10 +265,7 @@ static void drop_callback(GLFWwindow* window, int count, const char** paths) {
         *app->status_msg = "Loading...";
         return;
     }
-    default:
-        break;
     }
-    *app->status_msg = "Loading...";
 }
 
 int main(int argc, char** argv) {
@@ -305,10 +300,8 @@ int main(int argc, char** argv) {
 
     CLI11_PARSE(cli, argc, argv);
 
-    const bool input_decided = img_sub->parsed() || cap_sub->parsed();
-    input_mode imode = cap_sub->parsed() ? input_mode::remote_capture : input_mode::read_img;
-    view_mode  vmode = view_mode_str.empty()        ? view_mode::none
-                     : (view_mode_str == "compare") ? view_mode::compare
+    const input_mode imode = cap_sub->parsed() ? input_mode::remote_capture : input_mode::read_img;
+    view_mode  vmode = (view_mode_str == "compare") ? view_mode::compare
                                                     : view_mode::single;
 
     // -------------------------------------------------------------------------
@@ -595,30 +588,6 @@ int main(int argc, char** argv) {
         int fb_w, fb_h, win_w, win_h;
         glfwGetFramebufferSize(window, &fb_w, &fb_h);
         glfwGetWindowSize(window, &win_w, &win_h);
-
-        // ----- Mode selection screen -----
-        if (vmode == view_mode::none) {
-            ImGui::SetNextWindowPos(
-                {static_cast<float>(win_w) * 0.5f, static_cast<float>(win_h) * 0.5f},
-                ImGuiCond_Always, {0.5f, 0.5f});
-            ImGui::SetNextWindowBgAlpha(0.92f);
-            ImGui::Begin("##mode_select", nullptr,
-                ImGuiWindowFlags_NoDecoration    | ImGuiWindowFlags_NoMove        |
-                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize |
-                ImGuiWindowFlags_NoNav);
-            if (ImGui::Button("Single",  {120.0f, 40.0f})) vmode = view_mode::single;
-            ImGui::SameLine();
-            if (ImGui::Button("Compare", {120.0f, 40.0f})) vmode = view_mode::compare;
-            ImGui::End();
-
-            ImGui::Render();
-            glViewport(0, 0, fb_w, fb_h);
-            glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
-            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-            glfwSwapBuffers(window);
-            continue;
-        }
 
         const bool use_single = (vmode == view_mode::single);
 
@@ -1072,18 +1041,12 @@ int main(int argc, char** argv) {
 
         // ----- Toolbar -----
         {
-            bool&  show_grid      = use_single ? single_viewer.show_grid        : compare.show_grid;
-            bool&  show_minimap   = use_single ? single_viewer.show_minimap     : compare.show_minimap;
-            bool&  show_overlays  = use_single ? single_viewer.show_overlays    : compare.show_left_overlays;
-            bool&  show_tooltip   = use_single ? single_viewer.show_coordinates : compare.show_coordinates;
-            bool&  show_crosshair = use_single ? single_viewer.show_crosshair   : compare.show_crosshair;
-
             constexpr ImVec4 kOn  = {0.15f, 0.45f, 0.75f, 1.0f};
             constexpr ImVec4 kOnH = {0.25f, 0.55f, 0.85f, 1.0f};
             constexpr ImVec4 kOnA = {0.10f, 0.35f, 0.65f, 1.0f};
 
             auto toggle_btn = [&](const char* label, bool& flag) {
-                const bool on = flag;  // capture before click changes it
+                const bool on = flag;
                 if (on) {
                     ImGui::PushStyleColor(ImGuiCol_Button,        kOn);
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kOnH);
@@ -1093,6 +1056,44 @@ int main(int argc, char** argv) {
                 if (on) ImGui::PopStyleColor(3);
                 ImGui::SameLine();
             };
+
+            // ----- Single / Compare mode switch -----
+            {
+                const bool is_single = use_single;
+                if (is_single) {
+                    ImGui::PushStyleColor(ImGuiCol_Button,        kOn);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kOnH);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  kOnA);
+                }
+                if (ImGui::SmallButton("Single") && !is_single) {
+                    vmode = view_mode::single;
+                    if (!left_image.empty())  single_viewer.load_image(left_image);
+                }
+                if (is_single) ImGui::PopStyleColor(3);
+                ImGui::SameLine();
+
+                const bool is_compare = !use_single;
+                if (is_compare) {
+                    ImGui::PushStyleColor(ImGuiCol_Button,        kOn);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kOnH);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  kOnA);
+                }
+                if (ImGui::SmallButton("Compare") && !is_compare) {
+                    vmode = view_mode::compare;
+                    if (!left_image.empty())  compare.load_left(left_image);
+                    if (!right_image.empty()) compare.load_right(right_image);
+                }
+                if (is_compare) ImGui::PopStyleColor(3);
+                ImGui::SameLine();
+            }
+            ImGui::TextDisabled("|");
+            ImGui::SameLine();
+
+            bool&  show_grid      = use_single ? single_viewer.show_grid        : compare.show_grid;
+            bool&  show_minimap   = use_single ? single_viewer.show_minimap     : compare.show_minimap;
+            bool&  show_overlays  = use_single ? single_viewer.show_overlays    : compare.show_left_overlays;
+            bool&  show_tooltip   = use_single ? single_viewer.show_coordinates : compare.show_coordinates;
+            bool&  show_crosshair = use_single ? single_viewer.show_crosshair   : compare.show_crosshair;
 
             toggle_btn("Grid",      show_grid);
             toggle_btn("Minimap",   show_minimap);
