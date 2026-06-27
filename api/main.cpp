@@ -10,8 +10,10 @@
 #include "util/async_loader.h"
 #include "util/capture_config.h"
 #include "util/config_tab.h"
+#include "gui/app_context.h"
 #include "gui/app_types.h"
 #include "gui/capture_panel.h"
+#include "gui/panel_base.h"
 #include "gui/circle_ellipse_tool.h"
 #include "gui/log_panel.h"
 #include "gui/measure_tool.h"
@@ -513,15 +515,38 @@ int main(int argc, char** argv) {
                          &overlay_file, &left_overlay_file, &right_overlay_file};
     glfwSetWindowUserPointer(window, &drop_state);
 
-    // Init panels with stable references (before the render loop).
-    cap_panel.init(&cur_sse, &capturing, &cap_cfg, &conn_buf, &capture_mode, &vmode,
-                   &image_acquisition, &live_image, &auto_detect, &ref_img_path,
-                   &left_loader, &show_camera_config, &show_connect_config,
-                   &capture_cfg_tab, &connect_cfg_tab, &compare, &cam_info, &cam_info_future,
-                   &preview_tex, &preview_tex_w, &preview_tex_h, &app_log,
-                   &right_loader);
-    prof_panel.init(&single_viewer, &compare, &overlays, &left_overlays);
-    ovg_panel.init(&single_viewer, &compare, &overlays, &left_overlays);
+    // Build the single shared app context (stable pointers set once).
+    app_context ctx;
+    ctx.single_viewer       = &single_viewer;
+    ctx.compare             = &compare;
+    ctx.overlays            = &overlays;
+    ctx.left_overlays       = &left_overlays;
+    ctx.left_loader         = &left_loader;
+    ctx.right_loader        = &right_loader;
+    ctx.cur_sse             = &cur_sse;
+    ctx.capturing           = &capturing;
+    ctx.cap_cfg             = &cap_cfg;
+    ctx.conn_buf            = &conn_buf;
+    ctx.capture_mode        = &capture_mode;
+    ctx.vmode               = &vmode;
+    ctx.image_acquisition   = &image_acquisition;
+    ctx.live_image          = &live_image;
+    ctx.auto_detect         = &auto_detect;
+    ctx.ref_img_path        = &ref_img_path;
+    ctx.show_camera_config  = &show_camera_config;
+    ctx.show_connect_config = &show_connect_config;
+    ctx.capture_cfg_tab     = &capture_cfg_tab;
+    ctx.connect_cfg_tab     = &connect_cfg_tab;
+    ctx.cam_info            = &cam_info;
+    ctx.cam_info_future     = &cam_info_future;
+    ctx.preview_tex         = &preview_tex;
+    ctx.preview_tex_w       = &preview_tex_w;
+    ctx.preview_tex_h       = &preview_tex_h;
+    ctx.log                 = &app_log;
+
+    // Init panels
+    std::vector<panel_base*> panels = {&cap_panel, &prof_panel, &ovg_panel, &app_log};
+    for (auto* p : panels) p->init(&ctx);
 
     // Apply diff flags from args (compare mode)
     if (vmode == view_mode::compare) {
@@ -566,7 +591,7 @@ int main(int argc, char** argv) {
         // Must run before any ImGui::Begin() so drag clamping takes effect
         // before ImGui processes window movement in the root window.
         if (imode == input_mode::remote_capture)
-            cap_panel.clamp_drag_pre_frame();
+            for (auto* p : panels) p->pre_frame();
 
         int fb_w, fb_h, win_w, win_h;
         glfwGetFramebufferSize(window, &fb_w, &fb_h);
@@ -1133,13 +1158,18 @@ int main(int argc, char** argv) {
         const float toolbar_bottom_y  = ImGui::GetCursorScreenPos().y;
         toolbar_bottom_y_cached = toolbar_bottom_y;  // used next frame for dockspace origin
 
+        // Update per-frame context fields.
+        ctx.min_y = toolbar_bottom_y;
+
         // ----- Left capture control panel (floating) -----
         if (imode == input_mode::remote_capture)
-            cap_panel.render(toolbar_bottom_y);
+            cap_panel.render();
 
         ImGui::End(); // ##root
 
         // ----- Viewer floating window -----
+        // Declare outside if-block so ctx can be updated after End().
+        float viewer_w = 0.0f, viewer_h = 0.0f;
         ImGui::SetNextWindowPos({0.0f, toolbar_bottom_y_cached}, ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(
             {static_cast<float>(win_w) * 0.75f,
@@ -1151,8 +1181,8 @@ int main(int argc, char** argv) {
             const float avail_x   = ImGui::GetContentRegionAvail().x;
             const float avail_h   = ImGui::GetContentRegionAvail().y;
             const float right_w   = show_pixel_panel ? panel_w + spacing_x : 0.0f;
-            const float viewer_w  = right_w > 0.0f ? avail_x - right_w : avail_x;
-            const float viewer_h  = avail_h;
+            viewer_w = right_w > 0.0f ? avail_x - right_w : avail_x;
+            viewer_h = avail_h;
 
             const ImVec2 viewer_origin = ImGui::GetCursorScreenPos();
 
@@ -1486,12 +1516,18 @@ int main(int argc, char** argv) {
             ImGui::EndChild();
         }
 
-        // ----- Floating panels -----
-        prof_panel.render(use_single, viewer_w, viewer_h);
-        ovg_panel.render(use_single);
-
         }
         ImGui::End(); // Viewer##viewer_win
+
+        // Update per-frame viewer context fields (outside the if-block so
+        // floating panels always receive current values even when viewer is collapsed).
+        ctx.use_single = use_single;
+        ctx.viewer_w   = viewer_w;
+        ctx.viewer_h   = viewer_h;
+
+        // ----- Floating panels (always rendered, independent of viewer window) -----
+        prof_panel.render();
+        ovg_panel.render();
 
         // ----- Loading progress overlay -----
         if (left_loader.active || right_loader.active) {

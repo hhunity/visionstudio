@@ -1,4 +1,8 @@
 #include "gui/overlay_graph_panel.h"
+#include "gui/app_context.h"
+#include "gui/image_viewer.h"
+#include "gui/compare_viewer.h"
+#include "io/overlay_io.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -6,17 +10,7 @@
 #include <utility>
 #include <vector>
 
-void overlay_graph_panel::init(image_viewer*                 single_viewer,
-                                compare_viewer*               compare,
-                                const std::vector<roi_group>* overlays,
-                                const std::vector<roi_group>* left_overlays) {
-    single_viewer_ = single_viewer;
-    compare_       = compare;
-    overlays_      = overlays;
-    left_overlays_ = left_overlays;
-}
-
-void overlay_graph_panel::render(bool use_single) {
+void overlay_graph_panel::render() {
     if (!visible) return;
 
     ImGui::SetNextWindowSize({800.0f, 400.0f}, ImGuiCond_FirstUseEver);
@@ -24,13 +18,14 @@ void overlay_graph_panel::render(bool use_single) {
 
     const float avail_w = ImGui::GetContentRegionAvail().x;
 
+    const bool use_single = ctx_->use_single;
     const std::vector<roi_group>* src =
-        (use_single && overlays_) ? overlays_
-        : (!use_single && left_overlays_) ? left_overlays_
+        (use_single && ctx_->overlays) ? ctx_->overlays
+        : (!use_single && ctx_->left_overlays) ? ctx_->left_overlays
         : nullptr;
     const std::vector<uint8_t>*   gvis = nullptr;
     {
-        image_viewer& ref = use_single ? *single_viewer_ : compare_->left_viewer_ref();
+        image_viewer& ref = use_single ? *ctx_->single_viewer : ctx_->compare->left_viewer_ref();
         if (src && ref.overlay_group_count() == src->size())
             gvis = &ref.overlay_group_visibility;
     }

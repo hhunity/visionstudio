@@ -6,12 +6,10 @@
 #include <vector>
 #include <imgui.h>
 #include "capture/capture_client.h"
+#include "gui/app_context.h"
 #include "gui/app_types.h"
-#include "gui/compare_viewer.h"
-#include "gui/log_panel.h"
-#include "util/async_loader.h"
+#include "gui/panel_base.h"
 #include "util/capture_config.h"
-#include "util/config_tab.h"
 
 // Editable copy of connection settings (char buffers for ImGui InputText).
 struct conn_edit {
@@ -38,78 +36,32 @@ inline conn_edit make_conn_edit(const capture_config& c) {
     return e;
 }
 
-class capture_panel {
+class capture_panel : public panel_base {
 public:
-    bool visible = true;
+    // visible is inherited from panel_base (default false); override initial value
+    capture_panel() { visible = true; }
 
-    // Call once after all stable references are known (before the render loop).
-    void init(
-        sse_state*                                cur_sse,
-        bool*                                     capturing,
-        capture_config*                           cap_cfg,
-        conn_edit*                                conn_buf,
-        int*                                      capture_mode,
-        view_mode*                                vmode,
-        bool*                                     image_acquisition,
-        bool*                                     live_image,
-        bool*                                     auto_detect,
-        std::string*                              ref_img_path,
-        async_loader*                             left_loader,
-        bool*                                     show_camera_config,
-        bool*                                     show_connect_config,
-        config_tab*                               capture_cfg_tab,
-        config_tab*                               connect_cfg_tab,
-        compare_viewer*                           compare,
-        std::vector<cam_info_group>*              cam_info,
-        std::future<std::vector<cam_info_group>>* cam_info_future,
-        uint32_t*                                 preview_tex,
-        int*                                      preview_tex_w,
-        int*                                      preview_tex_h,
-        log_panel*                                log,
-        async_loader*                             right_loader
-    );
+    // Init from app_context (overrides panel_base::init).
+    void init(app_context* ctx) override;
 
-    // Call this BEFORE the root ImGui::Begin() each frame so the drag clamp
-    // takes effect before ImGui processes window movement.
-    void clamp_drag_pre_frame();
+    // Called each frame before any ImGui::Begin() — clamps drag position.
+    void pre_frame() override;
 
     // Poll SSE events from the capture client and update state.
     void poll_events();
 
-    void render(float min_y);
+    void render() override;
 
     bool is_preview_active() const;
     bool poll_preview_frame(preview_frame& out);
     void cancel_connect();
 
+    // Public so clamp_drag_pre_frame can be kept for backward-compat (called via pre_frame).
+    void clamp_drag_pre_frame();
+
 private:
     // Owned capture client (created lazily in render/connect).
     std::optional<capture_client> cap_cli_;
-
-    // Stable pointers set once via init().
-    sse_state*                                cur_sse_            = nullptr;
-    bool*                                     capturing_          = nullptr;
-    capture_config*                           cap_cfg_            = nullptr;
-    conn_edit*                                conn_buf_           = nullptr;
-    int*                                      capture_mode_       = nullptr;
-    view_mode*                                vmode_              = nullptr;
-    bool*                                     image_acquisition_  = nullptr;
-    bool*                                     live_image_         = nullptr;
-    bool*                                     auto_detect_        = nullptr;
-    std::string*                              ref_img_path_       = nullptr;
-    async_loader*                             left_loader_        = nullptr;
-    bool*                                     show_camera_config_ = nullptr;
-    bool*                                     show_connect_config_= nullptr;
-    config_tab*                               capture_cfg_tab_    = nullptr;
-    config_tab*                               connect_cfg_tab_    = nullptr;
-    compare_viewer*                           compare_            = nullptr;
-    std::vector<cam_info_group>*              cam_info_           = nullptr;
-    std::future<std::vector<cam_info_group>>* cam_info_future_    = nullptr;
-    uint32_t*                                 preview_tex_        = nullptr;
-    int*                                      preview_tex_w_      = nullptr;
-    int*                                      preview_tex_h_      = nullptr;
-    log_panel*                                log_                = nullptr;
-    async_loader*                             right_loader_       = nullptr;
 
     // Per-panel state.
     std::string cam_edit_key;

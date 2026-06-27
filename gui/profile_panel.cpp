@@ -1,20 +1,14 @@
 #include "gui/profile_panel.h"
+#include "gui/app_context.h"
+#include "gui/image_viewer.h"
+#include "gui/compare_viewer.h"
+#include "io/overlay_io.h"
 #include <algorithm>
 #include <cstdio>
 #include <vector>
 #include <implot.h>
 
-void profile_panel::init(const image_viewer*            single_viewer,
-                          const compare_viewer*          compare,
-                          const std::vector<roi_group>*  overlays,
-                          const std::vector<roi_group>*  left_overlays) {
-    single_viewer_ = single_viewer;
-    compare_       = compare;
-    overlays_      = overlays;
-    left_overlays_ = left_overlays;
-}
-
-void profile_panel::render(bool use_single, float viewer_w, float viewer_h) {
+void profile_panel::render() {
     if (!visible) return;
 
     ImGui::SetNextWindowSize({640.0f, 200.0f}, ImGuiCond_FirstUseEver);
@@ -24,16 +18,16 @@ void profile_panel::render(bool use_single, float viewer_w, float viewer_h) {
     const float graph_w = (ImGui::GetContentRegionAvail().x
                            - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
 
-    if (use_single && single_viewer_) {
-        const auto& hi  = single_viewer_->get_hover_info();
-        const auto* img = &single_viewer_->get_image_data();
+    if (ctx_->use_single && ctx_->single_viewer) {
+        const auto& hi  = ctx_->single_viewer->get_hover_info();
+        const auto* img = &ctx_->single_viewer->get_image_data();
         const int cx = hi.valid ? hi.img_x : -1;
         const int cy = hi.valid ? hi.img_y : -1;
-        const auto& vs = single_viewer_->get_view_state();
+        const auto& vs = ctx_->single_viewer->get_view_state();
         const int vis_x0 = static_cast<int>(-vs.pan_x / vs.zoom);
-        const int vis_x1 = static_cast<int>((-vs.pan_x + viewer_w) / vs.zoom);
+        const int vis_x1 = static_cast<int>((-vs.pan_x + ctx_->viewer_w) / vs.zoom);
         const int vis_y0 = static_cast<int>(-vs.pan_y / vs.zoom);
-        const int vis_y1 = static_cast<int>((-vs.pan_y + viewer_h) / vs.zoom);
+        const int vis_y1 = static_cast<int>((-vs.pan_y + ctx_->viewer_h) / vs.zoom);
         draw_profile("X Profile##xprof", true,  cy,
                      {{img, IM_COL32(80, 200, 255, 220), cx}},
                      graph_w, graph_h, vis_x0, vis_x1);
@@ -41,17 +35,17 @@ void profile_panel::render(bool use_single, float viewer_w, float viewer_h) {
         draw_profile("Y Profile##yprof", false, cx,
                      {{img, IM_COL32(80, 200, 255, 220), cy}},
                      graph_w, graph_h, vis_y0, vis_y1);
-    } else if (!use_single && compare_) {
-        const auto& hi  = compare_->get_hover_info();
-        const auto* li  = &compare_->get_left_image_data();
-        const auto* ri  = &compare_->get_right_image_data();
+    } else if (!ctx_->use_single && ctx_->compare) {
+        const auto& hi  = ctx_->compare->get_hover_info();
+        const auto* li  = &ctx_->compare->get_left_image_data();
+        const auto* ri  = &ctx_->compare->get_right_image_data();
         const int cx = hi.valid ? hi.img_x : -1;
         const int cy = hi.valid ? hi.img_y : -1;
-        const auto& vs = compare_->get_view_state();
+        const auto& vs = ctx_->compare->get_view_state();
         const int vis_x0 = static_cast<int>(-vs.pan_x / vs.zoom);
-        const int vis_x1 = static_cast<int>((-vs.pan_x + viewer_w * 0.5f) / vs.zoom);
+        const int vis_x1 = static_cast<int>((-vs.pan_x + ctx_->viewer_w * 0.5f) / vs.zoom);
         const int vis_y0 = static_cast<int>(-vs.pan_y / vs.zoom);
-        const int vis_y1 = static_cast<int>((-vs.pan_y + viewer_h) / vs.zoom);
+        const int vis_y1 = static_cast<int>((-vs.pan_y + ctx_->viewer_h) / vs.zoom);
         draw_profile("X Profile##xprof", true, cy,
                      {{li, IM_COL32(80, 200, 255, 220), cx},
                       {ri, IM_COL32(255, 160,  60, 220), cx}},

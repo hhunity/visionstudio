@@ -1,4 +1,9 @@
 #include "gui/capture_panel.h"
+#include "gui/app_context.h"
+#include "gui/compare_viewer.h"
+#include "gui/log_panel.h"
+#include "util/async_loader.h"
+#include "util/config_tab.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -7,54 +12,12 @@
 #include <imgui_internal.h>
 #include <nfd.hpp>
 
-void capture_panel::init(
-    sse_state*                                cur_sse,
-    bool*                                     capturing,
-    capture_config*                           cap_cfg,
-    conn_edit*                                conn_buf,
-    int*                                      capture_mode,
-    view_mode*                                vmode,
-    bool*                                     image_acquisition,
-    bool*                                     live_image,
-    bool*                                     auto_detect,
-    std::string*                              ref_img_path,
-    async_loader*                             left_loader,
-    bool*                                     show_camera_config,
-    bool*                                     show_connect_config,
-    config_tab*                               capture_cfg_tab,
-    config_tab*                               connect_cfg_tab,
-    compare_viewer*                           compare,
-    std::vector<cam_info_group>*              cam_info,
-    std::future<std::vector<cam_info_group>>* cam_info_future,
-    uint32_t*                                 preview_tex,
-    int*                                      preview_tex_w,
-    int*                                      preview_tex_h,
-    log_panel*                                log,
-    async_loader*                             right_loader
-) {
-    cur_sse_             = cur_sse;
-    capturing_           = capturing;
-    cap_cfg_             = cap_cfg;
-    conn_buf_            = conn_buf;
-    capture_mode_        = capture_mode;
-    vmode_               = vmode;
-    image_acquisition_   = image_acquisition;
-    live_image_          = live_image;
-    auto_detect_         = auto_detect;
-    ref_img_path_        = ref_img_path;
-    left_loader_         = left_loader;
-    show_camera_config_  = show_camera_config;
-    show_connect_config_ = show_connect_config;
-    capture_cfg_tab_     = capture_cfg_tab;
-    connect_cfg_tab_     = connect_cfg_tab;
-    compare_             = compare;
-    cam_info_            = cam_info;
-    cam_info_future_     = cam_info_future;
-    preview_tex_         = preview_tex;
-    preview_tex_w_       = preview_tex_w;
-    preview_tex_h_       = preview_tex_h;
-    log_                 = log;
-    right_loader_        = right_loader;
+void capture_panel::init(app_context* ctx) {
+    ctx_ = ctx;
+}
+
+void capture_panel::pre_frame() {
+    clamp_drag_pre_frame();
 }
 
 void capture_panel::clamp_drag_pre_frame() {
@@ -82,45 +45,45 @@ void capture_panel::poll_events() {
 
     while (auto ev = cap_cli_->poll_server_event()) {
         if (std::get_if<evt_connected>(&*ev)) {
-            *cur_sse_ = sse_state::connected;
-            log_->add("INFO", "Connected to server");
+            *ctx_->cur_sse = sse_state::connected;
+            ctx_->log->add("INFO", "Connected to server");
         } else if (std::get_if<evt_disconnected>(&*ev)) {
-            *cur_sse_   = sse_state::disconnected;
-            *capturing_ = false;
-            log_->add("INFO", "Server disconnected");
+            *ctx_->cur_sse   = sse_state::disconnected;
+            *ctx_->capturing = false;
+            ctx_->log->add("INFO", "Server disconnected");
         } else if (auto* e = std::get_if<evt_error>(&*ev)) {
-            *cur_sse_ = sse_state::error;
-            log_->add("ERROR", ("Server error: " + e->message).c_str());
+            *ctx_->cur_sse = sse_state::error;
+            ctx_->log->add("ERROR", ("Server error: " + e->message).c_str());
         } else if (auto* e = std::get_if<evt_capture_done>(&*ev)) {
-            *capturing_ = false;
-            if (*capture_mode_ == 0) {
+            *ctx_->capturing = false;
+            if (*ctx_->capture_mode == 0) {
                 // Single mode: replace single viewer image
-                left_loader_->start(e->path);
-            } else if (*capture_mode_ == 1) {
+                ctx_->left_loader->start(e->path);
+            } else if (*ctx_->capture_mode == 1) {
                 // Compare mode: replace both
-                compare_->unload_left();
-                compare_->unload_right();
-                left_loader_->start(e->path);
+                ctx_->compare->unload_left();
+                ctx_->compare->unload_right();
+                ctx_->left_loader->start(e->path);
             } else {
                 // Mode 2: keep left as reference, replace right only
-                compare_->unload_right();
-                right_loader_->start(e->path);
+                ctx_->compare->unload_right();
+                ctx_->right_loader->start(e->path);
             }
-            log_->add("INFO", ("Capture done: " + e->path).c_str());
+            ctx_->log->add("INFO", ("Capture done: " + e->path).c_str());
         } else if (auto* e = std::get_if<evt_config_updated>(&*ev)) {
-            *cap_cfg_  = e->cfg;
-            *conn_buf_ = make_conn_edit(*cap_cfg_);
-            capture_config::save("visionstudio.json", *cap_cfg_);
-            log_->add("INFO", "Config updated by server");
+            *ctx_->cap_cfg  = e->cfg;
+            *ctx_->conn_buf = make_conn_edit(*ctx_->cap_cfg);
+            capture_config::save("visionstudio.json", *ctx_->cap_cfg);
+            ctx_->log->add("INFO", "Config updated by server");
         } else if (auto* e = std::get_if<evt_camera_info>(&*ev)) {
-            *cam_info_ = std::move(e->groups);
+            *ctx_->cam_info = std::move(e->groups);
         }
     }
 
     // Poll camera info future (Refresh button result)
-    if (cam_info_future_->valid() &&
-        cam_info_future_->wait_for(std::chrono::seconds(0)) == std::future_status::ready)
-        *cam_info_ = cam_info_future_->get();
+    if (ctx_->cam_info_future->valid() &&
+        ctx_->cam_info_future->wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+        *ctx_->cam_info = ctx_->cam_info_future->get();
 }
 
 bool capture_panel::is_preview_active() const {
@@ -134,16 +97,17 @@ bool capture_panel::poll_preview_frame(preview_frame& out) {
 
 void capture_panel::cancel_connect() {
     if (cap_cli_.has_value()) cap_cli_->disconnect();
-    if (cur_sse_) *cur_sse_ = sse_state::disconnected;
+    if (ctx_->cur_sse) *ctx_->cur_sse = sse_state::disconnected;
 }
 
-void capture_panel::render(float min_y) {
+void capture_panel::render() {
     // Poll SSE events first.
     poll_events();
 
     if (!visible) return;
 
-    // Store min_y for use in clamp_drag_pre_frame() next frame.
+    // Get min_y from context and store for use in clamp_drag_pre_frame() next frame.
+    const float min_y = ctx_->min_y;
     min_y_ = min_y;
 
     // First-frame placement when window doesn't exist yet.
@@ -156,7 +120,7 @@ void capture_panel::render(float min_y) {
     // SSE status indicator
     const char* sse_label = "";
     ImVec4      sse_col   = {1, 1, 1, 1};
-    switch (*cur_sse_) {
+    switch (*ctx_->cur_sse) {
     case sse_state::disconnected: sse_label = "Disconnected"; sse_col = {0.6f, 0.6f, 0.6f, 1}; break;
     case sse_state::connecting:   sse_label = "Connecting..."; sse_col = {1, 0.8f, 0, 1};       break;
     case sse_state::connected:    sse_label = "Connected";    sse_col = {0.2f, 1, 0.4f, 1};    break;
@@ -172,7 +136,7 @@ void capture_panel::render(float min_y) {
     const bool conn_open = ImGui::CollapsingHeader("Connect Settings");
     ImGui::PopStyleColor(3);
     if (conn_open) {
-        ImGui::BeginDisabled(*cur_sse_ == sse_state::connected);
+        ImGui::BeginDisabled(*ctx_->cur_sse == sse_state::connected);
         bool conn_changed = false;
         const float label_col_w = ImGui::CalcTextSize("Timeout(ms)").x
                                 + ImGui::GetStyle().ItemSpacing.x;
@@ -189,41 +153,41 @@ void capture_panel::render(float min_y) {
         if (ImGui::BeginTable("##conn_host", 2, kTblFlags)) {
             ImGui::TableSetupColumn("##lbl1", ImGuiTableColumnFlags_WidthFixed, label_col_w);
             ImGui::TableSetupColumn("##val1", ImGuiTableColumnFlags_WidthStretch);
-            labeled("Host", [&]{ return ImGui::InputText("##host", conn_buf_->host, sizeof(conn_buf_->host)); });
-            labeled("Port", [&]{ return ImGui::InputInt ("##port", &conn_buf_->port, 0); });
+            labeled("Host", [&]{ return ImGui::InputText("##host", ctx_->conn_buf->host, sizeof(ctx_->conn_buf->host)); });
+            labeled("Port", [&]{ return ImGui::InputInt ("##port", &ctx_->conn_buf->port, 0); });
             ImGui::EndTable();
         }
         ImGui::Separator();
         if (ImGui::BeginTable("##conn_paths", 2, kTblFlags)) {
             ImGui::TableSetupColumn("##lbl2", ImGuiTableColumnFlags_WidthFixed, label_col_w);
             ImGui::TableSetupColumn("##val2", ImGuiTableColumnFlags_WidthStretch);
-            labeled("Connect",    [&]{ return ImGui::InputText("##conn_path",  conn_buf_->connect_path,    sizeof(conn_buf_->connect_path)); });
-            labeled("Start",      [&]{ return ImGui::InputText("##start_path", conn_buf_->start_path,      sizeof(conn_buf_->start_path)); });
-            labeled("Stop",       [&]{ return ImGui::InputText("##stop_path",  conn_buf_->stop_path,       sizeof(conn_buf_->stop_path)); });
-            labeled("Disconnect", [&]{ return ImGui::InputText("##disc_path",  conn_buf_->disconnect_path, sizeof(conn_buf_->disconnect_path)); });
-            labeled("SSE",        [&]{ return ImGui::InputText("##sse_path",   conn_buf_->sse_path,        sizeof(conn_buf_->sse_path)); });
-            labeled("Timeout(ms)",[&]{ return ImGui::InputInt ("##timeout",    &conn_buf_->timeout_ms,     0); });
+            labeled("Connect",    [&]{ return ImGui::InputText("##conn_path",  ctx_->conn_buf->connect_path,    sizeof(ctx_->conn_buf->connect_path)); });
+            labeled("Start",      [&]{ return ImGui::InputText("##start_path", ctx_->conn_buf->start_path,      sizeof(ctx_->conn_buf->start_path)); });
+            labeled("Stop",       [&]{ return ImGui::InputText("##stop_path",  ctx_->conn_buf->stop_path,       sizeof(ctx_->conn_buf->stop_path)); });
+            labeled("Disconnect", [&]{ return ImGui::InputText("##disc_path",  ctx_->conn_buf->disconnect_path, sizeof(ctx_->conn_buf->disconnect_path)); });
+            labeled("SSE",        [&]{ return ImGui::InputText("##sse_path",   ctx_->conn_buf->sse_path,        sizeof(ctx_->conn_buf->sse_path)); });
+            labeled("Timeout(ms)",[&]{ return ImGui::InputInt ("##timeout",    &ctx_->conn_buf->timeout_ms,     0); });
             ImGui::EndTable();
         }
         if (conn_changed) {
-            cap_cfg_->host            = conn_buf_->host;
-            cap_cfg_->port            = conn_buf_->port;
-            cap_cfg_->connect_path    = conn_buf_->connect_path;
-            cap_cfg_->start_path      = conn_buf_->start_path;
-            cap_cfg_->stop_path       = conn_buf_->stop_path;
-            cap_cfg_->disconnect_path = conn_buf_->disconnect_path;
-            cap_cfg_->sse_path        = conn_buf_->sse_path;
-            cap_cfg_->timeout_ms      = conn_buf_->timeout_ms;
-            capture_config::save("visionstudio.json", *cap_cfg_);
+            ctx_->cap_cfg->host            = ctx_->conn_buf->host;
+            ctx_->cap_cfg->port            = ctx_->conn_buf->port;
+            ctx_->cap_cfg->connect_path    = ctx_->conn_buf->connect_path;
+            ctx_->cap_cfg->start_path      = ctx_->conn_buf->start_path;
+            ctx_->cap_cfg->stop_path       = ctx_->conn_buf->stop_path;
+            ctx_->cap_cfg->disconnect_path = ctx_->conn_buf->disconnect_path;
+            ctx_->cap_cfg->sse_path        = ctx_->conn_buf->sse_path;
+            ctx_->cap_cfg->timeout_ms      = ctx_->conn_buf->timeout_ms;
+            capture_config::save("visionstudio.json", *ctx_->cap_cfg);
         }
-        if (!connect_cfg_tab_->path.empty()) {
+        if (!ctx_->connect_cfg_tab->path.empty()) {
             ImGui::Separator();
             ImGui::TextDisabled("Connect Config File");
-            const auto& p   = connect_cfg_tab_->path;
+            const auto& p   = ctx_->connect_cfg_tab->path;
             const auto  pos = p.find_last_of("/\\");
             const std::string fname = (pos == std::string::npos) ? p : p.substr(pos + 1);
             if (ImGui::Button(fname.c_str(), {-1, 0}))
-                *show_connect_config_ = true;
+                *ctx_->show_connect_config = true;
         }
         ImGui::EndDisabled();
     }
@@ -233,18 +197,18 @@ void capture_panel::render(float min_y) {
     ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.15f, 0.45f, 0.75f, 1.0f});
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.22f, 0.58f, 0.90f, 1.0f});
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.10f, 0.32f, 0.55f, 1.0f});
-    ImGui::BeginDisabled(*cur_sse_ != sse_state::disconnected &&
-                         *cur_sse_ != sse_state::error);
+    ImGui::BeginDisabled(*ctx_->cur_sse != sse_state::disconnected &&
+                         *ctx_->cur_sse != sse_state::error);
     if (ImGui::Button("Connect", {-1, 0})) {
-        cap_cli_.emplace(*cap_cfg_);
+        cap_cli_.emplace(*ctx_->cap_cfg);
         cap_cli_->connect();
-        *cur_sse_ = sse_state::connecting;
+        *ctx_->cur_sse = sse_state::connecting;
     }
     ImGui::EndDisabled();
-    ImGui::BeginDisabled(*cur_sse_ != sse_state::connected);
+    ImGui::BeginDisabled(*ctx_->cur_sse != sse_state::connected);
     if (ImGui::Button("Disconnect", {-1, 0})) {
         if (cap_cli_.has_value()) cap_cli_->disconnect();
-        *capturing_ = false;
+        *ctx_->capturing = false;
     }
     ImGui::EndDisabled();
     ImGui::PopStyleColor(3);
@@ -254,7 +218,7 @@ void capture_panel::render(float min_y) {
 #ifndef NDEBUG
     constexpr bool cap_settings_disabled = false;
 #else
-    const bool cap_settings_disabled = *cur_sse_ != sse_state::connected;
+    const bool cap_settings_disabled = *ctx_->cur_sse != sse_state::connected;
 #endif
     ImGui::BeginDisabled(cap_settings_disabled);
     ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4{0.35f, 0.35f, 0.35f, 1.0f});
@@ -266,13 +230,13 @@ void capture_panel::render(float min_y) {
         constexpr const char* kCaptureModes[] = {"Single", "Compare", "Compare (keep left)"};
         ImGui::TextDisabled("View Mode");
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-        const int prev_cap_mode = *capture_mode_;
-        if (ImGui::Combo("##cap_mode", capture_mode_, kCaptureModes, 3)) {
-            if (prev_cap_mode == 1 && *capture_mode_ == 0) {
-                ref_img_path_->clear();
-                compare_->unload_left();
+        const int prev_cap_mode = *ctx_->capture_mode;
+        if (ImGui::Combo("##cap_mode", ctx_->capture_mode, kCaptureModes, 3)) {
+            if (prev_cap_mode == 1 && *ctx_->capture_mode == 0) {
+                ctx_->ref_img_path->clear();
+                ctx_->compare->unload_left();
             }
-            *vmode_ = (*capture_mode_ == 0) ? view_mode::single : view_mode::compare;
+            *ctx_->vmode = (*ctx_->capture_mode == 0) ? view_mode::single : view_mode::compare;
         }
         ImGui::Separator();
 
@@ -303,26 +267,26 @@ void capture_panel::render(float min_y) {
                 dl->AddCircleFilled({p.x + r + t * (w - r * 2.0f), p.y + r},
                                     r - 2.0f, IM_COL32(255,255,255,255));
             };
-            sw_row("Image Acquisition", "##acq",  image_acquisition_);
-            sw_row("Live Image",        "##live", live_image_);
-            sw_row("Auto Detect",       "##ad",   auto_detect_);
+            sw_row("Image Acquisition", "##acq",  ctx_->image_acquisition);
+            sw_row("Live Image",        "##live", ctx_->live_image);
+            sw_row("Auto Detect",       "##ad",   ctx_->auto_detect);
             ImGui::EndTable();
         }
 
-        ImGui::BeginDisabled(*vmode_ != view_mode::compare);
+        ImGui::BeginDisabled(*ctx_->vmode != view_mode::compare);
         ImGui::TextDisabled("Ref Img");
         {
-            const auto pos = ref_img_path_->find_last_of("/\\");
-            const std::string fname = ref_img_path_->empty()
+            const auto pos = ctx_->ref_img_path->find_last_of("/\\");
+            const std::string fname = ctx_->ref_img_path->empty()
                 ? "(none)"
-                : (pos == std::string::npos ? *ref_img_path_ : ref_img_path_->substr(pos + 1));
+                : (pos == std::string::npos ? *ctx_->ref_img_path : ctx_->ref_img_path->substr(pos + 1));
             if (ImGui::Button(fname.c_str(), {-1, 0})) {
                 constexpr nfdfilteritem_t kTiffFilter[] = {{"TIFF Image", "tiff,tif"}};
                 nfdchar_t* out = nullptr;
                 if (NFD::OpenDialog(out, kTiffFilter, 1) == NFD_OKAY) {
-                    *ref_img_path_ = out;
+                    *ctx_->ref_img_path = out;
                     NFD::FreePath(out);
-                    left_loader_->start(*ref_img_path_);
+                    ctx_->left_loader->start(*ctx_->ref_img_path);
                 }
             }
         }
@@ -344,51 +308,51 @@ void capture_panel::render(float min_y) {
                 ImGui::TableSetColumnIndex(1);
                 ImGui::SetNextItemWidth(-1);
                 if (ImGui::InputInt(id, val, 0))
-                    capture_config::save("visionstudio.json", *cap_cfg_);
+                    capture_config::save("visionstudio.json", *ctx_->cap_cfg);
             };
-            gl_row("basex",   "##basex",   &cap_cfg_->basex);
-            gl_row("targetx", "##targetx", &cap_cfg_->targetx);
-            gl_row("starty",  "##starty",  &cap_cfg_->starty);
-            gl_row("liney",   "##liney",   &cap_cfg_->liney);
+            gl_row("basex",   "##basex",   &ctx_->cap_cfg->basex);
+            gl_row("targetx", "##targetx", &ctx_->cap_cfg->targetx);
+            gl_row("starty",  "##starty",  &ctx_->cap_cfg->starty);
+            gl_row("liney",   "##liney",   &ctx_->cap_cfg->liney);
             ImGui::EndTable();
         }
 
         // Capture config files
         ImGui::Separator();
         ImGui::TextDisabled("Capture Config Files");
-        if (!capture_cfg_tab_->path.empty()) {
-            const auto& fpath = capture_cfg_tab_->path;
+        if (!ctx_->capture_cfg_tab->path.empty()) {
+            const auto& fpath = ctx_->capture_cfg_tab->path;
             const auto  pos   = fpath.find_last_of("/\\");
             const std::string fname = (pos == std::string::npos) ? fpath : fpath.substr(pos + 1);
             if (ImGui::Button(fname.c_str(), {-1, 0}))
-                *show_camera_config_ = true;
+                *ctx_->show_camera_config = true;
         }
     }
     ImGui::EndDisabled();
     ImGui::Separator();
 
     // Capture buttons
-    ImGui::BeginDisabled(*cur_sse_ != sse_state::connected || *capturing_);
+    ImGui::BeginDisabled(*ctx_->cur_sse != sse_state::connected || *ctx_->capturing);
     ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.18f, 0.55f, 0.18f, 1.0f});
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.25f, 0.70f, 0.25f, 1.0f});
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.12f, 0.40f, 0.12f, 1.0f});
     if (ImGui::Button("Start Capture", {-1, 0})) {
         if (cap_cli_.has_value()) {
             cap_cli_->start_capture();
-            *capturing_ = true;
+            *ctx_->capturing = true;
         }
     }
     ImGui::PopStyleColor(3);
     ImGui::EndDisabled();
 
-    ImGui::BeginDisabled(*cur_sse_ != sse_state::connected || !*capturing_);
+    ImGui::BeginDisabled(*ctx_->cur_sse != sse_state::connected || !*ctx_->capturing);
     ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.60f, 0.15f, 0.15f, 1.0f});
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.78f, 0.20f, 0.20f, 1.0f});
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.45f, 0.10f, 0.10f, 1.0f});
     if (ImGui::Button("Stop Capture", {-1, 0})) {
         if (cap_cli_.has_value()) {
             cap_cli_->stop_capture();
-            *capturing_ = false;
+            *ctx_->capturing = false;
         }
     }
     ImGui::PopStyleColor(3);
@@ -398,18 +362,18 @@ void capture_panel::render(float min_y) {
     ImGui::Separator();
     const bool preview_on = is_preview_active();
     ImGui::BeginDisabled(preview_on);
-    if (ImGui::Checkbox("Raw", &cap_cfg_->preview_raw))
-        capture_config::save("visionstudio.json", *cap_cfg_);
+    if (ImGui::Checkbox("Raw", &ctx_->cap_cfg->preview_raw))
+        capture_config::save("visionstudio.json", *ctx_->cap_cfg);
     ImGui::EndDisabled();
-    ImGui::BeginDisabled(*cur_sse_ != sse_state::connected);
+    ImGui::BeginDisabled(*ctx_->cur_sse != sse_state::connected);
     if (!preview_on) {
         if (ImGui::Button("Start Preview", {-1, 0})) {
-            if (*preview_tex_ != 0) {
-                uint32_t tex = *preview_tex_;
+            if (*ctx_->preview_tex != 0) {
+                uint32_t tex = *ctx_->preview_tex;
                 glDeleteTextures(1, &tex);
-                *preview_tex_   = 0;
-                *preview_tex_w_ = 0;
-                *preview_tex_h_ = 0;
+                *ctx_->preview_tex   = 0;
+                *ctx_->preview_tex_w = 0;
+                *ctx_->preview_tex_h = 0;
             }
             if (cap_cli_.has_value()) cap_cli_->start_preview();
         }
@@ -428,19 +392,19 @@ void capture_panel::render(float min_y) {
     const bool cam_info_open = ImGui::CollapsingHeader("Camera Info");
     ImGui::PopStyleColor(3);
     if (cam_info_open) {
-        const bool fetching = cam_info_future_->valid() &&
-            cam_info_future_->wait_for(std::chrono::seconds(0)) != std::future_status::ready;
-        ImGui::BeginDisabled(fetching || *cur_sse_ != sse_state::connected);
+        const bool fetching = ctx_->cam_info_future->valid() &&
+            ctx_->cam_info_future->wait_for(std::chrono::seconds(0)) != std::future_status::ready;
+        ImGui::BeginDisabled(fetching || *ctx_->cur_sse != sse_state::connected);
         if (ImGui::SmallButton(fetching ? "Fetching..." : "Refresh Info")) {
             if (cap_cli_.has_value()) {
                 capture_client* cli = &*cap_cli_;
-                *cam_info_future_ = std::async(std::launch::async,
+                *ctx_->cam_info_future = std::async(std::launch::async,
                     [cli]{ return cli->fetch_camera_info(); });
             }
         }
         ImGui::EndDisabled();
 
-        for (auto& g : *cam_info_) {
+        for (auto& g : *ctx_->cam_info) {
             if (ImGui::CollapsingHeader(g.label.c_str())) {
                 if (ImGui::BeginTable(g.label.c_str(), 2,
                         ImGuiTableFlags_SizingFixedFit |

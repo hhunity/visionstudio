@@ -3,22 +3,15 @@
 #include <initializer_list>
 #include <vector>
 #include <imgui.h>
-#include "gui/image_viewer.h"
-#include "gui/compare_viewer.h"
-#include "io/overlay_io.h"
+#include "gui/panel_base.h"
+#include "external/cpplib/io/tiff_io.h"
 
-class profile_panel {
+class profile_panel : public panel_base {
 public:
-    bool visible = false;
+    // visible is inherited from panel_base
 
-    // Call once after all stable references are known (before the render loop).
-    void init(const image_viewer*            single_viewer,
-              const compare_viewer*          compare,
-              const std::vector<roi_group>*  overlays,
-              const std::vector<roi_group>*  left_overlays);
-
-    // Call once per frame inside the ImGui render loop.
-    void render(bool use_single, float viewer_w, float viewer_h);
+    // render() is called once per frame inside the ImGui render loop.
+    void render() override;
 
 private:
     struct series_entry { const image_data* img; ImU32 color; int cursor; };
@@ -27,9 +20,4 @@ private:
                       std::initializer_list<series_entry> series,
                       float gw, float gh,
                       int vis_min = -1, int vis_max = -1);
-
-    const image_viewer*            single_viewer_ = nullptr;
-    const compare_viewer*          compare_       = nullptr;
-    const std::vector<roi_group>*  overlays_      = nullptr;
-    const std::vector<roi_group>*  left_overlays_ = nullptr;
 };

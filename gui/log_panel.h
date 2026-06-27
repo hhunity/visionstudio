@@ -5,12 +5,13 @@
 #include <string>
 #include <vector>
 #include <imgui.h>
+#include "gui/panel_base.h"
 
-struct log_panel {
+struct log_panel : public panel_base {
     struct entry { std::string text; bool is_error; };
     std::vector<entry> entries;
     bool               scroll_to_bottom = true;
-    bool               visible          = false;
+    // visible is inherited from panel_base
 
     void add(const char* level, const char* msg) {
         const auto now = std::chrono::system_clock::now();
@@ -32,7 +33,7 @@ struct log_panel {
         scroll_to_bottom = true;
     }
 
-    void render() {
+    void render() override {
         if (!visible) return;
         if (!ImGui::Begin("Log##log_win", &visible)) { ImGui::End(); return; }
         if (ImGui::Button("Clear")) entries.clear();
