@@ -351,14 +351,18 @@ void image_viewer::handle_input(const ImVec2& canvas_pos, const ImVec2& canvas_s
         if (wheel != 0.0f) {
             const bool ctrl  = ImGui::GetIO().KeyCtrl;
             const bool shift = ImGui::GetIO().KeyShift;
-            constexpr float pan_speed = 32.0f; // pixels per scroll step
-            if (shift) {
-                // Shift + scroll → horizontal pan (Photoshop compatible)
-                state.pan_x += wheel * pan_speed;
+            const float speed = (ctrl && shift) ? pan_speed * 5.0f : pan_speed;
+            if (shift && !ctrl) {
+                // Shift+scroll → horizontal pan
+                state.pan_x += wheel * speed;
                 clamp_pan(state, canvas_size.x, canvas_size.y);
-            } else if (ctrl) {
-                // Ctrl + scroll → vertical pan (Photoshop compatible)
-                state.pan_y += wheel * pan_speed;
+            } else if (ctrl && !shift) {
+                // Ctrl+scroll → vertical pan
+                state.pan_y += wheel * speed;
+                clamp_pan(state, canvas_size.x, canvas_size.y);
+            } else if (ctrl && shift) {
+                // Ctrl+Shift+scroll → fast vertical pan
+                state.pan_y += wheel * speed;
                 clamp_pan(state, canvas_size.x, canvas_size.y);
             } else {
                 // Plain scroll → zoom toward cursor

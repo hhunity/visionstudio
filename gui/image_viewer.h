@@ -109,6 +109,9 @@ public:
     // Useful for very elongated images (e.g. line-scan) where the natural minimap
     // becomes too thin to be useful.
     float minimap_force_aspect = 0.0f;
+    // Pan speed in canvas pixels per scroll tick (Ctrl/Shift+scroll).
+    // Ctrl+Shift+scroll uses 5x this value for fast navigation of tall images.
+    float pan_speed = 32.0f;
 
 private:
     void create_texture(const image_data& img);

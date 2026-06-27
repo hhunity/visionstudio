@@ -63,6 +63,7 @@ public:
     bool        show_right_overlays  = true;
     bool        show_crosshair       = false;
     float       minimap_force_aspect = 0.0f;
+    float       pan_speed            = 32.0f;
     bool        sync_views           = true;
     bool        diff_mode            = false;
     float       diff_amplify         = 1.0f;

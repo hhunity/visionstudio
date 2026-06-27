@@ -547,6 +547,7 @@ int main(int argc, char** argv) {
     bool   ovg_show_ref   = false;
     double ovg_ref_a      = 0.0;
     double ovg_ref_b      = 0.0;
+    float  viewer_pan_speed = 32.0f;
     circle_ellipse_tool ce_tool;
     measure_tool        mt;
     remote_overlay_tool rot;
@@ -622,9 +623,16 @@ int main(int argc, char** argv) {
                     gd("ref_a",      ovg_ref_a);
                     gd("ref_b",      ovg_ref_b);
                 }
+                if (j.contains("viewer") && j["viewer"].is_object()) {
+                    const auto& vw = j["viewer"];
+                    if (vw.contains("pan_speed") && vw["pan_speed"].is_number())
+                        viewer_pan_speed = static_cast<float>(vw["pan_speed"].get<double>());
+                }
             } catch (...) {}
         }
     }
+    single_viewer.pan_speed = viewer_pan_speed;
+    compare.pan_speed       = viewer_pan_speed;
 
     capture_config                cap_cfg  = capture_config::load("visionstudio.json");
     std::optional<capture_client> cap_cli;
@@ -2572,6 +2580,7 @@ int main(int argc, char** argv) {
         }
         j["window"]    = {{"width", cur_w}, {"height", cur_h}};
         j["imgui_ini"] = imgui_ini;
+        j["viewer"]    = {{"pan_speed", viewer_pan_speed}};
         j["overlay_graph"] = {
             {"show_dx",    ovg_show_dx},
             {"show_dy",    ovg_show_dy},
