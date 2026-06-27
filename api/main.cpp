@@ -9,7 +9,11 @@
 #include "capture/capture_client.h"
 #include "util/capture_config.h"
 #include "gui/circle_ellipse_tool.h"
+#include "gui/log_panel.h"
 #include "gui/measure_tool.h"
+#include "gui/overlay_graph_panel.h"
+#include "gui/profile_panel.h"
+#include "gui/viewer_context.h"
 #include "gui/remote_overlay_tool.h"
 #include "gui/compare_viewer.h"
 #include "gui/image_viewer.h"
@@ -152,50 +156,6 @@ struct config_tab {
 };
 
 // ---------------------------------------------------------------------------
-// Log window
-// ---------------------------------------------------------------------------
-
-struct AppLog {
-    struct Entry { std::string text; bool is_error; };
-    std::vector<Entry> entries;
-    bool               scroll_to_bottom = true;
-
-    void add(const char* level, const char* msg) {
-        const auto now = std::chrono::system_clock::now();
-        const auto t   = std::chrono::system_clock::to_time_t(now);
-        const int  ms  = static_cast<int>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                now.time_since_epoch()).count() % 1000);
-        struct tm tm_info{};
-#ifdef _WIN32
-        localtime_s(&tm_info, &t);
-#else
-        localtime_r(&t, &tm_info);
-#endif
-        char tbuf[16];
-        std::strftime(tbuf, sizeof(tbuf), "%H:%M:%S", &tm_info);
-        char line[512];
-        std::snprintf(line, sizeof(line), "[%s.%03d] %-5s %s", tbuf, ms, level, msg);
-        entries.push_back({line, std::strcmp(level, "ERROR") == 0});
-        scroll_to_bottom = true;
-    }
-
-    void draw(const char* title, bool* p_open) {
-        if (!ImGui::Begin(title, p_open)) { ImGui::End(); return; }
-        if (ImGui::Button("Clear")) entries.clear();
-        ImGui::Separator();
-        ImGui::BeginChild("scrolling", {0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
-        for (const auto& e : entries) {
-            if (e.is_error) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
-            ImGui::TextUnformatted(e.text.c_str());
-            if (e.is_error) ImGui::PopStyleColor();
-        }
-        if (scroll_to_bottom) { ImGui::SetScrollHereY(1.0f); scroll_to_bottom = false; }
-        ImGui::EndChild();
-        ImGui::End();
-    }
-};
-
 // ---------------------------------------------------------------------------
 // Toggle switch widget (ImGui has no built-in)
 // ---------------------------------------------------------------------------
@@ -537,16 +497,9 @@ int main(int argc, char** argv) {
     char right_path_buf[512] = "";
     std::string status_msg;
     bool        show_pixel_panel      = true;
-    bool        show_profile_panel    = false;
-    bool        show_overlay_graph    = false;
-    // Overlay graph display settings (persisted in visionstudio.json)
-    bool   ovg_show_dx    = true;
-    bool   ovg_show_dy    = true;
-    bool   ovg_show_angle = true;
-    bool   ovg_show_fit   = true;
-    bool   ovg_show_ref   = false;
-    double ovg_ref_a      = 0.0;
-    double ovg_ref_b      = 0.0;
+    profile_panel       prof_panel;
+    overlay_graph_panel ovg_panel;
+    log_panel           app_log;
     float  viewer_pan_speed          = 32.0f;
     float  viewer_minimap_aspect     = 0.0f;
     circle_ellipse_tool ce_tool;
@@ -557,8 +510,6 @@ int main(int argc, char** argv) {
     bool        show_about            = false;
     bool        show_version          = false;
     std::string error_msg;
-    bool        show_log              = false;
-    AppLog      app_log;
     bool        show_settings         = false;
     bool        settings_fresh        = false;
     nlohmann::json settings_edit;
@@ -606,24 +557,13 @@ int main(int argc, char** argv) {
     config_tab capture_cfg_tab;   // capture_config_file
     config_tab connect_cfg_tab;   // connect_config_file
 
-    // Load overlay graph settings from visionstudio.json
+    // Load settings from visionstudio.json
     {
         std::ifstream jf("visionstudio.json");
         if (jf.is_open()) {
             try {
                 const auto j = nlohmann::json::parse(jf);
-                if (j.contains("overlay_graph") && j["overlay_graph"].is_object()) {
-                    const auto& og = j["overlay_graph"];
-                    auto gb = [&](const char* k, bool&   v){ if (og.contains(k) && og[k].is_boolean()) v = og[k]; };
-                    auto gd = [&](const char* k, double& v){ if (og.contains(k) && og[k].is_number())  v = og[k]; };
-                    gb("show_dx",    ovg_show_dx);
-                    gb("show_dy",    ovg_show_dy);
-                    gb("show_angle", ovg_show_angle);
-                    gb("show_fit",   ovg_show_fit);
-                    gb("show_ref",   ovg_show_ref);
-                    gd("ref_a",      ovg_ref_a);
-                    gd("ref_b",      ovg_ref_b);
-                }
+                ovg_panel.load_settings(j);
                 if (j.contains("viewer") && j["viewer"].is_object()) {
                     const auto& vw = j["viewer"];
                     if (vw.contains("pan_speed")      && vw["pan_speed"].is_number())
@@ -967,12 +907,12 @@ int main(int argc, char** argv) {
                 }
                 ImGui::Separator();
                 ImGui::MenuItem("Pixel Panel",      nullptr, &show_pixel_panel);
-                ImGui::MenuItem("Profile Panel",    nullptr, &show_profile_panel);
-                ImGui::MenuItem("Overlay Graph",    nullptr, &show_overlay_graph);
+                ImGui::MenuItem("Profile Panel",    nullptr, &prof_panel.visible);
+                ImGui::MenuItem("Overlay Graph",    nullptr, &ovg_panel.visible);
                 ImGui::MenuItem("Circle/Ellipse Overlay", nullptr, &ce_tool.visible);
                 ImGui::MenuItem("Measure Tool",           nullptr, &mt.visible);
                 ImGui::MenuItem("Remote Overlay",         nullptr, &rot.visible);
-                ImGui::MenuItem("Log",              nullptr, &show_log);
+                ImGui::MenuItem("Log",              nullptr, &app_log.visible);
                 ImGui::EndMenu();
             }
             if (ImGui::MenuItem("Settings")) {
@@ -1310,8 +1250,8 @@ int main(int argc, char** argv) {
             ImGui::TextDisabled("|");
             ImGui::SameLine();
             toggle_btn("Pixel",   show_pixel_panel);
-            toggle_btn("Profile", show_profile_panel);
-            toggle_btn("OvGraph", show_overlay_graph);
+            toggle_btn("Profile", prof_panel.visible);
+            toggle_btn("OvGraph", ovg_panel.visible);
             toggle_btn("Detect",  ce_tool.visible);
             toggle_btn("Measure", mt.visible);
             toggle_btn("Remote",  rot.visible);
@@ -1946,83 +1886,6 @@ int main(int argc, char** argv) {
                             rgba[0], rgba[1], rgba[2], rgba[3]);
         };
 
-        struct series_entry { const image_data* img; ImU32 color; int cursor; };
-
-        // draw_profile: renders a luminance profile using ImPlot.
-        //   vis_min/vis_max : when >= 0, the visible-range data is stretched across
-        //                     the full X axis and overlaid in yellow so you can compare
-        //                     detail against the overall shape.
-        auto draw_profile = [&](const char* plot_id, bool is_x, int fixed,
-                                std::initializer_list<series_entry> series,
-                                float gw, float gh,
-                                int vis_min = -1, int vis_max = -1) {
-            int total = 0;
-            for (const auto& s : series) {
-                if (s.img && !s.img->empty()) {
-                    total = is_x ? s.img->width : s.img->height;
-                    break;
-                }
-            }
-
-            const bool has_vis = vis_min >= 0 && vis_max > vis_min;
-
-            const ImPlotFlags plot_flags =
-                ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect | ImPlotFlags_NoMouseText;
-            constexpr ImPlotAxisFlags kAxFlags =
-                ImPlotAxisFlags_NoLabel | ImPlotAxisFlags_NoTickLabels;
-
-            if (ImPlot::BeginPlot(plot_id, {gw, gh}, plot_flags)) {
-                ImPlot::SetupAxes(nullptr, nullptr, kAxFlags, kAxFlags);
-                ImPlot::SetupAxisLimits(ImAxis_X1, 0, total > 1 ? total - 1 : 1, ImGuiCond_Always);
-                ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 255, ImGuiCond_Always);
-
-                int sidx = 0;
-                for (const auto& s : series) {
-                    if (!s.img || s.img->empty() || fixed < 0 || total <= 0) { ++sidx; continue; }
-                    const int n = is_x ? s.img->width : s.img->height;
-                    std::vector<float> ys(n);
-                    for (int i = 0; i < n; ++i) {
-                        const auto px = is_x ? s.img->pixel_at(i, fixed)
-                                             : s.img->pixel_at(fixed, i);
-                        ys[i] = 0.299f * px[0] + 0.587f * px[1] + 0.114f * px[2];
-                    }
-
-                    // Full-range line.
-                    char lbl[16]; snprintf(lbl, sizeof(lbl), "##lum%d", sidx);
-                    ImPlot::SetNextLineStyle(ImGui::ColorConvertU32ToFloat4(s.color), 1.0f);
-                    ImPlot::PlotLine(lbl, ys.data(), n);
-
-                    // Visible-range stretched overlay: extract vis slice and
-                    // scale its x positions to span 0..total-1 (same axis).
-                    if (has_vis) {
-                        const int v0 = std::max(0, vis_min);
-                        const int v1 = std::min(n - 1, vis_max);
-                        const int m  = v1 - v0 + 1;
-                        if (m > 1) {
-                            std::vector<float> vis_ys(ys.begin() + v0, ys.begin() + v1 + 1);
-                            // xscale maps m points to span [0 .. total-1].
-                            const double xscale = static_cast<double>(total - 1) / (m - 1);
-                            char vlbl[16]; snprintf(vlbl, sizeof(vlbl), "##vis%d", sidx);
-                            ImPlot::SetNextLineStyle(
-                                ImGui::ColorConvertU32ToFloat4(IM_COL32(255, 220, 60, 200)), 1.5f);
-                            ImPlot::PlotLine(vlbl, vis_ys.data(), m, xscale, 0.0);
-                        }
-                    }
-
-                    // Cursor: vertical red line at hover position.
-                    if (s.cursor >= 0 && s.cursor < n) {
-                        const double cx[2] = {(double)s.cursor, (double)s.cursor};
-                        const double cy[2] = {0.0, 255.0};
-                        char clbl[16]; snprintf(clbl, sizeof(clbl), "##cur%d", sidx);
-                        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.31f, 0.31f, 0.9f), 1.5f);
-                        ImPlot::PlotLine(clbl, cx, cy, 2);
-                    }
-                    ++sidx;
-                }
-                ImPlot::EndPlot();
-            }
-        };
-
         // ----- Resize handles -----
         if (imode == input_mode::remote_capture) {
             const float handle_x = viewer_origin.x - spacing_x * 0.5f - 2.0f;
@@ -2175,355 +2038,18 @@ int main(int argc, char** argv) {
             ImGui::EndChild();
         }
 
-        // ----- Profile panel (dockable) -----
-        if (show_profile_panel) {
-            ImGui::SetNextWindowSize({640.0f, 200.0f}, ImGuiCond_FirstUseEver);
-            if (ImGui::Begin("Profile##profile_panel", &show_profile_panel)) {
-            const float graph_h = ImGui::GetContentRegionAvail().y;
-            const float graph_w = (ImGui::GetContentRegionAvail().x
-                                   - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
-
-            if (use_single) {
-                const auto& hi    = single_viewer.get_hover_info();
-                const image_data* img = &single_viewer.get_image_data();
-                const int cx = hi.valid ? hi.img_x : -1;
-                const int cy = hi.valid ? hi.img_y : -1;
-                const auto& vs = single_viewer.get_view_state();
-                const int vis_x0 = static_cast<int>(-vs.pan_x / vs.zoom);
-                const int vis_x1 = static_cast<int>((-vs.pan_x + viewer_w) / vs.zoom);
-                const int vis_y0 = static_cast<int>(-vs.pan_y / vs.zoom);
-                const int vis_y1 = static_cast<int>((-vs.pan_y + viewer_h) / vs.zoom);
-                draw_profile("X Profile##xprof", true,  cy, {{img, IM_COL32(80, 200, 255, 220), cx}}, graph_w, graph_h, vis_x0, vis_x1);
-                ImGui::SameLine();
-                draw_profile("Y Profile##yprof", false, cx, {{img, IM_COL32(80, 200, 255, 220), cy}}, graph_w, graph_h, vis_y0, vis_y1);
-            } else {
-                const auto& hi    = compare.get_hover_info();
-                const image_data* li = &compare.get_left_image_data();
-                const image_data* ri = &compare.get_right_image_data();
-                const int cx = hi.valid ? hi.img_x : -1;
-                const int cy = hi.valid ? hi.img_y : -1;
-                const auto& vs = compare.get_view_state();
-                const int vis_x0 = static_cast<int>(-vs.pan_x / vs.zoom);
-                const int vis_x1 = static_cast<int>((-vs.pan_x + viewer_w * 0.5f) / vs.zoom);
-                const int vis_y0 = static_cast<int>(-vs.pan_y / vs.zoom);
-                const int vis_y1 = static_cast<int>((-vs.pan_y + viewer_h) / vs.zoom);
-                draw_profile("X Profile##xprof", true,  cy,
-                    {{li, IM_COL32(80, 200, 255, 220), cx},
-                     {ri, IM_COL32(255, 160,  60, 220), cx}}, graph_w, graph_h, vis_x0, vis_x1);
-                ImGui::SameLine();
-                draw_profile("Y Profile##yprof", false, cx,
-                    {{li, IM_COL32(80, 200, 255, 220), cy},
-                     {ri, IM_COL32(255, 160,  60, 220), cy}}, graph_w, graph_h, vis_y0, vis_y1);
-            }
-            } // if Begin
-            ImGui::End();
-        }
-
-        // ----- Overlay graph panel (dockable) -----
-        if (show_overlay_graph) {
-            ImGui::SetNextWindowSize({800.0f, 400.0f}, ImGuiCond_FirstUseEver);
-            if (ImGui::Begin("Overlay Graph##ovg_panel", &show_overlay_graph)) {
-            const float avail_w = ImGui::GetContentRegionAvail().x;
-
-            const std::vector<roi_group>* src  = use_single ? &overlays : &left_overlays;
-            const std::vector<uint8_t>*   gvis = nullptr;
-            {
-                image_viewer& ref = use_single ? single_viewer : compare.left_viewer_ref();
-                if (ref.overlay_group_count() == src->size())
-                    gvis = &ref.overlay_group_visibility;
-            }
-
-            if (src->empty()) {
-                ImGui::TextDisabled("No overlay loaded");
-            } else if (ImGui::BeginTabBar("##ovgtabs")) {
-                for (size_t gi = 0; gi < src->size(); ++gi) {
-                    if (gvis && (*gvis)[gi] == 0) continue;
-                    const auto& g = (*src)[gi];
-                    if (g.entries.empty()) continue;
-
-                    // Collect scatter data
-                    const int n = static_cast<int>(g.entries.size());
-                    std::vector<double> xs_col(n), xs_row(n), dxs(n), dys(n), angles(n);
-                    for (int i = 0; i < n; ++i) {
-                        const auto& e = g.entries[i];
-                        xs_col[i] = static_cast<double>(e.x);
-                        xs_row[i] = static_cast<double>(e.y);
-                        dxs[i]    = static_cast<double>(e.dx);
-                        dys[i]    = static_cast<double>(e.dy);
-                        angles[i] = static_cast<double>(e.angle);
-                    }
-
-                    char tab_id[128];
-                    std::snprintf(tab_id, sizeof(tab_id), "%s##ovgtab%zu", g.label.c_str(), gi);
-                    if (ImGui::BeginTabItem(tab_id)) {
-                        // y1/y2 fit: set to data range this frame when Auto Scale is pressed.
-                        bool   y1_force = false, y2_force = false;
-                        double y1_lo = 0.0, y1_hi = 0.0, y2_lo = 0.0, y2_hi = 0.0;
-
-                        // ---- Settings ----
-                        if (ImGui::CollapsingHeader("Settings##ovgs")) {
-                            ImGui::TextUnformatted("Series:");
-                            ImGui::SameLine();
-                            ImGui::Checkbox("dx##ovs",         &ovg_show_dx);
-                            ImGui::SameLine();
-                            ImGui::Checkbox("dy##ovs",         &ovg_show_dy);
-                            ImGui::SameLine();
-                            ImGui::Checkbox("angle##ovs",      &ovg_show_angle);
-                            ImGui::SameLine();
-                            ImGui::Checkbox("Regression##ovs", &ovg_show_fit);
-
-                            ImGui::Checkbox("Reference line##ovs", &ovg_show_ref);
-                            if (ovg_show_ref) {
-                                ImGui::SameLine();
-                                ImGui::TextUnformatted("  y =");
-                                ImGui::SameLine();
-                                ImGui::SetNextItemWidth(80);
-                                ImGui::InputDouble("##ovg_ra", &ovg_ref_a, 0.0, 0.0, "%.4f");
-                                ImGui::SameLine();
-                                ImGui::TextUnformatted("x +");
-                                ImGui::SameLine();
-                                ImGui::SetNextItemWidth(80);
-                                ImGui::InputDouble("##ovg_rb", &ovg_ref_b, 0.0, 0.0, "%.4f");
-                            }
-
-                            // Auto Scale buttons: compute data range and force-apply once
-                            auto fit_range = [&](const std::vector<double>& a,
-                                                 const std::vector<double>& b,
-                                                 bool use_a, bool use_b,
-                                                 double& lo, double& hi) -> bool {
-                                lo =  std::numeric_limits<double>::max();
-                                hi = -std::numeric_limits<double>::max();
-                                if (use_a && !a.empty()) {
-                                    lo = std::min(lo, *std::min_element(a.begin(), a.end()));
-                                    hi = std::max(hi, *std::max_element(a.begin(), a.end()));
-                                }
-                                if (use_b && !b.empty()) {
-                                    lo = std::min(lo, *std::min_element(b.begin(), b.end()));
-                                    hi = std::max(hi, *std::max_element(b.begin(), b.end()));
-                                }
-                                if (lo > hi) return false;
-                                const double pad = std::max((hi - lo) * 0.05, 1e-9);
-                                lo -= pad; hi += pad;
-                                return true;
-                            };
-
-                            ImGui::TextUnformatted("Y1 (dx/dy):");
-                            ImGui::SameLine();
-                            if (ImGui::Button("Auto Scale##y1"))
-                                y1_force = fit_range(dxs, dys, ovg_show_dx, ovg_show_dy, y1_lo, y1_hi);
-
-                            ImGui::TextUnformatted("Y2 (angle):");
-                            ImGui::SameLine();
-                            if (ImGui::Button("Auto Scale##y2"))
-                                y2_force = fit_range(angles, {}, ovg_show_angle, false, y2_lo, y2_hi);
-                        }
-
-                        const int stat_lines = (ovg_show_fit ? 2 : 0) + (ovg_show_ref ? 2 : 0);
-                        const float text_h = stat_lines > 0
-                            ? ImGui::GetTextLineHeightWithSpacing() * stat_lines + ImGui::GetStyle().ItemSpacing.y
-                            : 0.0f;
-                        const float plot_h = ImGui::GetContentRegionAvail().y - text_h;
-                        const float plot_w = (avail_w - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
-
-                        const ImPlotFlags pf = ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
-
-                        // Linear regression: returns {a, b} for y = a*x + b.
-                        auto linreg = [&](const std::vector<double>& xs,
-                                          const std::vector<double>& ys) -> std::pair<double,double> {
-                            const int m = static_cast<int>(xs.size());
-                            if (m < 2) return {0.0, ys.empty() ? 0.0 : ys[0]};
-                            double sx = 0, sy = 0, sxx = 0, sxy = 0;
-                            for (int i = 0; i < m; ++i) { sx += xs[i]; sy += ys[i]; sxx += xs[i]*xs[i]; sxy += xs[i]*ys[i]; }
-                            const double denom = m * sxx - sx * sx;
-                            if (std::abs(denom) < 1e-12) return {0.0, sy / m};
-                            const double a = (m * sxy - sx * sy) / denom;
-                            const double b = (sy - a * sx) / m;
-                            return {a, b};
-                        };
-
-                        // Reference line error statistics per series/axis.
-                        struct RefStat { double max_abs, mean, stddev; bool valid; };
-                        auto compute_ref_stat = [&](const std::vector<double>& xs,
-                                                    const std::vector<double>& ys) -> RefStat {
-                            if (!ovg_show_ref || n < 1) return {0, 0, 0, false};
-                            double sum = 0, sum_sq = 0, max_abs = 0;
-                            for (int i = 0; i < n; ++i) {
-                                const double e = ys[i] - (ovg_ref_a * xs[i] + ovg_ref_b);
-                                sum    += e;
-                                sum_sq += e * e;
-                                max_abs = std::max(max_abs, std::abs(e));
-                            }
-                            const double mean   = sum / n;
-                            const double stddev = std::sqrt(std::max(0.0, sum_sq / n - mean * mean));
-                            return {max_abs, mean, stddev, true};
-                        };
-                        const RefStat rs_col_dx = compute_ref_stat(xs_col, dxs);
-                        const RefStat rs_col_dy = compute_ref_stat(xs_col, dys);
-                        const RefStat rs_row_dx = compute_ref_stat(xs_row, dxs);
-                        const RefStat rs_row_dy = compute_ref_stat(xs_row, dys);
-
-                        // Pre-compute all regressions for formula display below plots.
-                        const auto [a_dx_col,  b_dx_col]  = linreg(xs_col, dxs);
-                        const auto [a_dy_col,  b_dy_col]  = linreg(xs_col, dys);
-                        const auto [a_ang_col, b_ang_col] = linreg(xs_col, angles);
-                        const auto [a_dx_row,  b_dx_row]  = linreg(xs_row, dxs);
-                        const auto [a_dy_row,  b_dy_row]  = linreg(xs_row, dys);
-                        const auto [a_ang_row, b_ang_row] = linreg(xs_row, angles);
-
-                        auto dual_scatter = [&](const char* title, const std::vector<double>& xs,
-                                                const char* xlabel,
-                                                double a_dx, double b_dx,
-                                                double a_dy, double b_dy,
-                                                double a_ang, double b_ang) {
-                            char pid[128];
-                            std::snprintf(pid, sizeof(pid), "%s##%zu", title, gi);
-
-                            // Opaque plot background so the panel doesn't look transparent.
-                            {
-                                const ImVec4 wbg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
-                                ImPlot::PushStyleColor(ImPlotCol_PlotBg, ImVec4(wbg.x, wbg.y, wbg.z, 1.0f));
-                            }
-                            if (ImPlot::BeginPlot(pid, {plot_w, plot_h}, pf)) {
-                                ImPlot::SetupAxes(xlabel, "dx / dy",
-                                                  ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_None);
-                                ImPlot::SetupAxis(ImAxis_Y2, "angle", ImPlotAxisFlags_None);
-                                if (y1_force)
-                                    ImPlot::SetupAxisLimits(ImAxis_Y1, y1_lo, y1_hi, ImGuiCond_Always);
-                                if (y2_force)
-                                    ImPlot::SetupAxisLimits(ImAxis_Y2, y2_lo, y2_hi, ImGuiCond_Always);
-
-                                // Scatter points
-                                if (ovg_show_dx) ImPlot::PlotScatter("dx", xs.data(), dxs.data(), n);
-                                if (ovg_show_dy) ImPlot::PlotScatter("dy", xs.data(), dys.data(), n);
-                                ImPlot::SetAxes(ImAxis_X1, ImAxis_Y2);
-                                if (ovg_show_angle) ImPlot::PlotScatter("angle", xs.data(), angles.data(), n);
-
-                                // Shared x range for fit and reference lines
-                                double xmin = 0.0, xmax = 0.0;
-                                if ((ovg_show_fit || ovg_show_ref) && n >= 2) {
-                                    xmin = *std::min_element(xs.begin(), xs.end());
-                                    xmax = *std::max_element(xs.begin(), xs.end());
-                                }
-
-                                // Linear regression lines
-                                if (ovg_show_fit && n >= 2) {
-                                    const double fit_xs[2] = {xmin, xmax};
-                                    auto plot_fit = [&](double a, double b, ImAxis yax,
-                                                        ImVec4 col, const char* lbl) {
-                                        const double fit_ys[2] = {a*xmin+b, a*xmax+b};
-                                        ImPlot::SetAxes(ImAxis_X1, yax);
-                                        ImPlot::SetNextLineStyle(col, 1.5f);
-                                        char lid[64];
-                                        std::snprintf(lid, sizeof(lid), "%s##fit_%s_%zu", lbl, lbl, gi);
-                                        ImPlot::PlotLine(lid, fit_xs, fit_ys, 2);
-                                    };
-                                    if (ovg_show_dx)    plot_fit(a_dx,  b_dx,  ImAxis_Y1, {0.4f, 0.8f, 1.0f, 0.8f}, "dx fit");
-                                    if (ovg_show_dy)    plot_fit(a_dy,  b_dy,  ImAxis_Y1, {0.4f, 1.0f, 0.5f, 0.8f}, "dy fit");
-                                    if (ovg_show_angle) plot_fit(a_ang, b_ang, ImAxis_Y2, {1.0f, 0.7f, 0.3f, 0.8f}, "angle fit");
-                                }
-
-                                // User reference line  y = ovg_ref_a * x + ovg_ref_b  (on Y1)
-                                // ImPlotItemFlags_NoFit keeps this line out of auto-fit
-                                // so the Y1 scale stays driven by the scatter data.
-                                if (ovg_show_ref && n >= 2) {
-                                    const double ref_xs[2] = {xmin, xmax};
-                                    const double ref_ys[2] = {ovg_ref_a*xmin + ovg_ref_b,
-                                                               ovg_ref_a*xmax + ovg_ref_b};
-                                    ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
-                                    ImPlot::SetNextLineStyle({1.0f, 0.9f, 0.0f, 1.0f}, 2.0f);
-                                    char rid[64];
-                                    std::snprintf(rid, sizeof(rid), "y=%.3fx%+.3f##ref_%zu",
-                                                  ovg_ref_a, ovg_ref_b, gi);
-                                    ImPlot::PlotLine(rid, ref_xs, ref_ys, 2, ImPlotItemFlags_NoFit);
-                                }
-
-                                // Nearest-point tooltip
-                                if (ImPlot::IsPlotHovered() && n > 0) {
-                                    const ImVec2 mp = ImGui::GetMousePos();
-                                    int nearest = -1, nearest_series = -1;
-                                    float best = 15.0f;
-                                    for (int i = 0; i < n; ++i) {
-                                        auto check = [&](double y, ImAxis ya, int sid) {
-                                            const ImVec2 pt = ImPlot::PlotToPixels(xs[i], y, ImAxis_X1, ya);
-                                            const float d = std::sqrt((pt.x-mp.x)*(pt.x-mp.x)+(pt.y-mp.y)*(pt.y-mp.y));
-                                            if (d < best) { best = d; nearest = i; nearest_series = sid; }
-                                        };
-                                        if (ovg_show_dx)    check(dxs[i],    ImAxis_Y1, 0);
-                                        if (ovg_show_dy)    check(dys[i],    ImAxis_Y1, 1);
-                                        if (ovg_show_angle) check(angles[i], ImAxis_Y2, 2);
-                                    }
-                                    if (nearest >= 0) {
-                                        const auto& e = g.entries[nearest];
-                                        ImGui::BeginTooltip();
-                                        ImGui::Text("x: %d  y: %d", e.x, e.y);
-                                        ImGui::Separator();
-                                        auto row_text = [&](const char* label, double val, bool highlight) {
-                                            if (highlight) ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 220, 60, 255));
-                                            ImGui::Text("%-6s %.6f", label, val);
-                                            if (highlight) ImGui::PopStyleColor();
-                                        };
-                                        if (ovg_show_dx)    row_text("dx:",    e.dx,    nearest_series == 0);
-                                        if (ovg_show_dy)    row_text("dy:",    e.dy,    nearest_series == 1);
-                                        if (ovg_show_angle) row_text("angle:", e.angle, nearest_series == 2);
-                                        ImGui::EndTooltip();
-                                    }
-                                }
-
-                                ImPlot::EndPlot();
-                            }
-                            ImPlot::PopStyleColor(); // ImPlotCol_PlotBg
-                        };
-
-                        if (plot_h > 1.0f && plot_w > 1.0f) {
-                            dual_scatter("Column", xs_col, "col",
-                                         a_dx_col, b_dx_col, a_dy_col, b_dy_col, a_ang_col, b_ang_col);
-                            ImGui::SameLine();
-                            dual_scatter("Row",    xs_row, "row",
-                                         a_dx_row, b_dx_row, a_dy_row, b_dy_row, a_ang_row, b_ang_row);
-                        } else {
-                            ImGui::TextDisabled("(enlarge panel to view plots)");
-                        }
-
-                        // Regression formulas displayed below the plots
-                        if (ovg_show_fit) {
-                            ImGui::TextColored({0.4f,0.8f,1.0f,1.0f}, "Col:");
-                            ImGui::SameLine(); ImGui::Text("dx=%.4fx%+.4f", a_dx_col,  b_dx_col);
-                            ImGui::SameLine(); ImGui::Text("  dy=%.4fx%+.4f", a_dy_col,  b_dy_col);
-                            ImGui::SameLine(); ImGui::TextColored({1.0f,0.7f,0.3f,1.0f},
-                                                                  "  angle=%.4fx%+.4f", a_ang_col, b_ang_col);
-
-                            ImGui::TextColored({0.4f,0.8f,1.0f,1.0f}, "Row:");
-                            ImGui::SameLine(); ImGui::Text("dx=%.4fx%+.4f", a_dx_row,  b_dx_row);
-                            ImGui::SameLine(); ImGui::Text("  dy=%.4fx%+.4f", a_dy_row,  b_dy_row);
-                            ImGui::SameLine(); ImGui::TextColored({1.0f,0.7f,0.3f,1.0f},
-                                                                  "  angle=%.4fx%+.4f", a_ang_row, b_ang_row);
-                        }
-
-                        // Reference line error statistics
-                        if (ovg_show_ref) {
-                            constexpr ImVec4 kRefCol = {1.0f, 0.9f, 0.0f, 1.0f};
-                            auto show_stat = [](const char* label, const RefStat& s) {
-                                ImGui::SameLine();
-                                ImGui::Text("%s max=%.4f  mean=%+.4f  σ=%.4f",
-                                            label, s.max_abs, s.mean, s.stddev);
-                            };
-                            ImGui::TextColored(kRefCol, "Ref Col:");
-                            if (ovg_show_dx) show_stat("dx:", rs_col_dx);
-                            if (ovg_show_dy) show_stat("dy:", rs_col_dy);
-
-                            ImGui::TextColored(kRefCol, "Ref Row:");
-                            if (ovg_show_dx) show_stat("dx:", rs_row_dx);
-                            if (ovg_show_dy) show_stat("dy:", rs_row_dy);
-                        }
-
-                        ImGui::EndTabItem();
-                    }
-                }
-                ImGui::EndTabBar();
-            }
-            } // if Begin
-            ImGui::End();
-        }
+        // ----- Floating panels -----
+        const viewer_context vctx{
+            use_single,
+            &single_viewer,
+            &compare,
+            viewer_w,
+            viewer_h,
+            &overlays,
+            &left_overlays,
+        };
+        prof_panel.render(vctx);
+        ovg_panel.render(vctx, single_viewer, compare);
 
         // Reset cursor to below viewer so the status bar sits correctly.
         ImGui::SetCursorScreenPos({viewer_origin.x, viewer_origin.y + viewer_h});
@@ -2560,8 +2086,7 @@ int main(int argc, char** argv) {
         }
 
         // ----- Log window -----
-        if (show_log)
-            app_log.draw("Log##log_win", &show_log);
+        app_log.render();
 
         // Render
         ImGui::Render();
@@ -2589,15 +2114,7 @@ int main(int argc, char** argv) {
         j["imgui_ini"] = imgui_ini;
         j["viewer"]    = {{"pan_speed", viewer_pan_speed},
                           {"minimap_aspect", viewer_minimap_aspect}};
-        j["overlay_graph"] = {
-            {"show_dx",    ovg_show_dx},
-            {"show_dy",    ovg_show_dy},
-            {"show_angle", ovg_show_angle},
-            {"show_fit",   ovg_show_fit},
-            {"show_ref",   ovg_show_ref},
-            {"ref_a",      ovg_ref_a},
-            {"ref_b",      ovg_ref_b},
-        };
+        j["overlay_graph"] = ovg_panel.save_settings();
         std::ofstream jf("visionstudio.json");
         if (jf.is_open()) jf << j.dump(2) << '\n';
     }
