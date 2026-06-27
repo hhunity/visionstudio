@@ -231,7 +231,9 @@ void image_viewer::render(const char* id, float width, float height,
     (void)active; // input handling checks internally
 
     // Update hover info before drawing so crosshair can use it.
-    if (hovered && !tiles_.empty()) {
+    // Suppress hover when the mouse is over the minimap so tools (e.g. measure)
+    // do not register minimap clicks as image-space events.
+    if (hovered && !tiles_.empty() && !minimap_hovered_) {
         const ImVec2 mouse = ImGui::GetIO().MousePos;
         const float fx = (mouse.x - canvas_pos.x - state->pan_x) / state->zoom;
         const float fy = (mouse.y - canvas_pos.y - state->pan_y) / state->zoom;
@@ -318,9 +320,17 @@ void image_viewer::handle_input(const ImVec2& canvas_pos, const ImVec2& canvas_s
         const ImVec2 mouse_pos = ImGui::GetIO().MousePos;
         const bool in_minimap = mouse_pos.x >= mx && mouse_pos.x <= mx + mw &&
                                  mouse_pos.y >= my && mouse_pos.y <= my + mh;
+        minimap_hovered_ = in_minimap && ImGui::IsItemHovered();
 
-        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && in_minimap && ImGui::IsItemHovered())
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && in_minimap && ImGui::IsItemHovered()) {
             minimap_dragging_ = true;
+            // Jump view so that the clicked minimap point is centered in the canvas.
+            const float img_x = (mouse_pos.x - mx) / mw * static_cast<float>(img_w_);
+            const float img_y = (mouse_pos.y - my) / mh * static_cast<float>(img_h_);
+            state.pan_x = canvas_size.x * 0.5f - img_x * state.zoom;
+            state.pan_y = canvas_size.y * 0.5f - img_y * state.zoom;
+            clamp_pan(state, canvas_size.x, canvas_size.y);
+        }
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
             minimap_dragging_ = false;
 

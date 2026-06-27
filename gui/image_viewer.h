@@ -152,6 +152,7 @@ private:
     float                  overlay_max_mag_ = 1.0f; // for color normalization
     hover_info             last_hover_;
     bool                   minimap_dragging_    = false;
+    bool                   minimap_hovered_     = false;
     int                    peer_crosshair_x_    = 0;
     int                    peer_crosshair_y_    = 0;
     bool                   peer_crosshair_valid_ = false;
