@@ -67,7 +67,6 @@ static void glfw_error_cb(int error, const char* desc) {
 
 struct app_state {
     view_mode*               vmode         = nullptr;
-    input_mode*              imode         = nullptr;
     image_viewer*            single_viewer = nullptr;
     compare_viewer*          compare       = nullptr;
     image_data*              left_image    = nullptr;
@@ -210,8 +209,6 @@ static bool has_ext(const char* path, const char* ext) {
 static void drop_callback(GLFWwindow* window, int count, const char** paths) {
     auto* app = static_cast<app_state*>(glfwGetWindowUserPointer(window));
 
-    // Remote capture mode does not accept file drops.
-    if (*app->imode == input_mode::remote_capture) return;
     if (*app->vmode == view_mode::none) return;
 
     switch (*app->vmode) {
@@ -506,7 +503,7 @@ int main(int argc, char** argv) {
     std::string            left_overlay_file;
     std::string            right_overlay_file;
 
-    app_state drop_state{&vmode, &imode,
+    app_state drop_state{&vmode,
                          &single_viewer, &compare,
                          &left_image, &right_image,
                          &status_msg,
@@ -547,6 +544,9 @@ int main(int argc, char** argv) {
     // Init panels
     std::vector<panel_base*> panels = {&cap_panel, &prof_panel, &ovg_panel, &app_log};
     for (auto* p : panels) p->init(&ctx);
+
+    // Capture panel is opt-in; show it only when --mode capture was passed.
+    cap_panel.visible = (imode == input_mode::remote_capture);
 
     // Apply diff flags from args (compare mode)
     if (vmode == view_mode::compare) {
@@ -590,8 +590,7 @@ int main(int argc, char** argv) {
 
         // Must run before any ImGui::Begin() so drag clamping takes effect
         // before ImGui processes window movement in the root window.
-        if (imode == input_mode::remote_capture)
-            for (auto* p : panels) p->pre_frame();
+        for (auto* p : panels) p->pre_frame();
 
         int fb_w, fb_h, win_w, win_h;
         glfwGetFramebufferSize(window, &fb_w, &fb_h);
@@ -607,19 +606,9 @@ int main(int argc, char** argv) {
                 ImGuiWindowFlags_NoDecoration    | ImGuiWindowFlags_NoMove        |
                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize |
                 ImGuiWindowFlags_NoNav);
-            if (!input_decided || imode == input_mode::read_img) {
-                ImGui::TextDisabled("Image File");
-                if (ImGui::Button("Single##img",  {120.0f, 40.0f})) { vmode = view_mode::single;  imode = input_mode::read_img; }
-                ImGui::SameLine();
-                if (ImGui::Button("Compare##img", {120.0f, 40.0f})) { vmode = view_mode::compare; imode = input_mode::read_img; }
-            }
-            if (!input_decided || imode == input_mode::remote_capture) {
-                if (!input_decided) ImGui::Spacing();
-                ImGui::TextDisabled("Remote Capture");
-                if (ImGui::Button("Single##cap",  {120.0f, 40.0f})) { vmode = view_mode::single;  imode = input_mode::remote_capture; }
-                ImGui::SameLine();
-                if (ImGui::Button("Compare##cap", {120.0f, 40.0f})) { vmode = view_mode::compare; imode = input_mode::remote_capture; }
-            }
+            if (ImGui::Button("Single",  {120.0f, 40.0f})) vmode = view_mode::single;
+            ImGui::SameLine();
+            if (ImGui::Button("Compare", {120.0f, 40.0f})) vmode = view_mode::compare;
             ImGui::End();
 
             ImGui::Render();
@@ -688,7 +677,7 @@ int main(int argc, char** argv) {
 
         // ----- Upload preview frame to GPU (remote capture mode) -----
         // SSE event polling is handled inside cap_panel.render() via poll_events().
-        if (imode == input_mode::remote_capture) {
+        if (cap_panel.visible) {
             preview_frame pf;
             if (cap_panel.poll_preview_frame(pf)) {
                 if (preview_tex == 0 || preview_tex_w != pf.w || preview_tex_h != pf.h) {
@@ -744,8 +733,7 @@ int main(int argc, char** argv) {
 
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("File")) {
-                if (imode == input_mode::read_img)
-                    if (ImGui::MenuItem("Open...")) open_file = true;
+                if (ImGui::MenuItem("Open...")) open_file = true;
                 ImGui::Separator();
                 if (ImGui::MenuItem("Quit")) glfwSetWindowShouldClose(window, GLFW_TRUE);
                 ImGui::EndMenu();
@@ -798,8 +786,7 @@ int main(int argc, char** argv) {
                     }
                 }
                 ImGui::Separator();
-                if (imode == input_mode::remote_capture)
-                    ImGui::MenuItem("Capture Panel", nullptr, &cap_panel.visible);
+                ImGui::MenuItem("Capture Panel", nullptr, &cap_panel.visible);
                 ImGui::MenuItem("Pixel Panel",      nullptr, &show_pixel_panel);
                 ImGui::MenuItem("Profile Panel",    nullptr, &prof_panel.visible);
                 ImGui::MenuItem("Overlay Graph",    nullptr, &ovg_panel.visible);
@@ -931,7 +918,7 @@ int main(int argc, char** argv) {
         }
 
         // ----- Connecting modal -----
-        if (imode == input_mode::remote_capture && cur_sse == sse_state::connecting)
+        if (cap_panel.visible && cur_sse == sse_state::connecting)
             ImGui::OpenPopup("Connecting##conn_modal");
         ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, {0.5f, 0.5f});
         if (ImGui::BeginPopupModal("Connecting##conn_modal", nullptr,
@@ -1143,8 +1130,7 @@ int main(int argc, char** argv) {
             }
             ImGui::TextDisabled("|");
             ImGui::SameLine();
-            if (imode == input_mode::remote_capture)
-                toggle_btn("Capture", cap_panel.visible);
+            toggle_btn("Capture", cap_panel.visible);
             toggle_btn("Pixel",   show_pixel_panel);
             toggle_btn("Profile", prof_panel.visible);
             toggle_btn("OvGraph", ovg_panel.visible);
@@ -1162,8 +1148,7 @@ int main(int argc, char** argv) {
         ctx.min_y = toolbar_bottom_y;
 
         // ----- Left capture control panel (floating) -----
-        if (imode == input_mode::remote_capture)
-            cap_panel.render();
+        cap_panel.render();
 
         ImGui::End(); // ##root
 
@@ -1186,7 +1171,7 @@ int main(int argc, char** argv) {
 
             const ImVec2 viewer_origin = ImGui::GetCursorScreenPos();
 
-        if (imode == input_mode::remote_capture && use_single && preview_tex != 0) {
+        if (cap_panel.visible && use_single && preview_tex != 0) {
             // Full-viewer live preview (single mode)
             const float aspect = static_cast<float>(preview_tex_w) / static_cast<float>(preview_tex_h);
             float dw = viewer_w, dh = viewer_w / aspect;
@@ -1289,7 +1274,7 @@ int main(int argc, char** argv) {
         }
 
         // For split/compare capture: overlay live preview on the right panel
-        if (imode == input_mode::remote_capture && !use_single && preview_tex != 0) {
+        if (cap_panel.visible && !use_single && preview_tex != 0) {
             const float spacing  = ImGui::GetStyle().ItemSpacing.x;
             const float half_w   = std::floor((viewer_w - spacing) * 0.5f);
             const ImVec2 rmin    = {viewer_origin.x + half_w + spacing, viewer_origin.y};
@@ -1310,7 +1295,7 @@ int main(int argc, char** argv) {
         {
             const bool has_guide = cap_cfg.basex >= 0 || cap_cfg.targetx >= 0
                                 || cap_cfg.starty >= 0 || cap_cfg.liney   >= 0;
-            if (has_guide && imode == input_mode::remote_capture && !cap_panel.is_preview_active()) {
+            if (has_guide && cap_panel.visible && !cap_panel.is_preview_active()) {
                 auto* dl = ImGui::GetWindowDrawList();
                 const ImU32 vcol = IM_COL32(255, 80,  80,  200);
                 const ImU32 hcol = IM_COL32( 80, 200, 255, 200);
@@ -1418,7 +1403,7 @@ int main(int argc, char** argv) {
             }
 
             // ----- Overlay file selector -----
-            if (imode == input_mode::read_img) {
+            {
                 ImGui::Separator();
                 ImGui::TextDisabled("Overlay");
 
