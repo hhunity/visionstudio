@@ -52,6 +52,9 @@ target_link_libraries(vs_io PUBLIC cpplib_io nlohmann_json::nlohmann_json)
 add_library(vs_gui STATIC
     gui/image_viewer.cpp
     gui/compare_viewer.cpp
+    gui/profile_panel.cpp
+    gui/overlay_graph_panel.cpp
+    gui/capture_panel.cpp
 )
 target_include_directories(vs_gui PUBLIC
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>
@@ -62,7 +65,11 @@ target_link_libraries(vs_gui PUBLIC
     OpenGL::GL
     glad::glad
     vs_io
+    vs_capture
     Threads::Threads
+    implot::implot
+    nlohmann_json::nlohmann_json
+    nfd::nfd
 )
 
 if(APPLE)

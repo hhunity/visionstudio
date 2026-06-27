@@ -7,13 +7,16 @@
 #include <imgui_stdlib.h>
 
 #include "capture/capture_client.h"
+#include "util/async_loader.h"
 #include "util/capture_config.h"
+#include "util/config_tab.h"
+#include "gui/app_types.h"
+#include "gui/capture_panel.h"
 #include "gui/circle_ellipse_tool.h"
 #include "gui/log_panel.h"
 #include "gui/measure_tool.h"
 #include "gui/overlay_graph_panel.h"
 #include "gui/profile_panel.h"
-#include "gui/viewer_context.h"
 #include "gui/remote_overlay_tool.h"
 #include "gui/compare_viewer.h"
 #include "gui/image_viewer.h"
@@ -57,60 +60,6 @@ static void glfw_error_cb(int error, const char* desc) {
 }
 
 // ---------------------------------------------------------------------------
-// Mode
-// ---------------------------------------------------------------------------
-
-enum class view_mode  { none, single, compare };
-enum class input_mode { read_img, remote_capture };
-
-// ---------------------------------------------------------------------------
-// Async loader
-// ---------------------------------------------------------------------------
-
-struct async_loader {
-    std::future<image_data> future;
-    std::atomic<float>      progress{0.0f};
-    std::atomic<bool>       cancel{false};
-    bool                    active = false;
-    std::string             path;
-
-    async_loader()                               = default;
-    async_loader(const async_loader&)            = delete;
-    async_loader& operator=(const async_loader&) = delete;
-
-    ~async_loader() {
-        cancel.store(true);
-        if (future.valid()) future.wait();
-    }
-
-    void start(std::string p) {
-        path = p;
-        progress.store(0.0f);
-        cancel.store(false);
-        active = true;
-        auto* prog = &progress;
-        future = std::async(std::launch::async, [p = std::move(p), prog]() {
-            image_data img;
-            const PixelFormat native = tiff_io::detect_format(p);
-            const PixelFormat fmt    = (native == PixelFormat::gray) ? PixelFormat::gray
-                                                                      : PixelFormat::rgba;
-            if (!tiff_io::read(p, img, prog, tiff_io::ReadOptions{.output_format = fmt}))
-                img.pixels.clear(); // ensure empty() == true so caller knows load failed
-            return img;
-        });
-    }
-
-    bool poll(image_data& out) {
-        if (!active) return false;
-        if (future.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
-            return false;
-        out    = future.get();
-        active = false;
-        return true;
-    }
-};
-
-// ---------------------------------------------------------------------------
 // App state shared with GLFW drop callback
 // ---------------------------------------------------------------------------
 
@@ -132,30 +81,6 @@ struct app_state {
     std::string*             right_overlay_file = nullptr; // compare right
 };
 
-// ---------------------------------------------------------------------------
-// Config tab — text file editor state (path, text content, modified flag).
-// ---------------------------------------------------------------------------
-
-struct config_tab {
-    std::string path;
-    std::string text;
-    bool        modified = false;
-
-    void load() {
-        std::ifstream f(path);
-        if (!f.is_open()) return;
-        text = std::string(std::istreambuf_iterator<char>(f), {});
-        modified = false;
-    }
-    void save() {
-        std::ofstream f(path);
-        if (!f.is_open()) return;
-        f << text;
-        modified = false;
-    }
-};
-
-// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Toggle switch widget (ImGui has no built-in)
 // ---------------------------------------------------------------------------
@@ -497,11 +422,13 @@ int main(int argc, char** argv) {
     char right_path_buf[512] = "";
     std::string status_msg;
     bool        show_pixel_panel      = true;
+    capture_panel       cap_panel;
     profile_panel       prof_panel;
     overlay_graph_panel ovg_panel;
     log_panel           app_log;
     float  viewer_pan_speed          = 32.0f;
     float  viewer_minimap_aspect     = 0.0f;
+    float  toolbar_bottom_y_cached   = 0.0f;  // previous frame's toolbar bottom Y
     circle_ellipse_tool ce_tool;
     measure_tool        mt;
     remote_overlay_tool rot;
@@ -531,29 +458,6 @@ int main(int argc, char** argv) {
     bool auto_detect       = true;
     std::string ref_img_path;
 
-    // Editable copies of connection settings (local to UI, applied on Save).
-    struct conn_edit {
-        char host[128];
-        int  port;
-        char connect_path[64];
-        char start_path[64];
-        char stop_path[64];
-        char disconnect_path[64];
-        char sse_path[64];
-        int  timeout_ms;
-    };
-    auto make_conn_edit = [](const capture_config& c) {
-        conn_edit e{};
-        std::strncpy(e.host,            c.host.c_str(),            sizeof(e.host) - 1);
-        e.port = c.port;
-        std::strncpy(e.connect_path,    c.connect_path.c_str(),    sizeof(e.connect_path) - 1);
-        std::strncpy(e.start_path,      c.start_path.c_str(),      sizeof(e.start_path) - 1);
-        std::strncpy(e.stop_path,       c.stop_path.c_str(),       sizeof(e.stop_path) - 1);
-        std::strncpy(e.disconnect_path, c.disconnect_path.c_str(), sizeof(e.disconnect_path) - 1);
-        std::strncpy(e.sse_path,        c.sse_path.c_str(),        sizeof(e.sse_path) - 1);
-        e.timeout_ms = c.timeout_ms;
-        return e;
-    };
     config_tab capture_cfg_tab;   // capture_config_file
     config_tab connect_cfg_tab;   // connect_config_file
 
@@ -580,8 +484,6 @@ int main(int argc, char** argv) {
     compare.minimap_force_aspect       = viewer_minimap_aspect;
 
     capture_config                cap_cfg  = capture_config::load("visionstudio.json");
-    std::optional<capture_client> cap_cli;
-    if (imode == input_mode::remote_capture) cap_cli.emplace(cap_cfg);
     conn_edit       conn_buf = make_conn_edit(cap_cfg);
 
     if (!cap_cfg.capture_config_file.empty()) {
@@ -611,9 +513,15 @@ int main(int argc, char** argv) {
                          &overlay_file, &left_overlay_file, &right_overlay_file};
     glfwSetWindowUserPointer(window, &drop_state);
 
-    // In remote capture mode launched via CLI, connect automatically.
-    if (imode == input_mode::remote_capture)
-        cap_cli->connect();
+    // Init panels with stable references (before the render loop).
+    cap_panel.init(&cur_sse, &capturing, &cap_cfg, &conn_buf, &capture_mode, &vmode,
+                   &image_acquisition, &live_image, &auto_detect, &ref_img_path,
+                   &left_loader, &show_camera_config, &show_connect_config,
+                   &capture_cfg_tab, &connect_cfg_tab, &compare, &cam_info, &cam_info_future,
+                   &preview_tex, &preview_tex_w, &preview_tex_h, &app_log,
+                   &right_loader);
+    prof_panel.init(&single_viewer, &compare, &overlays, &left_overlays);
+    ovg_panel.init(&single_viewer, &compare, &overlays, &left_overlays);
 
     // Apply diff flags from args (compare mode)
     if (vmode == view_mode::compare) {
@@ -626,7 +534,6 @@ int main(int argc, char** argv) {
         left_loader.start(arg_images[0]);
         if (arg_images.size() >= 2 && vmode == view_mode::compare)
             right_loader.start(arg_images[1]);
-        status_msg = "Loading...";
     }
 
     // Load overlay JSON from CLI args
@@ -656,6 +563,11 @@ int main(int argc, char** argv) {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
+        // Must run before any ImGui::Begin() so drag clamping takes effect
+        // before ImGui processes window movement in the root window.
+        if (imode == input_mode::remote_capture)
+            cap_panel.clamp_drag_pre_frame();
+
         int fb_w, fb_h, win_w, win_h;
         glfwGetFramebufferSize(window, &fb_w, &fb_h);
         glfwGetWindowSize(window, &win_w, &win_h);
@@ -679,9 +591,9 @@ int main(int argc, char** argv) {
             if (!input_decided || imode == input_mode::remote_capture) {
                 if (!input_decided) ImGui::Spacing();
                 ImGui::TextDisabled("Remote Capture");
-                if (ImGui::Button("Single##cap",  {120.0f, 40.0f})) { vmode = view_mode::single;  imode = input_mode::remote_capture; cap_cli.emplace(cap_cfg); }
+                if (ImGui::Button("Single##cap",  {120.0f, 40.0f})) { vmode = view_mode::single;  imode = input_mode::remote_capture; }
                 ImGui::SameLine();
-                if (ImGui::Button("Compare##cap", {120.0f, 40.0f})) { vmode = view_mode::compare; imode = input_mode::remote_capture; cap_cli.emplace(cap_cfg); }
+                if (ImGui::Button("Compare##cap", {120.0f, 40.0f})) { vmode = view_mode::compare; imode = input_mode::remote_capture; }
             }
             ImGui::End();
 
@@ -701,8 +613,8 @@ int main(int argc, char** argv) {
             image_data tmp;
             if (left_loader.poll(tmp)) {
                 if (tmp.empty()) {
-                    error_msg  = "Failed to open:\n" + left_loader.path;
-                    status_msg = "Load failed: " + left_loader.path;
+                    error_msg = "Failed to open:\n" + left_loader.path;
+                    app_log.add("ERROR", ("Load failed: " + left_loader.path).c_str());
                 } else {
                     left_image = std::move(tmp);
                     switch (vmode) {
@@ -718,18 +630,18 @@ int main(int argc, char** argv) {
                     }
                     rot.set_image_path(left_loader.path);
                     if (!right_loader.active)
-                        status_msg = "Loaded: " + left_loader.path;
+                        app_log.add("INFO", ("Loaded: " + left_loader.path).c_str());
                 }
             }
             if (right_loader.poll(tmp)) {
                 if (tmp.empty()) {
-                    error_msg  = "Failed to open:\n" + right_loader.path;
-                    status_msg = "Load failed: " + right_loader.path;
+                    error_msg = "Failed to open:\n" + right_loader.path;
+                    app_log.add("ERROR", ("Load failed: " + right_loader.path).c_str());
                 } else {
                     right_image = std::move(tmp);
                     compare.load_right(right_image);
                     compare.right_label = right_loader.path;
-                    status_msg          = "Loaded";
+                    app_log.add("INFO", ("Loaded (right): " + right_loader.path).c_str());
                 }
             }
         }
@@ -745,61 +657,15 @@ int main(int argc, char** argv) {
                     left_overlays = remote_groups;
                     compare.set_left_overlay_groups(std::move(remote_groups));
                 }
-                status_msg = "Remote overlay loaded";
+                app_log.add("INFO", "Remote overlay loaded");
             }
         }
 
-        // ----- Poll capture events (SSE) -----
+        // ----- Upload preview frame to GPU (remote capture mode) -----
+        // SSE event polling is handled inside cap_panel.render() via poll_events().
         if (imode == input_mode::remote_capture) {
-            while (auto ev = cap_cli->poll_server_event()) {
-                if (std::get_if<evt_connected>(&*ev)) {
-                    cur_sse    = sse_state::connected;
-                    status_msg = "Connected";
-                    app_log.add("INFO", "Connected to server");
-                } else if (std::get_if<evt_disconnected>(&*ev)) {
-                    cur_sse    = sse_state::disconnected;
-                    capturing  = false;
-                    status_msg = "Server disconnected";
-                    app_log.add("INFO", "Server disconnected");
-                } else if (auto* e = std::get_if<evt_error>(&*ev)) {
-                    cur_sse    = sse_state::error;
-                    status_msg = "Server error: " + e->message;
-                    app_log.add("ERROR", ("Server error: " + e->message).c_str());
-                } else if (auto* e = std::get_if<evt_capture_done>(&*ev)) {
-                    capturing = false;
-                    if (capture_mode == 0) {
-                        single_viewer.unload_image();
-                        left_loader.start(e->path);
-                    } else if (capture_mode == 1) {
-                        compare.unload_left();
-                        compare.unload_right();
-                        left_loader.start(e->path);
-                    } else {
-                        // mode 2: keep left as reference, replace right only
-                        compare.unload_right();
-                        right_loader.start(e->path);
-                    }
-                    status_msg = "Capture complete: " + e->path;
-                    app_log.add("INFO", ("Capture done: " + e->path).c_str());
-                } else if (auto* e = std::get_if<evt_config_updated>(&*ev)) {
-                    cap_cfg    = e->cfg;
-                    conn_buf   = make_conn_edit(cap_cfg);
-                    capture_config::save("visionstudio.json", cap_cfg);
-                    status_msg = "Config updated by server";
-                    app_log.add("INFO", "Config updated by server");
-                } else if (auto* e = std::get_if<evt_camera_info>(&*ev)) {
-                    cam_info = std::move(e->groups);
-                }
-            }
-
-            // ----- Poll camera info future (Refresh button) -----
-            if (cam_info_future.valid() &&
-                cam_info_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
-                cam_info = cam_info_future.get();
-
-            // ----- Upload preview frame to GPU -----
             preview_frame pf;
-            if (cap_cli->poll_preview_frame(pf)) {
+            if (cap_panel.poll_preview_frame(pf)) {
                 if (preview_tex == 0 || preview_tex_w != pf.w || preview_tex_h != pf.h) {
                     if (preview_tex == 0) glGenTextures(1, &preview_tex);
                     glBindTexture(GL_TEXTURE_2D, preview_tex);
@@ -822,10 +688,11 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Full-screen DockSpace (transparent, behind everything)
+        // DockSpace starting below the toolbar so snap previews don't overlap it.
         {
-            ImGui::SetNextWindowPos({0.0f, 0.0f});
-            ImGui::SetNextWindowSize({static_cast<float>(win_w), static_cast<float>(win_h)});
+            const float dock_y = toolbar_bottom_y_cached > 0.0f ? toolbar_bottom_y_cached : 0.0f;
+            ImGui::SetNextWindowPos({0.0f, dock_y});
+            ImGui::SetNextWindowSize({static_cast<float>(win_w), static_cast<float>(win_h) - dock_y});
             ImGui::SetNextWindowBgAlpha(0.0f);
             constexpr ImGuiWindowFlags kDockFlags =
                 ImGuiWindowFlags_NoTitleBar         | ImGuiWindowFlags_NoCollapse     |
@@ -906,6 +773,8 @@ int main(int argc, char** argv) {
                     }
                 }
                 ImGui::Separator();
+                if (imode == input_mode::remote_capture)
+                    ImGui::MenuItem("Capture Panel", nullptr, &cap_panel.visible);
                 ImGui::MenuItem("Pixel Panel",      nullptr, &show_pixel_panel);
                 ImGui::MenuItem("Profile Panel",    nullptr, &prof_panel.visible);
                 ImGui::MenuItem("Overlay Graph",    nullptr, &ovg_panel.visible);
@@ -950,7 +819,7 @@ int main(int argc, char** argv) {
                         right_loader.start(right_path_buf);
                     }
                     NFD::PathSet::Free(pathset);
-                    status_msg = "Loading...";
+                    app_log.add("INFO", "Loading...");
                 }
             } else {
                 nfdchar_t* out = nullptr;
@@ -958,7 +827,7 @@ int main(int argc, char** argv) {
                     std::strncpy(left_path_buf, out, sizeof(left_path_buf) - 1);
                     NFD::FreePath(out);
                     left_loader.start(left_path_buf);
-                    status_msg = "Loading...";
+                    app_log.add("INFO", "Loading...");
                 }
             }
         }
@@ -1051,7 +920,7 @@ int main(int argc, char** argv) {
             ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x - 120.0f) * 0.5f +
                                   ImGui::GetCursorPosX());
             if (ImGui::Button("Cancel", {120, 0})) {
-                cap_cli->disconnect();
+                cap_panel.cancel_connect();
                 ImGui::CloseCurrentPopup();
             }
             if (cur_sse != sse_state::connecting)
@@ -1249,6 +1118,8 @@ int main(int argc, char** argv) {
             }
             ImGui::TextDisabled("|");
             ImGui::SameLine();
+            if (imode == input_mode::remote_capture)
+                toggle_btn("Capture", cap_panel.visible);
             toggle_btn("Pixel",   show_pixel_panel);
             toggle_btn("Profile", prof_panel.visible);
             toggle_btn("OvGraph", ovg_panel.visible);
@@ -1259,445 +1130,31 @@ int main(int argc, char** argv) {
         }
 
         // ----- Viewer area -----
-        const float status_h      = ImGui::GetFrameHeightWithSpacing();
-        const float total_avail_h = ImGui::GetContentRegionAvail().y;
-        const float viewer_h      = total_avail_h - status_h;
+        const float toolbar_bottom_y  = ImGui::GetCursorScreenPos().y;
+        toolbar_bottom_y_cached = toolbar_bottom_y;  // used next frame for dockspace origin
 
-        static float    panel_w         = 240.0f;  // right pixel panel (resizable)
-        static float    capture_panel_w = 180.0f;  // left capture control panel (resizable)
-        const float spacing_x = ImGui::GetStyle().ItemSpacing.x;
-        const float avail_x   = ImGui::GetContentRegionAvail().x;
+        // ----- Left capture control panel (floating) -----
+        if (imode == input_mode::remote_capture)
+            cap_panel.render(toolbar_bottom_y);
 
-        const float left_w  = (imode == input_mode::remote_capture) ? capture_panel_w + spacing_x : 0.0f;
-        const float right_w = show_pixel_panel ? panel_w + spacing_x : 0.0f;
-        const float viewer_w = (left_w > 0.0f || right_w > 0.0f)
-            ? avail_x - left_w - right_w
-            : 0.0f;
+        ImGui::End(); // ##root
 
-        // ----- Left capture control panel -----
-        if (imode == input_mode::remote_capture) {
-            if (ImGui::BeginChild("##capture_ctrl", {capture_panel_w, viewer_h},
-                                  ImGuiChildFlags_Borders)) {
-                // SSE status indicator
-                const char* sse_label = "";
-                ImVec4      sse_col   = {1, 1, 1, 1};
-                switch (cur_sse) {
-                case sse_state::disconnected:
-                    sse_label = "Disconnected"; sse_col = {0.6f, 0.6f, 0.6f, 1}; break;
-                case sse_state::connecting:
-                    sse_label = "Connecting..."; sse_col = {1, 0.8f, 0, 1};      break;
-                case sse_state::connected:
-                    sse_label = "Connected";    sse_col = {0.2f, 1, 0.4f, 1};   break;
-                case sse_state::error:
-                    sse_label = "Error";        sse_col = {1, 0.3f, 0.3f, 1};   break;
-                }
-                ImGui::TextColored(sse_col, "SSE: %s", sse_label);
-                ImGui::Separator();
+        // ----- Viewer floating window -----
+        ImGui::SetNextWindowPos({0.0f, toolbar_bottom_y_cached}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(
+            {static_cast<float>(win_w) * 0.75f,
+             static_cast<float>(win_h) - toolbar_bottom_y_cached},
+            ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("Viewer##viewer_win", nullptr)) {
+            static float panel_w  = 240.0f;
+            const float spacing_x = ImGui::GetStyle().ItemSpacing.x;
+            const float avail_x   = ImGui::GetContentRegionAvail().x;
+            const float avail_h   = ImGui::GetContentRegionAvail().y;
+            const float right_w   = show_pixel_panel ? panel_w + spacing_x : 0.0f;
+            const float viewer_w  = right_w > 0.0f ? avail_x - right_w : avail_x;
+            const float viewer_h  = avail_h;
 
-                // Connection settings (collapsible)
-                ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4{0.35f, 0.35f, 0.35f, 1.0f});
-                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4{0.45f, 0.45f, 0.45f, 1.0f});
-                ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4{0.28f, 0.28f, 0.28f, 1.0f});
-                const bool conn_open = ImGui::CollapsingHeader("Connect Settings");
-                ImGui::PopStyleColor(3);
-                if (conn_open) {
-                    ImGui::BeginDisabled(cur_sse == sse_state::connected);
-                    bool conn_changed = false;
-                    const float label_col_w = ImGui::CalcTextSize("Timeout(ms)").x
-                                           + ImGui::GetStyle().ItemSpacing.x;
-                    auto labeled = [&](const char* label, auto fn) {
-                        ImGui::TableNextRow();
-                        ImGui::TableSetColumnIndex(0);
-                        ImGui::AlignTextToFramePadding();
-                        ImGui::TextDisabled("%s", label);
-                        ImGui::TableSetColumnIndex(1);
-                        ImGui::SetNextItemWidth(-1);
-                        if (fn()) conn_changed = true;
-                    };
-                    constexpr ImGuiTableFlags kTblFlags = ImGuiTableFlags_None;
-                    if (ImGui::BeginTable("##conn_host", 2, kTblFlags)) {
-                        ImGui::TableSetupColumn("##lbl1", ImGuiTableColumnFlags_WidthFixed, label_col_w);
-                        ImGui::TableSetupColumn("##val1", ImGuiTableColumnFlags_WidthStretch);
-                        labeled("Host", [&]{ return ImGui::InputText("##host", conn_buf.host, sizeof(conn_buf.host)); });
-                        labeled("Port", [&]{ return ImGui::InputInt ("##port", &conn_buf.port, 0); });
-                        ImGui::EndTable();
-                    }
-                    ImGui::Separator();
-                    if (ImGui::BeginTable("##conn_paths", 2, kTblFlags)) {
-                        ImGui::TableSetupColumn("##lbl2", ImGuiTableColumnFlags_WidthFixed, label_col_w);
-                        ImGui::TableSetupColumn("##val2", ImGuiTableColumnFlags_WidthStretch);
-                        labeled("Connect",    [&]{ return ImGui::InputText("##conn_path",  conn_buf.connect_path,    sizeof(conn_buf.connect_path)); });
-                        labeled("Start",      [&]{ return ImGui::InputText("##start_path", conn_buf.start_path,      sizeof(conn_buf.start_path)); });
-                        labeled("Stop",       [&]{ return ImGui::InputText("##stop_path",  conn_buf.stop_path,       sizeof(conn_buf.stop_path)); });
-                        labeled("Disconnect", [&]{ return ImGui::InputText("##disc_path",  conn_buf.disconnect_path, sizeof(conn_buf.disconnect_path)); });
-                        labeled("SSE",        [&]{ return ImGui::InputText("##sse_path",   conn_buf.sse_path,        sizeof(conn_buf.sse_path)); });
-                        labeled("Timeout(ms)",[&]{ return ImGui::InputInt ("##timeout",    &conn_buf.timeout_ms,     0); });
-                        ImGui::EndTable();
-                    }
-                    if (conn_changed) {
-                        cap_cfg.host            = conn_buf.host;
-                        cap_cfg.port            = conn_buf.port;
-                        cap_cfg.connect_path    = conn_buf.connect_path;
-                        cap_cfg.start_path      = conn_buf.start_path;
-                        cap_cfg.stop_path       = conn_buf.stop_path;
-                        cap_cfg.disconnect_path = conn_buf.disconnect_path;
-                        cap_cfg.sse_path        = conn_buf.sse_path;
-                        cap_cfg.timeout_ms      = conn_buf.timeout_ms;
-                        capture_config::save("visionstudio.json", cap_cfg);
-                    }
-                    if (!connect_cfg_tab.path.empty()) {
-                        ImGui::Separator();
-                        ImGui::TextDisabled("Connect Config File");
-                        const auto& p   = connect_cfg_tab.path;
-                        const auto  pos = p.find_last_of("/\\");
-                        const std::string fname = (pos == std::string::npos) ? p : p.substr(pos + 1);
-                        if (ImGui::Button(fname.c_str(), {-1, 0}))
-                            show_connect_config = true;
-                    }
-                    ImGui::EndDisabled();
-                }
-                ImGui::Separator();
-
-                // Connection buttons (blue)
-                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.15f, 0.45f, 0.75f, 1.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.22f, 0.58f, 0.90f, 1.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.10f, 0.32f, 0.55f, 1.0f});
-                ImGui::BeginDisabled(cur_sse != sse_state::disconnected &&
-                                     cur_sse != sse_state::error);
-                if (ImGui::Button("Connect", {-1, 0})) {
-                    cap_cli->connect();
-                    status_msg = "Connecting...";
-                }
-                ImGui::EndDisabled();
-
-                ImGui::BeginDisabled(cur_sse != sse_state::connected);
-                if (ImGui::Button("Disconnect", {-1, 0})) {
-                    cap_cli->disconnect();
-                    capturing  = false;
-                    status_msg = "Disconnecting...";
-                }
-                ImGui::EndDisabled();
-                ImGui::PopStyleColor(3);
-                ImGui::Separator();
-
-                // Capture Settings (collapsible)
-                // In debug builds, always accessible; in release, requires connection.
-#ifndef NDEBUG
-                constexpr bool cap_settings_disabled = false;
-#else
-                const bool cap_settings_disabled = cur_sse != sse_state::connected;
-#endif
-                ImGui::BeginDisabled(cap_settings_disabled);
-                ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4{0.35f, 0.35f, 0.35f, 1.0f});
-                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4{0.45f, 0.45f, 0.45f, 1.0f});
-                ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4{0.28f, 0.28f, 0.28f, 1.0f});
-                const bool cap_settings_open = ImGui::CollapsingHeader("Capture Settings");
-                ImGui::PopStyleColor(3);
-                if (cap_settings_open) {
-                    constexpr const char* kCaptureModes[] = {"Single", "Compare", "Compare (keep left)"};
-                    ImGui::TextDisabled("View Mode");
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                    const int prev_cap_mode = capture_mode;
-                    if (ImGui::Combo("##cap_mode", &capture_mode, kCaptureModes, 3)) {
-                        if (prev_cap_mode == 1 && capture_mode == 0) {
-                            ref_img_path.clear();
-                            compare.unload_left();
-                        }
-                        vmode = capture_mode == 0 ? view_mode::single : view_mode::compare;
-                    }
-                    ImGui::Separator();
-
-                    if (ImGui::BeginTable("##sw_table", 2, ImGuiTableFlags_None)) {
-                        const float sw_lbl_w = ImGui::CalcTextSize("Image Acquisition").x
-                                             + ImGui::GetStyle().ItemSpacing.x;
-                        ImGui::TableSetupColumn("##sw_lbl", ImGuiTableColumnFlags_WidthFixed, sw_lbl_w);
-                        ImGui::TableSetupColumn("##sw_val", ImGuiTableColumnFlags_WidthFixed);
-                        auto sw_row = [&](const char* label, const char* id, bool* val) {
-                            ImGui::TableNextRow();
-                            ImGui::TableSetColumnIndex(0);
-                            ImGui::AlignTextToFramePadding();
-                            ImGui::TextDisabled("%s", label);
-                            ImGui::TableSetColumnIndex(1);
-                            toggle_switch(id, val);
-                        };
-                        sw_row("Image Acquisition", "##acq",  &image_acquisition);
-                        sw_row("Live Image",        "##live", &live_image);
-                        sw_row("Auto Detect",       "##ad",   &auto_detect);
-                        ImGui::EndTable();
-                    }
-
-                    ImGui::BeginDisabled(vmode != view_mode::compare);
-                    ImGui::TextDisabled("Ref Img");
-                    {
-                        const auto pos = ref_img_path.find_last_of("/\\");
-                        const std::string fname = ref_img_path.empty()
-                            ? "(none)"
-                            : (pos == std::string::npos ? ref_img_path : ref_img_path.substr(pos + 1));
-                        if (ImGui::Button(fname.c_str(), {-1, 0})) {
-                            constexpr nfdfilteritem_t kTiffFilter[] = {{"TIFF Image", "tiff,tif"}};
-                            nfdchar_t* out = nullptr;
-                            if (NFD::OpenDialog(out, kTiffFilter, 1) == NFD_OKAY) {
-                                ref_img_path = out;
-                                NFD::FreePath(out);
-                                left_loader.start(ref_img_path);
-                                status_msg = "Loading...";
-                            }
-                        }
-                    }
-                    ImGui::EndDisabled();
-
-                    // Guide lines
-                    ImGui::Separator();
-                    ImGui::TextDisabled("Guide Lines  (-1 = off)");
-                    if (ImGui::BeginTable("##guide_table", 2, ImGuiTableFlags_None)) {
-                        const float gl_lbl_w = ImGui::CalcTextSize("targetx").x
-                                             + ImGui::GetStyle().ItemSpacing.x;
-                        ImGui::TableSetupColumn("##gl_lbl", ImGuiTableColumnFlags_WidthFixed, gl_lbl_w);
-                        ImGui::TableSetupColumn("##gl_val", ImGuiTableColumnFlags_WidthStretch);
-                        auto gl_row = [&](const char* label, const char* id, int* val) {
-                            ImGui::TableNextRow();
-                            ImGui::TableSetColumnIndex(0);
-                            ImGui::AlignTextToFramePadding();
-                            ImGui::TextDisabled("%s", label);
-                            ImGui::TableSetColumnIndex(1);
-                            ImGui::SetNextItemWidth(-1);
-                            if (ImGui::InputInt(id, val, 0))
-                                capture_config::save("visionstudio.json", cap_cfg);
-                        };
-                        gl_row("basex",   "##basex",   &cap_cfg.basex);
-                        gl_row("targetx", "##targetx", &cap_cfg.targetx);
-                        gl_row("starty",  "##starty",  &cap_cfg.starty);
-                        gl_row("liney",   "##liney",   &cap_cfg.liney);
-                        ImGui::EndTable();
-                    }
-
-                    // Capture config files: path + browse + edit modal
-                    ImGui::Separator();
-                    ImGui::TextDisabled("Capture Config Files");
-                    const float fw = ImGui::GetContentRegionAvail().x;
-                    if (!capture_cfg_tab.path.empty()) {
-                        const auto& fpath = capture_cfg_tab.path;
-                        const auto  pos   = fpath.find_last_of("/\\");
-                        const std::string fname = (pos == std::string::npos) ? fpath : fpath.substr(pos + 1);
-                        if (ImGui::Button(fname.c_str(), {-1, 0}))
-                            show_camera_config = true;
-                    }
-                }
-                ImGui::EndDisabled();
-                ImGui::Separator();
-
-                // Capture buttons
-                ImGui::BeginDisabled(cur_sse != sse_state::connected || capturing);
-                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.18f, 0.55f, 0.18f, 1.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.25f, 0.70f, 0.25f, 1.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.12f, 0.40f, 0.12f, 1.0f});
-                if (ImGui::Button("Start Capture", {-1, 0})) {
-                    cap_cli->start_capture();
-                    capturing  = true;
-                    status_msg = "Capture started";
-                }
-                ImGui::PopStyleColor(3);
-                ImGui::EndDisabled();
-
-                ImGui::BeginDisabled(cur_sse != sse_state::connected || !capturing);
-                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4{0.60f, 0.15f, 0.15f, 1.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.78f, 0.20f, 0.20f, 1.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4{0.45f, 0.10f, 0.10f, 1.0f});
-                if (ImGui::Button("Stop Capture", {-1, 0})) {
-                    cap_cli->stop_capture();
-                    capturing  = false;
-                    status_msg = "Capture stopped";
-                }
-                ImGui::PopStyleColor(3);
-                ImGui::EndDisabled();
-
-                // Preview
-                ImGui::Separator();
-                const bool preview_on = cap_cli->is_preview_active();
-                ImGui::BeginDisabled(preview_on);
-                if (ImGui::Checkbox("Raw", &cap_cfg.preview_raw)) {
-                    capture_config::save("visionstudio.json", cap_cfg);
-                }
-                ImGui::EndDisabled();
-                ImGui::BeginDisabled(cur_sse != sse_state::connected);
-                if (!preview_on) {
-                    if (ImGui::Button("Start Preview", {-1, 0})) {
-                        if (preview_tex != 0) {
-                            glDeleteTextures(1, &preview_tex);
-                            preview_tex   = 0;
-                            preview_tex_w = 0;
-                            preview_tex_h = 0;
-                        }
-                        cap_cli->start_preview();
-                        status_msg = "Preview started";
-                    }
-                } else {
-                    if (ImGui::Button("Stop Preview", {-1, 0})) {
-                        cap_cli->stop_preview();
-                        status_msg = "Preview stopped";
-                    }
-                }
-                ImGui::EndDisabled();
-            }
-
-            // ----- Camera Info -----
-            ImGui::Separator();
-            static std::string cam_edit_key;
-            static char        cam_edit_buf[256] = {};
-            static bool        cam_edit_focus    = false;
-
-            ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4{0.35f, 0.35f, 0.35f, 1.0f});
-            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4{0.45f, 0.45f, 0.45f, 1.0f});
-            ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4{0.28f, 0.28f, 0.28f, 1.0f});
-            const bool cam_info_open = ImGui::CollapsingHeader("Camera Info");
-            ImGui::PopStyleColor(3);
-            if (cam_info_open) {
-                const bool fetching = cam_info_future.valid() &&
-                    cam_info_future.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
-                ImGui::BeginDisabled(fetching || cur_sse != sse_state::connected);
-                if (ImGui::SmallButton(fetching ? "Fetching..." : "Refresh Info")) {
-                    cam_info_future = std::async(std::launch::async,
-                        [&cap_cli]{ return cap_cli->fetch_camera_info(); });
-                }
-                ImGui::EndDisabled();
-
-            for (auto& g : cam_info) {
-                if (ImGui::CollapsingHeader(g.label.c_str())) {
-                    if (ImGui::BeginTable(g.label.c_str(), 2,
-                            ImGuiTableFlags_SizingFixedFit |
-                            ImGuiTableFlags_RowBg          |
-                            ImGuiTableFlags_BordersInnerV)) {
-                        ImGui::TableSetupColumn("Name",  ImGuiTableColumnFlags_WidthStretch, 0.5f);
-                        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.5f);
-                        for (auto& p : g.params) {
-                            ImGui::TableNextRow();
-                            ImGui::TableSetColumnIndex(0);
-                            const float row_top = ImGui::GetCursorScreenPos().y;
-                            const ImVec2 mouse   = ImGui::GetMousePos();
-                            const bool row_hov   = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
-                                                   mouse.y >= row_top &&
-                                                   mouse.y <  row_top + ImGui::GetTextLineHeightWithSpacing();
-                            if (p.rw_type == cam_param_rw::readwrite)
-                                ImGui::TextUnformatted(p.name.c_str());
-                            else
-                                ImGui::TextDisabled("%s", p.name.c_str());
-                            ImGui::TableSetColumnIndex(1);
-
-                            if (p.rw_type == cam_param_rw::writeonly) {
-                                ImGui::TextDisabled("---");
-                            } else if (p.rw_type == cam_param_rw::readonly) {
-                                const std::string disp = p.unit.empty()
-                                    ? p.value : p.value + " " + p.unit;
-                                ImGui::TextDisabled("%s", disp.c_str());
-                            } else {
-                                // readwrite: double-click to edit
-                                const std::string key      = g.label + "/" + p.name;
-                                const std::string popup_id = "##ep_" + key;
-
-                                if (cam_edit_key == key) {
-                                    if (p.type == cam_param_type::bool_ ||
-                                        p.type == cam_param_type::enum_) {
-                                        // Popup with selectable options
-                                        if (ImGui::BeginPopup(popup_id.c_str())) {
-                                            for (const auto& opt : p.options) {
-                                                if (ImGui::Selectable(opt.c_str(), opt == p.value)) {
-                                                    p.value = opt;
-                                                    cam_edit_key.clear();
-                                                    ImGui::CloseCurrentPopup();
-                                                    cap_cli->update_param(p.name, p.value);
-                                                }
-                                            }
-                                            ImGui::EndPopup();
-                                        } else {
-                                            cam_edit_key.clear();
-                                        }
-                                        // Show current value in table cell below popup
-                                        const std::string disp = p.unit.empty()
-                                            ? p.value : p.value + " " + p.unit;
-                                        ImGui::TextUnformatted(disp.c_str());
-                                    } else {
-                                        // InputText for int_ / float_ / string_
-                                        if (cam_edit_focus) {
-                                            ImGui::SetKeyboardFocusHere();
-                                            cam_edit_focus = false;
-                                        }
-                                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                                        const bool enter = ImGui::InputText(
-                                            ("##camedit_" + p.name).c_str(),
-                                            cam_edit_buf, sizeof(cam_edit_buf),
-                                            ImGuiInputTextFlags_EnterReturnsTrue);
-                                        if (enter || ImGui::IsItemDeactivated()) {
-                                            const std::string raw = cam_edit_buf;
-                                            if (p.type == cam_param_type::int_) {
-                                                try {
-                                                    int v = std::stoi(raw);
-                                                    if (!p.min.empty())
-                                                        v = std::max(v, std::stoi(p.min));
-                                                    if (!p.max.empty())
-                                                        v = std::min(v, std::stoi(p.max));
-                                                    p.value = std::to_string(v);
-                                                } catch (...) {}
-                                            } else if (p.type == cam_param_type::float_) {
-                                                try {
-                                                    float v = std::stof(raw);
-                                                    if (!p.min.empty())
-                                                        v = std::max(v, std::stof(p.min));
-                                                    if (!p.max.empty())
-                                                        v = std::min(v, std::stof(p.max));
-                                                    char fb[64];
-                                                    std::snprintf(fb, sizeof(fb), "%g",
-                                                                  static_cast<double>(v));
-                                                    p.value = fb;
-                                                } catch (...) {}
-                                            } else {
-                                                p.value = raw;
-                                            }
-                                            cam_edit_key.clear();
-                                            cap_cli->update_param(p.name, p.value);
-                                        }
-                                    }
-                                } else {
-                                    // Display mode — detect double-click to enter edit
-                                    const std::string disp = p.unit.empty()
-                                        ? p.value : p.value + " " + p.unit;
-                                    ImGui::TextUnformatted(disp.c_str());
-                                    if (row_hov &&
-                                        ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                                        cam_edit_key = key;
-                                        if (p.type == cam_param_type::bool_ ||
-                                            p.type == cam_param_type::enum_) {
-                                            ImGui::OpenPopup(popup_id.c_str());
-                                        } else {
-                                            std::strncpy(cam_edit_buf, p.value.c_str(),
-                                                         sizeof(cam_edit_buf) - 1);
-                                            cam_edit_buf[sizeof(cam_edit_buf) - 1] = '\0';
-                                            cam_edit_focus = true;
-                                        }
-                                    }
-                                }
-                            }
-                            if (row_hov && cam_edit_key.empty() &&
-                                (!p.description.empty() || !p.min.empty() || !p.initial.empty())) {
-                                ImGui::BeginTooltip();
-                                if (!p.description.empty()) ImGui::TextUnformatted(p.description.c_str());
-                                if (!p.min.empty() || !p.max.empty())
-                                    ImGui::Text("Range: %s - %s", p.min.c_str(), p.max.c_str());
-                                if (!p.initial.empty())
-                                    ImGui::Text("Default: %s %s", p.initial.c_str(), p.unit.c_str());
-                                ImGui::EndTooltip();
-                            }
-                        }
-                        ImGui::EndTable();
-                    }
-                }
-            } // end group loop
-            } // end CollapsingHeader "Camera Info"
-
-            ImGui::EndChild();
-            ImGui::SameLine();
-        }
-
-        const ImVec2 viewer_origin = ImGui::GetCursorScreenPos();
+            const ImVec2 viewer_origin = ImGui::GetCursorScreenPos();
 
         if (imode == input_mode::remote_capture && use_single && preview_tex != 0) {
             // Full-viewer live preview (single mode)
@@ -1823,7 +1280,7 @@ int main(int argc, char** argv) {
         {
             const bool has_guide = cap_cfg.basex >= 0 || cap_cfg.targetx >= 0
                                 || cap_cfg.starty >= 0 || cap_cfg.liney   >= 0;
-            if (has_guide && imode == input_mode::remote_capture && !cap_cli->is_preview_active()) {
+            if (has_guide && imode == input_mode::remote_capture && !cap_panel.is_preview_active()) {
                 auto* dl = ImGui::GetWindowDrawList();
                 const ImU32 vcol = IM_COL32(255, 80,  80,  200);
                 const ImU32 hcol = IM_COL32( 80, 200, 255, 200);
@@ -1887,15 +1344,6 @@ int main(int argc, char** argv) {
         };
 
         // ----- Resize handles -----
-        if (imode == input_mode::remote_capture) {
-            const float handle_x = viewer_origin.x - spacing_x * 0.5f - 2.0f;
-            ImGui::SetCursorScreenPos({handle_x, viewer_origin.y});
-            ImGui::InvisibleButton("##capture_resize", {4.0f, viewer_h});
-            if (ImGui::IsItemHovered() || ImGui::IsItemActive())
-                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-            if (ImGui::IsItemActive())
-                capture_panel_w = std::clamp(capture_panel_w + ImGui::GetIO().MouseDelta.x, 120.0f, 400.0f);
-        }
         if (show_pixel_panel) {
             const float handle_x = viewer_origin.x + viewer_w + spacing_x * 0.5f - 2.0f;
             ImGui::SetCursorScreenPos({handle_x, viewer_origin.y});
@@ -2017,7 +1465,7 @@ int main(int argc, char** argv) {
                     ImGui::EndDisabled();
                     if (ImGui::Button("Clear", {-1, 0})) {
                         ce_tool.clear_results();
-                        status_msg = "Detection cleared";
+                        app_log.add("INFO", "Detection cleared");
                     }
                     ImGui::Separator();
                     ce_tool.render_panel();
@@ -2039,28 +1487,11 @@ int main(int argc, char** argv) {
         }
 
         // ----- Floating panels -----
-        const viewer_context vctx{
-            use_single,
-            &single_viewer,
-            &compare,
-            viewer_w,
-            viewer_h,
-            &overlays,
-            &left_overlays,
-        };
-        prof_panel.render(vctx);
-        ovg_panel.render(vctx, single_viewer, compare);
+        prof_panel.render(use_single, viewer_w, viewer_h);
+        ovg_panel.render(use_single);
 
-        // Reset cursor to below viewer so the status bar sits correctly.
-        ImGui::SetCursorScreenPos({viewer_origin.x, viewer_origin.y + viewer_h});
-
-        // ----- Status bar -----
-        ImGui::Separator();
-        ImGui::TextUnformatted(status_msg.empty()
-            ? "Ready  |  Drop TIFF to open  |  Scroll: zoom  |  Ctrl+Scroll: pan H  |  Shift+Scroll: pan V  |  Drag: pan  |  Double-click: fit"
-            : status_msg.c_str());
-
-        ImGui::End();
+        }
+        ImGui::End(); // Viewer##viewer_win
 
         // ----- Loading progress overlay -----
         if (left_loader.active || right_loader.active) {

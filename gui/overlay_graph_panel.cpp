@@ -6,9 +6,17 @@
 #include <utility>
 #include <vector>
 
-void overlay_graph_panel::render(const viewer_context& ctx,
-                                  image_viewer& single_viewer,
-                                  compare_viewer& compare) {
+void overlay_graph_panel::init(image_viewer*                 single_viewer,
+                                compare_viewer*               compare,
+                                const std::vector<roi_group>* overlays,
+                                const std::vector<roi_group>* left_overlays) {
+    single_viewer_ = single_viewer;
+    compare_       = compare;
+    overlays_      = overlays;
+    left_overlays_ = left_overlays;
+}
+
+void overlay_graph_panel::render(bool use_single) {
     if (!visible) return;
 
     ImGui::SetNextWindowSize({800.0f, 400.0f}, ImGuiCond_FirstUseEver);
@@ -17,12 +25,12 @@ void overlay_graph_panel::render(const viewer_context& ctx,
     const float avail_w = ImGui::GetContentRegionAvail().x;
 
     const std::vector<roi_group>* src =
-        (ctx.use_single && ctx.overlays) ? ctx.overlays
-        : (!ctx.use_single && ctx.left_overlays) ? ctx.left_overlays
+        (use_single && overlays_) ? overlays_
+        : (!use_single && left_overlays_) ? left_overlays_
         : nullptr;
     const std::vector<uint8_t>*   gvis = nullptr;
     {
-        image_viewer& ref = ctx.use_single ? single_viewer : compare.left_viewer_ref();
+        image_viewer& ref = use_single ? *single_viewer_ : compare_->left_viewer_ref();
         if (src && ref.overlay_group_count() == src->size())
             gvis = &ref.overlay_group_visibility;
     }
