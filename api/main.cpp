@@ -547,7 +547,8 @@ int main(int argc, char** argv) {
     bool   ovg_show_ref   = false;
     double ovg_ref_a      = 0.0;
     double ovg_ref_b      = 0.0;
-    float  viewer_pan_speed = 32.0f;
+    float  viewer_pan_speed          = 32.0f;
+    float  viewer_minimap_aspect     = 0.0f;
     circle_ellipse_tool ce_tool;
     measure_tool        mt;
     remote_overlay_tool rot;
@@ -625,14 +626,18 @@ int main(int argc, char** argv) {
                 }
                 if (j.contains("viewer") && j["viewer"].is_object()) {
                     const auto& vw = j["viewer"];
-                    if (vw.contains("pan_speed") && vw["pan_speed"].is_number())
-                        viewer_pan_speed = static_cast<float>(vw["pan_speed"].get<double>());
+                    if (vw.contains("pan_speed")      && vw["pan_speed"].is_number())
+                        viewer_pan_speed      = static_cast<float>(vw["pan_speed"].get<double>());
+                    if (vw.contains("minimap_aspect") && vw["minimap_aspect"].is_number())
+                        viewer_minimap_aspect = static_cast<float>(vw["minimap_aspect"].get<double>());
                 }
             } catch (...) {}
         }
     }
-    single_viewer.pan_speed = viewer_pan_speed;
-    compare.pan_speed       = viewer_pan_speed;
+    single_viewer.pan_speed            = viewer_pan_speed;
+    single_viewer.minimap_force_aspect = viewer_minimap_aspect;
+    compare.pan_speed                  = viewer_pan_speed;
+    compare.minimap_force_aspect       = viewer_minimap_aspect;
 
     capture_config                cap_cfg  = capture_config::load("visionstudio.json");
     std::optional<capture_client> cap_cli;
@@ -925,7 +930,8 @@ int main(int argc, char** argv) {
                     if (single_viewer.show_minimap) {
                         ImGui::Separator();
                         ImGui::SetNextItemWidth(160.0f);
-                        ImGui::SliderFloat("Minimap Aspect##ms", &single_viewer.minimap_force_aspect, 0.0f, 10.0f, "%.1f");
+                        if (ImGui::SliderFloat("Minimap Aspect##ms", &single_viewer.minimap_force_aspect, 0.0f, 10.0f, "%.1f"))
+                            viewer_minimap_aspect = single_viewer.minimap_force_aspect;
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("0 = image aspect  >0 = forced W/H ratio");
                     }
@@ -944,7 +950,8 @@ int main(int argc, char** argv) {
                     if (compare.show_minimap) {
                         ImGui::Separator();
                         ImGui::SetNextItemWidth(160.0f);
-                        ImGui::SliderFloat("Minimap Aspect##mc", &compare.minimap_force_aspect, 0.0f, 10.0f, "%.1f");
+                        if (ImGui::SliderFloat("Minimap Aspect##mc", &compare.minimap_force_aspect, 0.0f, 10.0f, "%.1f"))
+                            viewer_minimap_aspect = compare.minimap_force_aspect;
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("0 = image aspect  >0 = forced W/H ratio");
                     }
@@ -2580,7 +2587,8 @@ int main(int argc, char** argv) {
         }
         j["window"]    = {{"width", cur_w}, {"height", cur_h}};
         j["imgui_ini"] = imgui_ini;
-        j["viewer"]    = {{"pan_speed", viewer_pan_speed}};
+        j["viewer"]    = {{"pan_speed", viewer_pan_speed},
+                          {"minimap_aspect", viewer_minimap_aspect}};
         j["overlay_graph"] = {
             {"show_dx",    ovg_show_dx},
             {"show_dy",    ovg_show_dy},
