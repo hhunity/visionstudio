@@ -38,12 +38,17 @@ public:
     // Fit the view so the image fills the given canvas dimensions.
     void fit_view(view_state& state, float canvas_w, float canvas_h) const;
 
-    // Set zoom to 1:1 and center the image.
-    void zoom_1to1(view_state& state, float canvas_w, float canvas_h) const;
+    // Set zoom to 1:1. If anchor_img_x/y >= 0 that image coordinate is placed
+    // at the canvas center; otherwise the image is centered as a whole.
+    void zoom_1to1(view_state& state, float canvas_w, float canvas_h,
+                   float anchor_img_x = -1.0f, float anchor_img_y = -1.0f) const;
 
     // Convenience wrappers that operate on the viewer's own state.
     void fit_to_window(float canvas_w, float canvas_h) { fit_view(owned_state_, canvas_w, canvas_h); }
-    void zoom_to_1to1(float canvas_w, float canvas_h)  { zoom_1to1(owned_state_, canvas_w, canvas_h); }
+    void zoom_to_1to1(float canvas_w, float canvas_h,
+                      float anchor_img_x = -1.0f, float anchor_img_y = -1.0f) {
+        zoom_1to1(owned_state_, canvas_w, canvas_h, anchor_img_x, anchor_img_y);
+    }
 
     // Clamp pan so no image edge passes the canvas center (Photoshop behaviour).
     void clamp_pan(view_state& state, float canvas_w, float canvas_h) const;

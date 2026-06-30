@@ -1284,8 +1284,10 @@ int main(int argc, char** argv) {
                         else            compare.fit_to_window(viewer_w, viewer_h);
                     }
                     if (ImGui::MenuItem("1:1  (100%)")) {
-                        if (use_single) single_viewer.zoom_to_1to1(viewer_w, viewer_h);
-                        else            compare.zoom_to_1to1(viewer_w, viewer_h);
+                        const float ax = ctx_img_x >= 0 ? static_cast<float>(ctx_img_x) : -1.0f;
+                        const float ay = ctx_img_y >= 0 ? static_cast<float>(ctx_img_y) : -1.0f;
+                        if (use_single) single_viewer.zoom_to_1to1(viewer_w, viewer_h, ax, ay);
+                        else            compare.zoom_to_1to1(viewer_w, viewer_h, ax, ay);
                     }
                     ImGui::Separator();
                     if (ctx_img_x >= 0) {
