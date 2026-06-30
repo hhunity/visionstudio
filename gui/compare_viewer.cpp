@@ -286,15 +286,16 @@ void compare_viewer::fit_to_window(float total_w, float total_h) {
     }
 }
 
-void compare_viewer::zoom_to_1to1(float total_w, float total_h) {
+void compare_viewer::zoom_to_1to1(float total_w, float total_h,
+                                   float anchor_img_x, float anchor_img_y) {
     const float spacing  = ImGui::GetStyle().ItemSpacing.x;
     const float half_w   = std::floor((total_w - spacing) * 0.5f);
     const float canvas_h = total_h - get_header_height();
     if (sync_views)
-        left_viewer_.zoom_1to1(shared_state_, half_w, canvas_h);
+        left_viewer_.zoom_1to1(shared_state_, half_w, canvas_h, anchor_img_x, anchor_img_y);
     else {
-        left_viewer_.zoom_to_1to1(half_w, canvas_h);
-        right_viewer_.zoom_to_1to1(half_w, canvas_h);
+        left_viewer_.zoom_to_1to1(half_w, canvas_h, anchor_img_x, anchor_img_y);
+        right_viewer_.zoom_to_1to1(half_w, canvas_h, anchor_img_x, anchor_img_y);
     }
 }
 

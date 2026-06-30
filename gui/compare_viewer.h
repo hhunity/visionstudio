@@ -58,7 +58,8 @@ public:
     // Fit/zoom actions callable from outside (e.g. context menu).
     // Pass the same total_w/total_h as given to render().
     void fit_to_window(float total_w, float total_h);
-    void zoom_to_1to1(float total_w, float total_h);
+    void zoom_to_1to1(float total_w, float total_h,
+                      float anchor_img_x = -1.0f, float anchor_img_y = -1.0f);
 
     bool        show_grid            = false;
     int         grid_spacing         = 100;

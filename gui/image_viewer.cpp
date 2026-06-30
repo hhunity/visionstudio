@@ -180,11 +180,22 @@ void image_viewer::clamp_pan(view_state& state, float canvas_w, float canvas_h) 
     state.pan_y = std::min(std::max(state.pan_y, canvas_h * 0.5f - ih), canvas_h * 0.5f);
 }
 
-void image_viewer::zoom_1to1(view_state& state, float canvas_w, float canvas_h) const {
+void image_viewer::zoom_1to1(view_state& state, float canvas_w, float canvas_h,
+                              float anchor_img_x, float anchor_img_y) const {
     if (img_w_ == 0 || img_h_ == 0) return;
-    state.zoom  = 1.0f;
-    state.pan_x = (canvas_w - static_cast<float>(img_w_)) * 0.5f;
-    state.pan_y = (canvas_h - static_cast<float>(img_h_)) * 0.5f;
+    state.zoom = 1.0f;
+    if (anchor_img_x >= 0.0f && anchor_img_y >= 0.0f) {
+        // Place the clicked image coordinate at the canvas center.
+        // anchor_img_x/y include display_offset, so subtract it for local space.
+        const float local_x = anchor_img_x - static_cast<float>(display_offset_x_);
+        const float local_y = anchor_img_y - static_cast<float>(display_offset_y_);
+        state.pan_x = canvas_w * 0.5f - local_x;
+        state.pan_y = canvas_h * 0.5f - local_y;
+        clamp_pan(state, canvas_w, canvas_h);
+    } else {
+        state.pan_x = (canvas_w - static_cast<float>(img_w_)) * 0.5f;
+        state.pan_y = (canvas_h - static_cast<float>(img_h_)) * 0.5f;
+    }
 }
 
 // ---------------------------------------------------------------------------
