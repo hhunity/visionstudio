@@ -1265,6 +1265,18 @@ int main(int argc, char** argv) {
                 ImGui::IsMouseReleased(ImGuiMouseButton_Right))
                 ImGui::OpenPopup("##viewer_ctx");
             if (ImGui::BeginPopup("##viewer_ctx")) {
+                if (use_single ? single_viewer.has_image()
+                               : compare.left_viewer_ref().has_image()) {
+                    if (ImGui::MenuItem("Fit to window")) {
+                        if (use_single) single_viewer.fit_to_window(viewer_w, viewer_h);
+                        else            compare.fit_to_window(viewer_w, viewer_h);
+                    }
+                    if (ImGui::MenuItem("1:1  (100%)")) {
+                        if (use_single) single_viewer.zoom_to_1to1(viewer_w, viewer_h);
+                        else            compare.zoom_to_1to1(viewer_w, viewer_h);
+                    }
+                    ImGui::Separator();
+                }
                 ImGui::MenuItem("Measure Tool", nullptr, &mt.visible);
                 if (mt.visible && ImGui::MenuItem("Reset Measure"))
                     mt.reset();

@@ -214,19 +214,6 @@ void image_viewer::render(const char* id, float width, float height,
     const bool hovered = ImGui::IsItemHovered();
     const bool active  = ImGui::IsItemActive();
 
-    // Right-click context menu
-    if (!tiles_.empty()) {
-        const std::string ctx_id = std::string("##ctx_") + id;
-        ImGui::OpenPopupOnItemClick(ctx_id.c_str(), ImGuiPopupFlags_MouseButtonRight);
-        if (ImGui::BeginPopup(ctx_id.c_str())) {
-            if (ImGui::MenuItem("Fit to window"))
-                fit_view(*state, canvas_size.x, canvas_size.y);
-            if (ImGui::MenuItem("1:1  (100%)"))
-                zoom_1to1(*state, canvas_size.x, canvas_size.y);
-            ImGui::EndPopup();
-        }
-    }
-
     handle_input(canvas_pos, canvas_size, *state);
     (void)active; // input handling checks internally
 
