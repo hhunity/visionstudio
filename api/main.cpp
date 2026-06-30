@@ -383,13 +383,18 @@ int main(int argc, char** argv) {
             0xD7B0, 0xD7FF,  // Hangul Jamo Extended-B
             0,
         };
+        ImFontConfig jp_cfg;
+        jp_cfg.OversampleH = 2;
+        jp_cfg.OversampleV = 1;
+        jp_cfg.PixelSnapH  = true;
         ImFontConfig merge_cfg;
-        merge_cfg.MergeMode  = true;
-        merge_cfg.OversampleH = 1;
+        merge_cfg.MergeMode   = true;
+        merge_cfg.OversampleH = 2;
         merge_cfg.OversampleV = 1;
+        merge_cfg.PixelSnapH  = true;
         ImFontAtlas* atlas = ImGui::GetIO().Fonts;
-        atlas->AddFontFromFileTTF("assets/fonts/NotoSansJP-Regular.ttf", 14.0f, nullptr,   jp_ranges);
-        atlas->AddFontFromFileTTF("assets/fonts/NotoSansKR-Regular.ttf", 14.0f, &merge_cfg, kr_ranges);
+        atlas->AddFontFromFileTTF("assets/fonts/NotoSansJP-Regular.ttf", 16.0f, &jp_cfg,    jp_ranges);
+        atlas->AddFontFromFileTTF("assets/fonts/NotoSansKR-Regular.ttf", 16.0f, &merge_cfg, kr_ranges);
     }
 #endif
 
