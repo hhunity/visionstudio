@@ -274,6 +274,30 @@ float compare_viewer::get_header_height() const {
     return label_h + (has_offset ? ImGui::GetFrameHeightWithSpacing() : 0.0f);
 }
 
+void compare_viewer::fit_to_window(float total_w, float total_h) {
+    const float spacing  = ImGui::GetStyle().ItemSpacing.x;
+    const float half_w   = std::floor((total_w - spacing) * 0.5f);
+    const float canvas_h = total_h - get_header_height();
+    if (sync_views)
+        left_viewer_.fit_view(shared_state_, half_w, canvas_h);
+    else {
+        left_viewer_.fit_to_window(half_w, canvas_h);
+        right_viewer_.fit_to_window(half_w, canvas_h);
+    }
+}
+
+void compare_viewer::zoom_to_1to1(float total_w, float total_h) {
+    const float spacing  = ImGui::GetStyle().ItemSpacing.x;
+    const float half_w   = std::floor((total_w - spacing) * 0.5f);
+    const float canvas_h = total_h - get_header_height();
+    if (sync_views)
+        left_viewer_.zoom_1to1(shared_state_, half_w, canvas_h);
+    else {
+        left_viewer_.zoom_to_1to1(half_w, canvas_h);
+        right_viewer_.zoom_to_1to1(half_w, canvas_h);
+    }
+}
+
 void compare_viewer::render(float width, float height) {
     if (width  <= 0.0f) width  = ImGui::GetContentRegionAvail().x;
     if (height <= 0.0f) height = ImGui::GetContentRegionAvail().y;
