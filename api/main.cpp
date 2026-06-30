@@ -1259,11 +1259,23 @@ int main(int argc, char** argv) {
 
         // Right-click context menu on viewer area
         {
+            static int ctx_img_x = -1, ctx_img_y = -1;
             const ImVec2 vmin = viewer_origin;
             const ImVec2 vmax = {viewer_origin.x + viewer_w, viewer_origin.y + viewer_h};
             if (ImGui::IsMouseHoveringRect(vmin, vmax) &&
-                ImGui::IsMouseReleased(ImGuiMouseButton_Right))
+                ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+                // Capture image coordinates at the moment of right-click.
+                if (use_single) {
+                    const auto& hi = single_viewer.get_hover_info();
+                    ctx_img_x = hi.valid ? hi.img_x : -1;
+                    ctx_img_y = hi.valid ? hi.img_y : -1;
+                } else {
+                    const auto& hi = compare.get_hover_info();
+                    ctx_img_x = hi.valid ? hi.img_x : -1;
+                    ctx_img_y = hi.valid ? hi.img_y : -1;
+                }
                 ImGui::OpenPopup("##viewer_ctx");
+            }
             if (ImGui::BeginPopup("##viewer_ctx")) {
                 if (use_single ? single_viewer.has_image()
                                : compare.left_viewer_ref().has_image()) {
@@ -1276,6 +1288,14 @@ int main(int argc, char** argv) {
                         else            compare.zoom_to_1to1(viewer_w, viewer_h);
                     }
                     ImGui::Separator();
+                    if (ctx_img_x >= 0) {
+                        char coord_buf[32];
+                        snprintf(coord_buf, sizeof(coord_buf), "(%d, %d)", ctx_img_x, ctx_img_y);
+                        ImGui::TextDisabled("%s", coord_buf);
+                        if (ImGui::MenuItem("Copy coordinates"))
+                            ImGui::SetClipboardText(coord_buf);
+                        ImGui::Separator();
+                    }
                 }
                 ImGui::MenuItem("Measure Tool", nullptr, &mt.visible);
                 if (mt.visible && ImGui::MenuItem("Reset Measure"))
